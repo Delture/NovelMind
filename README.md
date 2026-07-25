@@ -2,7 +2,7 @@
 
 NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统。
 
-当前阶段已经实现 TXT 小说上传、章节解析，以及使用 SQLite 保存小说和章节。后续将逐步加入 Streamlit 上传页面、章节摘要、角色抽取、RAG 问答和分析报告。
+当前阶段已经打通 TXT 小说的前端上传、章节解析、SQLite 保存和章节展示。后续将逐步加入章节摘要、角色抽取、RAG 问答和分析报告。
 
 ## 技术栈
 
@@ -46,17 +46,29 @@ uvicorn backend.app.main:app --reload
 
 ## 启动前端
 
+保持后端终端运行，再打开一个 PowerShell 终端，进入项目目录并激活虚拟环境：
+
 ```bash
 streamlit run frontend/streamlit_app.py
 ```
+
+浏览器通常会自动打开 `http://localhost:8501`。页面右上角显示“后端已连接”后，即可选择 TXT 文件并点击“解析并保存”。
 
 ## 当前 MVP 功能
 
 - 已创建项目目录结构。
 - 已提供 FastAPI 健康检查接口。
-- 已提供 Streamlit 最小展示页面。
 - 已提供 TXT 章节解析器。
 - 已提供 TXT 小说上传接口。
 - 已使用 SQLite 和 SQLAlchemy 保存小说及章节。
+- 已提供 Streamlit 上传页面、章节列表和正文预览。
 
 默认数据库文件位于 `data/novelmind.db`，启动后端时自动创建。该文件已被 Git 忽略。
+
+项目内置的原创测试文件位于 `data/samples/manual_test_novel.txt`，上传后应解析出 3 章。
+
+## 运行测试
+
+```bash
+pytest
+```

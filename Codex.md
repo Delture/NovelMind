@@ -34,16 +34,18 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 NovelMind/
   backend/
     app/
-      api/          # 后续存放接口路由
-      core/         # 后续存放配置、数据库连接等基础能力
-      models/       # 后续存放 SQLAlchemy 数据模型
+      api/          # FastAPI 接口路由
+      core/         # 配置、数据库连接等基础能力
+      models/       # SQLAlchemy 数据模型
       parser/       # 小说章节解析逻辑
       rag/          # RAG 和向量库相关代码，当前先占位
       analyzer/     # 摘要、角色抽取、结构分析等逻辑
       main.py       # FastAPI 应用入口
     tests/          # pytest 测试
   frontend/
-    streamlit_app.py
+    api_client.py       # 前端 HTTP 客户端
+    streamlit_app.py    # Streamlit 页面入口
+    ui_styles.py        # 前端集中样式
   docs/
     product_requirements.md
     architecture.md
@@ -61,7 +63,8 @@ NovelMind/
 
 - FastAPI 应用入口：`backend/app/main.py`
 - 健康检查接口：`GET /health`
-- Streamlit 最小页面：`frontend/streamlit_app.py`
+- Streamlit 上传、章节列表和正文预览：`frontend/streamlit_app.py`
+- 前端 HTTP 客户端：`frontend/api_client.py`
 - TXT 章节解析：`backend/app/parser/chapter_splitter.py`
 - TXT 小说上传接口：`POST /api/novels/upload`
 - SQLite 保存小说和章节：`backend/app/core/database.py`、`backend/app/models/novel.py`
@@ -168,13 +171,14 @@ test(parser): add chapter splitter tests
 1. TXT 章节解析（已完成）
 2. 小说上传接口（已完成）
 3. SQLite 保存小说和章节（已完成）
-4. Streamlit 上传页面
+4. Streamlit 上传页面（已完成）
 5. 章节摘要
 6. 角色抽取与统计
 7. RAG 问答
 8. 分析报告
 
-当前最推荐的下一步是实现 Streamlit 上传页面和章节列表展示。
+当前最推荐的下一步是实现章节摘要。开始前应先确定摘要是使用占位算法、
+本地模型还是外部大模型 API，避免在配置未明确时直接引入复杂依赖。
 
 ## TXT 小说上传接口
 
@@ -269,3 +273,19 @@ altair<5
 ```
 
 这是为了兼容部分 Streamlit 版本对 Altair v4 API 的依赖。
+
+前端使用 `requests` 调用 FastAPI。直接启动页面的标准命令是：
+
+```powershell
+streamlit run frontend/streamlit_app.py
+```
+
+因此 `frontend/streamlit_app.py` 内部使用同目录导入：
+
+```python
+from api_client import ...
+from ui_styles import APP_CSS
+```
+
+不要在此入口中改为 `from frontend...`，否则使用上述命令时可能出现
+`ModuleNotFoundError: No module named 'frontend'`。

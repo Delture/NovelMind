@@ -14,7 +14,8 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - TXT 小说章节解析。
 - TXT 小说上传接口。
 - SQLite 保存小说和章节。
-- 还没有实现前端上传页面和 RAG。
+- Streamlit 上传、章节列表和正文预览。
+- 还没有实现章节摘要、角色抽取和 RAG。
 
 ## 每次开始开发前
 
@@ -141,7 +142,40 @@ cd D:\CodexPro\NovelMind
 streamlit run frontend/streamlit_app.py
 ```
 
-启动后浏览器会打开前端页面。当前页面只显示项目标题和一句说明。
+启动后浏览器通常会打开：
+
+```text
+http://localhost:8501
+```
+
+前端和后端必须同时运行。推荐始终使用两个 PowerShell 窗口：
+
+1. 终端一运行 FastAPI，不要关闭。
+2. 终端二运行 Streamlit，不要关闭。
+3. 页面右上角显示“后端已连接”后再上传文件。
+
+## 通过前端完整测试
+
+使用项目内的原创样例文件：
+
+```text
+data/samples/manual_test_novel.txt
+```
+
+操作步骤：
+
+1. 按前文说明启动后端和前端。
+2. 打开 `http://localhost:8501`。
+3. 确认右上角显示“后端已连接”。
+4. 点击 `Browse files`，选择样例 TXT。
+5. 点击“解析并保存”。
+6. 确认页面出现绿色成功提示。
+7. 确认“章节数”为 `3`，编码为 `UTF-8`。
+8. 在“章节列表”中确认显示第一章、第二章和英文标题的第三章。
+9. 切换到“正文预览”，选择不同章节并检查正文是否对应。
+
+每点击一次“解析并保存”，数据库会新增一条小说记录。这是当前 MVP 的正常行为，
+暂未实现同名文件去重。
 
 ## 运行测试
 
@@ -195,7 +229,19 @@ TXT 章节解析器，负责识别章节标题并切分正文。
 frontend/streamlit_app.py
 ```
 
-Streamlit 前端入口，目前是最小展示页面。
+Streamlit 前端入口，负责上传控件、结果指标、章节列表和正文预览。
+
+```text
+frontend/api_client.py
+```
+
+前端 HTTP 客户端，负责健康检查、上传请求和用户可读的错误提示。
+
+```text
+frontend/ui_styles.py
+```
+
+集中保存 Streamlit 页面样式。
 
 ```text
 docs/
@@ -234,7 +280,7 @@ Info.md
 1. TXT 网络小说章节解析（已完成）
 2. TXT 上传接口（已完成）
 3. SQLite 保存小说和章节（已完成）
-4. Streamlit 上传页面
+4. Streamlit 上传页面（已完成）
 5. 章节摘要
 6. 角色抽取与统计
 7. RAG 问答
@@ -243,7 +289,7 @@ Info.md
 下一步最推荐做：
 
 ```text
-Streamlit 上传页面和章节列表展示
+章节摘要
 ```
 
 ## 常见问题
@@ -271,6 +317,35 @@ altair<5
 ```powershell
 python -m pip install -r requirements.txt
 ```
+
+### Streamlit 报 No module named 'frontend'
+
+请确认使用的是项目当前代码，并从项目根目录运行：
+
+```powershell
+cd D:\CodexPro\NovelMind
+streamlit run frontend/streamlit_app.py
+```
+
+不要把 `frontend/streamlit_app.py` 中的同目录导入改成
+`from frontend.api_client ...`。如果终端仍显示旧错误，按 `Ctrl+C` 停止
+Streamlit，再重新执行启动命令。
+
+### 页面显示“后端未连接”
+
+先确认另一个终端中的 FastAPI 仍在运行，再访问：
+
+```text
+http://127.0.0.1:8000/health
+```
+
+如果后端改用了其他端口，请在项目根目录的 `.env` 中配置，例如：
+
+```text
+BACKEND_URL=http://127.0.0.1:8001
+```
+
+然后重启 Streamlit。
 
 ### 依赖安装失败
 

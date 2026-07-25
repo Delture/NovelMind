@@ -5,4 +5,5 @@ altair<5
 sqlalchemy
 pydantic
 python-dotenv
+requests
 pytest

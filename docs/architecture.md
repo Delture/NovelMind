@@ -20,13 +20,24 @@ NovelMind 采用前后端分离的轻量结构：
 - `backend/app/analyzer/`：后续存放摘要、角色抽取、结构分析等逻辑。
 - `backend/tests/`：后续存放 pytest 测试。
 
-## 数据流设想
+## 当前数据流
 
 1. 用户上传 TXT 小说。
-2. 后端解析小说章节。
-3. 小说和章节信息保存到 SQLite。
-4. 前端展示章节列表。
-5. 后续将章节文本写入向量库，用于 RAG 问答和分析。
+2. Streamlit 通过 HTTP 把文件字节发送到 FastAPI。
+3. 后端检查文件类型、大小和编码，并解析小说章节。
+4. 小说和章节信息保存到 SQLite。
+5. 后端返回小说 ID、编码和章节数据。
+6. 前端展示章节列表与正文预览。
+7. 后续将章节文本写入向量库，用于 RAG 问答和分析。
+
+## 前端目录
+
+- `frontend/streamlit_app.py`：页面入口和界面渲染。
+- `frontend/api_client.py`：调用 FastAPI 健康检查与上传接口。
+- `frontend/ui_styles.py`：集中保存页面样式，避免业务代码中混入大量 CSS。
+
+前端通过环境变量 `BACKEND_URL` 获取后端地址，未配置时默认使用
+`http://127.0.0.1:8000`。
 
 ## SQLite 数据库
 
