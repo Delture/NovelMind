@@ -1,0 +1,133 @@
+"""Tests for the TXT novel upload API."""
+
+import asyncio
+import json
+from typing import Optional
+from urllib.parse import urlencode
+
+from backend.app.api.novels import MAX_UPLOAD_BYTES
+from backend.app.main import app
+
+
+def send_request(content: bytes, filename: Optional[str]) -> tuple[int, dict]:
+    """Send one HTTP request directly to the FastAPI ASGI application."""
+    query_string = urlencode({"filename": filename}).encode() if filename else b""
+    messages: list[dict] = []
+    request_sent = False
+
+    async def receive() -> dict:
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": content, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/novels/upload",
+        "raw_path": b"/api/novels/upload",
+        "query_string": query_string,
+        "headers": [(b"content-type", b"application/octet-stream")],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+
+    asyncio.run(app(scope, receive, send))
+
+    start_message = next(
+        message
+        for message in messages
+        if message["type"] == "http.response.start"
+    )
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return start_message["status"], json.loads(body)
+
+
+def test_upload_utf8_txt_and_split_chapters() -> None:
+    text = "第一章 开始\n第一章正文。\n\n第二章 相遇\n第二章正文。"
+
+    status_code, result = send_request(text.encode("utf-8"), "novel.txt")
+
+    assert status_code == 200
+    assert result["filename"] == "novel.txt"
+    assert result["encoding"] == "utf-8"
+    assert result["chapter_count"] == 2
+    assert [chapter["title"] for chapter in result["chapters"]] == [
+        "第一章 开始",
+        "第二章 相遇",
+    ]
+    assert result["chapters"][0]["content"] == "第一章正文。"
+    assert result["chapters"][0]["character_count"] == 6
+
+
+def test_upload_gb18030_txt() -> None:
+    text = "第1章 开始\n正文内容。"
+
+    status_code, result = send_request(text.encode("gb18030"), "novel.txt")
+
+    assert status_code == 200
+    assert result["encoding"] == "gb18030"
+    assert result["chapter_count"] == 1
+
+
+def test_reject_non_txt_file() -> None:
+    status_code, result = send_request(b"content", "novel.pdf")
+
+    assert status_code == 400
+    assert result["detail"] == "只支持上传 TXT 文件。"
+
+
+def test_reject_empty_txt_file() -> None:
+    status_code, result = send_request(b"", "empty.txt")
+
+    assert status_code == 400
+    assert result["detail"] == "TXT 文件内容为空。"
+
+
+def test_reject_whitespace_only_txt_file() -> None:
+    status_code, result = send_request(" \n\t ".encode("utf-8"), "empty.txt")
+
+    assert status_code == 400
+    assert result["detail"] == "TXT 文件内容为空。"
+
+
+def test_reject_oversized_txt_file() -> None:
+    status_code, result = send_request(
+        b"a" * (MAX_UPLOAD_BYTES + 1),
+        "large.txt",
+    )
+
+    assert status_code == 413
+    assert result["detail"] == "TXT 文件不能超过 20 MB。"
+
+
+def test_reject_unknown_encoding() -> None:
+    status_code, result = send_request(b"\xff", "novel.txt")
+
+    assert status_code == 400
+    assert "UTF-8 或 GB18030" in result["detail"]
+
+
+def test_filename_is_required() -> None:
+    status_code, result = send_request(b"content", None)
+
+    assert status_code == 422
+    assert result["detail"][0]["loc"] == ["query", "filename"]
+
+
+def test_openapi_documents_binary_upload() -> None:
+    operation = app.openapi()["paths"]["/api/novels/upload"]["post"]
+    schema = operation["requestBody"]["content"]["application/octet-stream"]["schema"]
+
+    assert schema == {"type": "string", "format": "binary"}
