@@ -2,9 +2,14 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
+from backend.app.core.database import get_db
+from backend.app.models.novel import Chapter as ChapterModel
+from backend.app.models.novel import Novel
 from backend.app.parser.chapter_splitter import split_chapters
 
 
@@ -25,6 +30,7 @@ class ChapterResponse(BaseModel):
 class NovelUploadResponse(BaseModel):
     """Result of uploading and parsing one TXT novel."""
 
+    novel_id: int
     filename: str
     encoding: str
     chapter_count: int
@@ -64,8 +70,9 @@ def decode_txt(content: bytes) -> tuple[str, str]:
 async def upload_novel(
     request: Request,
     filename: str = Query(..., description="上传的 TXT 文件名"),
+    db: Session = Depends(get_db),
 ) -> NovelUploadResponse:
-    """Upload a TXT novel and return its parsed chapters."""
+    """Upload, parse, and save a TXT novel."""
     if Path(filename).suffix.lower() != ".txt":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -95,9 +102,10 @@ async def upload_novel(
             detail="TXT 文件内容为空。",
         )
 
-    chapter_responses = [
-        ChapterResponse(
-            index=chapter.index,
+    filename = Path(filename).name
+    chapter_models = [
+        ChapterModel(
+            chapter_index=chapter.index,
             title=chapter.title,
             content=chapter.content,
             character_count=len(chapter.content),
@@ -105,9 +113,36 @@ async def upload_novel(
         for chapter in chapters
     ]
 
-    return NovelUploadResponse(
+    novel = Novel(
         filename=filename,
         encoding=encoding,
-        chapter_count=len(chapter_responses),
-        chapters=chapter_responses,
+        chapter_count=len(chapter_models),
+        chapters=chapter_models,
+    )
+
+    try:
+        db.add(novel)
+        db.commit()
+        db.refresh(novel)
+    except SQLAlchemyError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="小说保存失败，请稍后重试。",
+        ) from error
+
+    return NovelUploadResponse(
+        novel_id=novel.id,
+        filename=novel.filename,
+        encoding=novel.encoding,
+        chapter_count=novel.chapter_count,
+        chapters=[
+            ChapterResponse(
+                index=chapter.chapter_index,
+                title=chapter.title,
+                content=chapter.content,
+                character_count=chapter.character_count,
+            )
+            for chapter in novel.chapters
+        ],
     )

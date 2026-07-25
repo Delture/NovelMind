@@ -13,7 +13,8 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - Streamlit 前端可以启动。
 - TXT 小说章节解析。
 - TXT 小说上传接口。
-- 还没有实现数据库存储、前端上传页面和 RAG。
+- SQLite 保存小说和章节。
+- 还没有实现前端上传页面和 RAG。
 
 ## 每次开始开发前
 
@@ -93,7 +94,7 @@ data/samples/manual_test_novel.txt
 1. `filename` 填写 `manual_test_novel.txt`。
 2. 请求体选择 `data/samples/manual_test_novel.txt`。
 3. 点击 `Execute`。
-4. 确认状态码为 `200`、`chapter_count` 为 `3`。
+4. 确认状态码为 `200`、`novel_id` 为正整数、`chapter_count` 为 `3`。
 
 也可以在另一个 PowerShell 窗口运行：
 
@@ -107,9 +108,22 @@ $json | ConvertFrom-Json | ConvertTo-Json -Depth 4
 正常结果应包含：
 
 ```text
+novel_id: 正整数
 filename: manual_test_novel.txt
 encoding: utf-8
 chapter_count: 3
+```
+
+后端首次启动时会自动创建：
+
+```text
+data/novelmind.db
+```
+
+可以用 Python 查询保存结果：
+
+```powershell
+python -c "import sqlite3; db=sqlite3.connect(r'data/novelmind.db'); print(db.execute('SELECT id, filename, encoding, chapter_count FROM novels').fetchall()); print(db.execute('SELECT novel_id, chapter_index, title FROM chapters ORDER BY novel_id, chapter_index').fetchall()); db.close()"
 ```
 
 ## 启动前端
@@ -160,6 +174,18 @@ backend/app/api/novels.py
 TXT 小说上传接口，负责文件校验、编码识别和调用章节解析器。
 
 ```text
+backend/app/core/database.py
+```
+
+SQLite 引擎、数据库会话和自动建表逻辑。
+
+```text
+backend/app/models/novel.py
+```
+
+小说与章节的 SQLAlchemy 数据模型。
+
+```text
 backend/app/parser/chapter_splitter.py
 ```
 
@@ -207,7 +233,7 @@ Info.md
 
 1. TXT 网络小说章节解析（已完成）
 2. TXT 上传接口（已完成）
-3. SQLite 保存小说和章节
+3. SQLite 保存小说和章节（已完成）
 4. Streamlit 上传页面
 5. 章节摘要
 6. 角色抽取与统计
@@ -217,7 +243,7 @@ Info.md
 下一步最推荐做：
 
 ```text
-SQLite 保存小说和章节
+Streamlit 上传页面和章节列表展示
 ```
 
 ## 常见问题

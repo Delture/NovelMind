@@ -2,7 +2,7 @@
 
 NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统。
 
-当前阶段只实现最小项目骨架，先保证后端和前端可以运行。后续再逐步加入小说上传、章节解析、数据库保存、章节摘要、角色抽取、RAG 问答和分析报告。
+当前阶段已经实现 TXT 小说上传、章节解析，以及使用 SQLite 保存小说和章节。后续将逐步加入 Streamlit 上传页面、章节摘要、角色抽取、RAG 问答和分析报告。
 
 ## 技术栈
 
@@ -30,7 +30,7 @@ Windows PowerShell 启动虚拟环境：
 安装依赖：
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## 启动后端
@@ -55,3 +55,8 @@ streamlit run frontend/streamlit_app.py
 - 已创建项目目录结构。
 - 已提供 FastAPI 健康检查接口。
 - 已提供 Streamlit 最小展示页面。
+- 已提供 TXT 章节解析器。
+- 已提供 TXT 小说上传接口。
+- 已使用 SQLite 和 SQLAlchemy 保存小说及章节。
+
+默认数据库文件位于 `data/novelmind.db`，启动后端时自动创建。该文件已被 Git 忽略。

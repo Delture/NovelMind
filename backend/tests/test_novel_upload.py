@@ -2,11 +2,48 @@
 
 import asyncio
 import json
-from typing import Optional
+from typing import Generator, Optional
+from unittest.mock import Mock
 from urllib.parse import urlencode
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from backend.app.api.novels import MAX_UPLOAD_BYTES
+from backend.app.core.database import Base, get_db
 from backend.app.main import app
+from backend.app.models.novel import Novel
+
+
+@pytest.fixture(autouse=True)
+def db_session() -> Generator[Session, None, None]:
+    """Use a fresh in-memory SQLite database for each test."""
+    test_engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    testing_session = sessionmaker(
+        bind=test_engine,
+        autocommit=False,
+        autoflush=False,
+    )
+    Base.metadata.create_all(bind=test_engine)
+    session = testing_session()
+
+    def override_get_db():
+        yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        yield session
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        session.close()
+        Base.metadata.drop_all(bind=test_engine)
 
 
 def send_request(content: bytes, filename: Optional[str]) -> tuple[int, dict]:
@@ -54,12 +91,13 @@ def send_request(content: bytes, filename: Optional[str]) -> tuple[int, dict]:
     return start_message["status"], json.loads(body)
 
 
-def test_upload_utf8_txt_and_split_chapters() -> None:
+def test_upload_utf8_txt_and_save_chapters(db_session: Session) -> None:
     text = "第一章 开始\n第一章正文。\n\n第二章 相遇\n第二章正文。"
 
     status_code, result = send_request(text.encode("utf-8"), "novel.txt")
 
     assert status_code == 200
+    assert result["novel_id"] > 0
     assert result["filename"] == "novel.txt"
     assert result["encoding"] == "utf-8"
     assert result["chapter_count"] == 2
@@ -70,8 +108,21 @@ def test_upload_utf8_txt_and_split_chapters() -> None:
     assert result["chapters"][0]["content"] == "第一章正文。"
     assert result["chapters"][0]["character_count"] == 6
 
+    saved_novel = db_session.get(Novel, result["novel_id"])
+    assert saved_novel is not None
+    assert saved_novel.filename == "novel.txt"
+    assert saved_novel.encoding == "utf-8"
+    assert saved_novel.chapter_count == 2
+    assert [
+        (chapter.chapter_index, chapter.title, chapter.content)
+        for chapter in saved_novel.chapters
+    ] == [
+        (1, "第一章 开始", "第一章正文。"),
+        (2, "第二章 相遇", "第二章正文。"),
+    ]
 
-def test_upload_gb18030_txt() -> None:
+
+def test_upload_gb18030_txt(db_session: Session) -> None:
     text = "第1章 开始\n正文内容。"
 
     status_code, result = send_request(text.encode("gb18030"), "novel.txt")
@@ -79,13 +130,17 @@ def test_upload_gb18030_txt() -> None:
     assert status_code == 200
     assert result["encoding"] == "gb18030"
     assert result["chapter_count"] == 1
+    saved_novel = db_session.get(Novel, result["novel_id"])
+    assert saved_novel is not None
+    assert saved_novel.encoding == "gb18030"
 
 
-def test_reject_non_txt_file() -> None:
+def test_reject_non_txt_file(db_session: Session) -> None:
     status_code, result = send_request(b"content", "novel.pdf")
 
     assert status_code == 400
     assert result["detail"] == "只支持上传 TXT 文件。"
+    assert db_session.query(Novel).count() == 0
 
 
 def test_reject_empty_txt_file() -> None:
@@ -131,3 +186,21 @@ def test_openapi_documents_binary_upload() -> None:
     schema = operation["requestBody"]["content"]["application/octet-stream"]["schema"]
 
     assert schema == {"type": "string", "format": "binary"}
+
+
+def test_database_error_rolls_back() -> None:
+    failing_session = Mock(spec=Session)
+    failing_session.commit.side_effect = SQLAlchemyError("commit failed")
+
+    def override_get_db():
+        yield failing_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    status_code, result = send_request(
+        "第一章 开始\n正文。".encode("utf-8"),
+        "novel.txt",
+    )
+
+    assert status_code == 500
+    assert result["detail"] == "小说保存失败，请稍后重试。"
+    failing_session.rollback.assert_called_once()

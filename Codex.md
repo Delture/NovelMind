@@ -64,6 +64,7 @@ NovelMind/
 - Streamlit 最小页面：`frontend/streamlit_app.py`
 - TXT 章节解析：`backend/app/parser/chapter_splitter.py`
 - TXT 小说上传接口：`POST /api/novels/upload`
+- SQLite 保存小说和章节：`backend/app/core/database.py`、`backend/app/models/novel.py`
 - 基础文档：`README.md` 和 `docs/`
 
 `GET /health` 应返回：
@@ -166,14 +167,14 @@ test(parser): add chapter splitter tests
 
 1. TXT 章节解析（已完成）
 2. 小说上传接口（已完成）
-3. SQLite 保存小说和章节
+3. SQLite 保存小说和章节（已完成）
 4. Streamlit 上传页面
 5. 章节摘要
 6. 角色抽取与统计
 7. RAG 问答
 8. 分析报告
 
-当前最推荐的下一步是使用 SQLite 保存小说和章节。
+当前最推荐的下一步是实现 Streamlit 上传页面和章节列表展示。
 
 ## TXT 小说上传接口
 
@@ -189,8 +190,18 @@ Content-Type: application/octet-stream
 - 只接受 `.txt` 文件名。
 - 支持 UTF-8、带 BOM 的 UTF-8 和 GB18030 编码。
 - 文件最大为 20 MB。
-- 调用章节解析器并返回章节标题、正文和字符数。
-- 只在内存中处理文件，不保存上传文件，也不写入数据库。
+- 调用章节解析器并返回 `novel_id`、章节标题、正文和字符数。
+- 不保存原始上传文件。
+- 使用同一个数据库事务保存小说和全部章节。
+
+## SQLite 数据库
+
+- 默认地址：`sqlite:///./data/novelmind.db`
+- 环境变量：`DATABASE_URL`
+- 后端启动时自动创建缺少的表。
+- `novels` 表保存小说基本信息。
+- `chapters` 表保存章节顺序、标题、正文和字符数。
+- 测试必须使用独立数据库，不得写入开发数据库。
 
 ## TXT 章节解析模块目标
 
