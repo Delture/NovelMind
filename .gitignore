@@ -9,3 +9,4 @@ chroma_db/
 data/uploads/
 data/raw_novels/
 logs/
+.idea/

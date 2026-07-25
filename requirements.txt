@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 streamlit
+altair<5
 sqlalchemy
 pydantic
 python-dotenv
