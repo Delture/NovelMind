@@ -15,6 +15,14 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 class NovelApiError(Exception):
     """A user-facing error returned by the NovelMind backend."""
 
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _parse_response(
     response: requests.Response,
@@ -24,7 +32,13 @@ def _parse_response(
     try:
         result = response.json()
     except ValueError as error:
-        raise NovelApiError("后端返回了无法解析的响应。") from error
+        status_code = (
+            response.status_code if response.status_code >= 400 else None
+        )
+        raise NovelApiError(
+            "后端返回了无法解析的响应。",
+            status_code=status_code,
+        ) from error
 
     if response.status_code >= 400:
         detail = (
@@ -32,7 +46,10 @@ def _parse_response(
             if isinstance(result, dict)
             else fallback_error
         )
-        raise NovelApiError(str(detail))
+        raise NovelApiError(
+            str(detail),
+            status_code=response.status_code,
+        )
 
     if not isinstance(result, dict):
         raise NovelApiError("后端返回了无法解析的响应。")
@@ -53,6 +70,23 @@ def check_backend(backend_url: Optional[str] = None) -> bool:
         )
     except (requests.RequestException, ValueError):
         return False
+
+
+def get_system_status(
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return non-secret backend provider configuration status."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/system/status",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取系统状态失败，请稍后重试。")
 
 
 def upload_novel(
@@ -178,4 +212,168 @@ def delete_novel(
 
     if response.status_code == 204:
         return
+    if 200 <= response.status_code < 300:
+        raise NovelApiError(
+            "后端返回了意外的删除响应。",
+            status_code=response.status_code,
+        )
     _parse_response(response, "删除小说失败，请稍后重试。")
+
+
+def start_summaries(
+    novel_id: int,
+    confirm_external_processing: bool,
+    confirm_content_rights: bool,
+    force: bool = False,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start asynchronous chapter summaries for one novel."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.post(
+            f"{base_url}/api/novels/{novel_id}/summaries",
+            json={
+                "confirm_external_processing": confirm_external_processing,
+                "confirm_content_rights": confirm_content_rights,
+                "force": force,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "启动章节摘要任务失败，请稍后重试。")
+
+
+def list_summaries(
+    novel_id: int,
+    offset: int = 0,
+    limit: int = 50,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one page of saved chapter summaries for one novel."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/summaries",
+            params={"offset": offset, "limit": limit},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取章节摘要失败，请稍后重试。")
+
+
+def start_chapter_summary(
+    novel_id: int,
+    chapter_index: int,
+    confirm_external_processing: bool,
+    confirm_content_rights: bool,
+    force: bool = False,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start asynchronous summary generation for one chapter."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.post(
+            (
+                f"{base_url}/api/novels/{novel_id}"
+                f"/chapters/{chapter_index}/summary"
+            ),
+            json={
+                "confirm_external_processing": confirm_external_processing,
+                "confirm_content_rights": confirm_content_rights,
+                "force": force,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "启动章节摘要任务失败，请稍后重试。")
+
+
+def get_chapter_summary(
+    novel_id: int,
+    chapter_index: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return the saved summary for one chapter."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            (
+                f"{base_url}/api/novels/{novel_id}"
+                f"/chapters/{chapter_index}/summary"
+            ),
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取章节摘要失败，请稍后重试。")
+
+
+def get_analysis_job(
+    job_id: str,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return the latest state of one asynchronous analysis job."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/analysis-jobs/{job_id}",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取分析任务状态失败，请稍后重试。")
+
+
+def get_summary_estimate(
+    novel_id: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return external-processing scope before starting summaries."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/summaries/estimate",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取摘要任务估算失败，请稍后重试。")
+
+
+def list_analysis_jobs(
+    novel_id: int,
+    job_type: Optional[str] = None,
+    limit: int = 20,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return recent background jobs for one novel."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    params: Dict[str, Any] = {"limit": limit}
+    if job_type is not None:
+        params["job_type"] = job_type
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/analysis-jobs",
+            params=params,
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取分析任务列表失败，请稍后重试。")

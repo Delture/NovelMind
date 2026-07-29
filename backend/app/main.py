@@ -4,20 +4,24 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 
 from backend.app.api.novels import router as novels_router
+from backend.app.api.summaries import router as summaries_router
 from backend.app.api.system import router as system_router
+from backend.app.analyzer.summaries import fail_interrupted_jobs
 from backend.app.core.config import settings
-from backend.app.core.database import init_db
+from backend.app.core.database import SessionLocal, init_db
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Initialize application resources when the server starts."""
     init_db()
+    fail_interrupted_jobs(SessionLocal)
     yield
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(novels_router, prefix="/api")
+app.include_router(summaries_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
 
 

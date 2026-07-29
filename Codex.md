@@ -99,19 +99,19 @@ python -m pip install -r requirements.txt
 启动后端：
 
 ```powershell
-uvicorn backend.app.main:app --reload
+uvicorn backend.app.main:app --host 127.0.0.1 --reload
 ```
 
 启动前端：
 
 ```powershell
-streamlit run frontend/streamlit_app.py
+streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 ```
 
 运行测试：
 
 ```powershell
-pytest
+python -m pytest -q
 ```
 
 ## 开发守则
@@ -126,6 +126,8 @@ pytest
 8. 先做解析、上传、存储和展示，再做 RAG。
 9. Streamlit 当前用于快速展示，不急着切换到 Vue/React。
 10. 每次完成实质功能后，更新 `docs/dev_log.md`。
+11. 本地只运行非模型功能；文本生成、人物分析、RAG 问答、报告和
+    embedding 等模型能力统一调用外部 API，不引入本地模型运行时。
 
 ## Codex 修改代码时的约束
 
@@ -172,13 +174,14 @@ test(parser): add chapter splitter tests
 2. 小说上传接口（已完成）
 3. SQLite 保存小说和章节（已完成）
 4. Streamlit 上传页面（已完成）
-5. 章节摘要
+5. 章节摘要（已完成）
 6. 角色抽取与统计
 7. RAG 问答
 8. 分析报告
 
-当前最推荐的下一步是实现章节摘要。开始前应先确定摘要是使用占位算法、
-本地模型还是外部大模型 API，避免在配置未明确时直接引入复杂依赖。
+当前最推荐的下一步是实现角色抽取与统计。文本生成继续使用 DeepSeek V4 Pro
+API；RAG 所需 embedding 也必须使用外部 API，并在进入 RAG 里程碑前确定
+提供商。
 
 ## TXT 小说上传接口
 
@@ -277,7 +280,7 @@ altair<5
 前端使用 `requests` 调用 FastAPI。直接启动页面的标准命令是：
 
 ```powershell
-streamlit run frontend/streamlit_app.py
+streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 ```
 
 因此 `frontend/streamlit_app.py` 内部使用同目录导入：

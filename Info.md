@@ -6,7 +6,7 @@
 
 NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统。
 
-当前项目还处在第一阶段，已经完成：
+当前项目按本地单用户模式开发，已经完成：
 
 - FastAPI 后端可以启动。
 - `/health` 接口可以访问。
@@ -14,8 +14,14 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - TXT 小说章节解析。
 - TXT 小说上传接口。
 - SQLite 保存小说和章节。
-- Streamlit 上传、章节列表和正文预览。
-- 还没有实现章节摘要、角色抽取和 RAG。
+- 小说资料库、分页章节列表、按需正文阅读和本地删除。
+- DeepSeek V4 Pro API 结构化章节摘要、缓存和持久化任务。
+- Streamlit 上传、资料库、正文阅读和章节摘要工作区。
+- 还没有实现角色抽取、RAG 和分析报告。
+
+本地只运行解析、存储、任务编排、检索和界面等非模型功能。摘要、角色分析、
+RAG 问答、报告和 embedding 等模型能力统一调用外部 API；不得擅自加入
+Ollama 或其他本地模型运行时。
 
 ## 每次开始开发前
 
@@ -36,7 +42,7 @@ cd D:\CodexPro\NovelMind
 如果还没有创建虚拟环境，只在第一次执行：
 
 ```powershell
-python -m venv .venv
+py -3.12 -m venv .venv
 ```
 
 ## 安装依赖
@@ -54,7 +60,7 @@ python -m pip install -r requirements.txt
 在项目根目录执行：
 
 ```powershell
-uvicorn backend.app.main:app --reload
+uvicorn backend.app.main:app --host 127.0.0.1 --reload
 ```
 
 后端默认地址：
@@ -139,13 +145,13 @@ cd D:\CodexPro\NovelMind
 启动 Streamlit：
 
 ```powershell
-streamlit run frontend/streamlit_app.py
+streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 ```
 
 启动后浏览器通常会打开：
 
 ```text
-http://localhost:8501
+http://127.0.0.1:8501
 ```
 
 前端和后端必须同时运行。推荐始终使用两个 PowerShell 窗口：
@@ -165,7 +171,7 @@ data/samples/manual_test_novel.txt
 操作步骤：
 
 1. 按前文说明启动后端和前端。
-2. 打开 `http://localhost:8501`。
+2. 打开 `http://127.0.0.1:8501`。
 3. 确认右上角显示“后端已连接”。
 4. 点击 `Browse files`，选择样例 TXT。
 5. 点击“解析并保存”。
@@ -182,7 +188,7 @@ data/samples/manual_test_novel.txt
 运行全部测试：
 
 ```powershell
-pytest
+python -m pytest -q
 ```
 
 后续如果只想运行某个测试文件，可以写具体路径，例如：
@@ -191,7 +197,8 @@ pytest
 pytest backend/tests/test_chapter_splitter.py
 ```
 
-当前阶段测试还不多。以后每实现一个核心功能，都应该补对应测试。
+每实现一个核心功能都应补齐正常路径、边界、失败恢复、并发和安全回归测试；
+只有完整测试通过后才能提交。
 
 ## 当前文件用途
 
@@ -281,7 +288,7 @@ Info.md
 2. TXT 上传接口（已完成）
 3. SQLite 保存小说和章节（已完成）
 4. Streamlit 上传页面（已完成）
-5. 章节摘要
+5. 章节摘要（已完成）
 6. 角色抽取与统计
 7. RAG 问答
 8. 小说分析报告
@@ -289,7 +296,7 @@ Info.md
 下一步最推荐做：
 
 ```text
-章节摘要
+角色抽取与统计
 ```
 
 ## 常见问题
@@ -324,7 +331,7 @@ python -m pip install -r requirements.txt
 
 ```powershell
 cd D:\CodexPro\NovelMind
-streamlit run frontend/streamlit_app.py
+streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 ```
 
 不要把 `frontend/streamlit_app.py` 中的同目录导入改成
@@ -366,13 +373,13 @@ python -m pip install -r requirements.txt
 如果后端 `8000` 端口被占用，可以换端口：
 
 ```powershell
-uvicorn backend.app.main:app --reload --port 8001
+uvicorn backend.app.main:app --host 127.0.0.1 --reload --port 8001
 ```
 
 如果 Streamlit 默认端口被占用，可以换端口：
 
 ```powershell
-streamlit run frontend/streamlit_app.py --server.port 8502
+streamlit run frontend/streamlit_app.py --server.address 127.0.0.1 --server.port 8502
 ```
 
 ## Git 日常流程

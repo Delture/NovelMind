@@ -52,9 +52,10 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db(db_engine: Engine = engine) -> None:
-    """Upgrade the schema and create tables that do not exist yet."""
+    """Create current tables, then apply and record schema migrations."""
+    from backend.app.models import analysis  # noqa: F401
     from backend.app.models import novel  # noqa: F401
     from backend.app.core.migrations import run_migrations
 
-    run_migrations(db_engine)
     Base.metadata.create_all(bind=db_engine)
+    run_migrations(db_engine)

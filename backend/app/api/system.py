@@ -1,5 +1,7 @@
 """Public backend configuration status endpoints."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -21,7 +23,8 @@ class EmbeddingStatus(BaseModel):
     """Public embedding-provider configuration."""
 
     provider: str
-    model: str
+    model: Optional[str]
+    configured: bool
 
 
 class SystemStatusResponse(BaseModel):
@@ -45,7 +48,8 @@ def get_system_status(
             configured=settings.deepseek_configured,
         ),
         embedding=EmbeddingStatus(
-            provider="ollama",
+            provider="external_api",
             model=settings.embedding_model,
+            configured=settings.embedding_configured,
         ),
     )

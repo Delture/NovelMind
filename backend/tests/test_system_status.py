@@ -9,17 +9,16 @@ from backend.app.main import app
 
 
 def test_system_status_route_is_registered() -> None:
-    assert any(
-        route.path == "/api/system/status"
-        and "GET" in getattr(route, "methods", set())
-        for route in app.routes
-    )
+    assert "get" in app.openapi()["paths"]["/api/system/status"]
 
 
 def test_system_status_reports_models_without_exposing_secrets() -> None:
     settings = replace(
         load_settings({}),
         deepseek_api_key="super-secret-api-key",
+        embedding_api_key="embedding-secret-key",
+        embedding_base_url="https://embedding.example/v1",
+        embedding_model="embedding-model",
     )
 
     result = get_system_status(settings=settings)
@@ -33,8 +32,10 @@ def test_system_status_reports_models_without_exposing_secrets() -> None:
             "configured": True,
         },
         "embedding": {
-            "provider": "ollama",
-            "model": "qwen3-embedding:0.6b",
+            "provider": "external_api",
+            "model": "embedding-model",
+            "configured": True,
         },
     }
     assert "super-secret-api-key" not in json.dumps(payload)
+    assert "embedding-secret-key" not in json.dumps(payload)

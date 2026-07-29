@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.core.database import Base, create_db_engine, get_db
+from backend.app.core.time import utc_now
 from backend.app.main import app
 from backend.app.models.novel import Chapter, Novel
 
@@ -104,7 +105,7 @@ def add_novel(
         filename=filename,
         encoding="utf-8",
         chapter_count=len(chapter_contents),
-        created_at=created_at or datetime.utcnow(),
+        created_at=created_at or utc_now(),
         chapters=[
             Chapter(
                 chapter_index=index,
@@ -124,7 +125,7 @@ def add_novel(
 def test_list_novels_returns_newest_first_and_total(
     db_session: Session,
 ) -> None:
-    older = datetime.utcnow() - timedelta(days=1)
+    older = utc_now() - timedelta(days=1)
     add_novel(db_session, "older.txt", ["旧内容"], created_at=older)
     latest = add_novel(db_session, "latest.txt", ["第一章", "第二章"])
 
@@ -165,7 +166,7 @@ def test_list_novels_returns_empty_page_for_empty_library() -> None:
 def test_list_novels_has_stable_id_order_and_allows_large_offset(
     db_session: Session,
 ) -> None:
-    created_at = datetime.utcnow()
+    created_at = utc_now()
     older_id = add_novel(
         db_session,
         "first.txt",
