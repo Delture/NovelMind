@@ -101,8 +101,9 @@ class DeepSeekProvider:
         response_model: Type[T],
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
+        before_attempt: Optional[Callable[[], None]] = None,
     ) -> JsonGenerationResult[T]:
-        """Generate one JSON object and validate it with a Pydantic model."""
+        """Generate JSON, allowing cancellation before every API attempt."""
         self._validate_reasoning_options(thinking, reasoning_effort)
         messages = [
             {
@@ -117,6 +118,7 @@ class DeepSeekProvider:
                 messages=messages,
                 thinking=thinking,
                 reasoning_effort=reasoning_effort,
+                before_attempt=before_attempt,
             )
             choice = self._first_choice(response)
             finish_reason = choice.finish_reason
@@ -145,6 +147,7 @@ class DeepSeekProvider:
         messages: list,
         thinking: bool,
         reasoning_effort: Optional[str],
+        before_attempt: Optional[Callable[[], None]],
     ):
         request_options = {
             "model": self._model,
@@ -162,6 +165,8 @@ class DeepSeekProvider:
             request_options["reasoning_effort"] = reasoning_effort
 
         for attempt in range(1, self._max_attempts + 1):
+            if before_attempt is not None:
+                before_attempt()
             try:
                 self._suppress_sensitive_sdk_debug_logs()
                 response = self._client.chat.completions.create(

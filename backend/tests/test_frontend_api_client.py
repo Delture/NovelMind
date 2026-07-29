@@ -532,3 +532,200 @@ def test_delete_novel_exposes_not_found_status(mock_delete: Mock) -> None:
         api_client.delete_novel(999)
 
     assert error_info.value.status_code == 404
+
+
+@patch("frontend.api_client.requests.get")
+def test_get_character_estimate_uses_disclosure_endpoint(
+    mock_get: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "chapter_count": 3,
+        "character_count": 1_024,
+        "estimated_generation_steps": 5,
+        "maximum_request_attempts": 15,
+    }
+    mock_get.return_value = response
+
+    result = api_client.get_character_estimate(
+        7,
+        backend_url="http://testserver/",
+    )
+
+    assert result["estimated_generation_steps"] == 5
+    mock_get.assert_called_once_with(
+        "http://testserver/api/novels/7/characters/estimate",
+        timeout=10,
+    )
+
+
+@patch("frontend.api_client.requests.post")
+def test_start_character_analysis_sends_consents_and_force(
+    mock_post: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 202
+    response.json.return_value = {
+        "id": "job-characters",
+        "job_type": "characters",
+        "status": "queued",
+    }
+    mock_post.return_value = response
+
+    result = api_client.start_character_analysis(
+        7,
+        confirm_external_processing=True,
+        confirm_content_rights=True,
+        force=True,
+        backend_url="http://testserver/",
+    )
+
+    assert result["id"] == "job-characters"
+    mock_post.assert_called_once_with(
+        "http://testserver/api/novels/7/characters",
+        json={
+            "confirm_external_processing": True,
+            "confirm_content_rights": True,
+            "force": True,
+        },
+        timeout=30,
+    )
+
+
+@patch("frontend.api_client.requests.get")
+def test_list_characters_sends_pagination_search_and_sort(
+    mock_get: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "items": [],
+        "total": 0,
+        "offset": 20,
+        "limit": 10,
+    }
+    mock_get.return_value = response
+
+    result = api_client.list_characters(
+        7,
+        offset=20,
+        limit=10,
+        search="林",
+        sort="first_chapter",
+        backend_url="http://testserver/",
+    )
+
+    assert result["items"] == []
+    mock_get.assert_called_once_with(
+        "http://testserver/api/novels/7/characters",
+        params={
+            "offset": 20,
+            "limit": 10,
+            "search": "林",
+            "sort": "first_chapter",
+        },
+        timeout=10,
+    )
+
+
+@patch("frontend.api_client.requests.get")
+def test_character_detail_appearances_and_relationships_use_endpoints(
+    mock_get: Mock,
+) -> None:
+    responses = []
+    for payload in (
+        {"id": 11, "canonical_name": "林舟"},
+        {"items": [], "total": 0},
+        {"items": [], "total": 0},
+    ):
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = payload
+        responses.append(response)
+    mock_get.side_effect = responses
+
+    assert api_client.get_character(
+        7,
+        11,
+        backend_url="http://testserver/",
+    )["canonical_name"] == "林舟"
+    assert api_client.list_character_appearances(
+        7,
+        11,
+        backend_url="http://testserver/",
+    )["total"] == 0
+    assert api_client.list_character_relationships(
+        7,
+        11,
+        backend_url="http://testserver/",
+    )["total"] == 0
+
+    assert [call.args[0] for call in mock_get.call_args_list] == [
+        "http://testserver/api/novels/7/characters/11",
+        "http://testserver/api/novels/7/characters/11/appearances",
+        "http://testserver/api/novels/7/characters/11/relationships",
+    ]
+    assert mock_get.call_args_list[1].kwargs["params"] == {
+        "offset": 0,
+        "limit": 100,
+    }
+    assert mock_get.call_args_list[2].kwargs["params"] == {
+        "offset": 0,
+        "limit": 100,
+    }
+    assert mock_get.call_args_list[1].kwargs["timeout"] == 10
+    assert mock_get.call_args_list[2].kwargs["timeout"] == 10
+
+
+@pytest.mark.parametrize(
+    ("function_name", "arguments", "request_method"),
+    [
+        ("get_character_estimate", (7,), "get"),
+        ("start_character_analysis", (7, True, True), "post"),
+        ("list_characters", (7,), "get"),
+        ("get_character", (7, 11), "get"),
+        ("list_character_appearances", (7, 11), "get"),
+        ("list_character_relationships", (7, 11), "get"),
+    ],
+)
+def test_character_clients_handle_connection_errors(
+    function_name: str,
+    arguments: tuple,
+    request_method: str,
+) -> None:
+    with patch(
+        f"frontend.api_client.requests.{request_method}",
+        side_effect=requests.ConnectionError,
+    ):
+        client_function = getattr(api_client, function_name)
+        with pytest.raises(NovelApiError, match="无法连接后端服务"):
+            client_function(*arguments)
+
+
+@pytest.mark.parametrize(
+    ("function_name", "arguments", "request_method"),
+    [
+        ("get_character_estimate", (7,), "get"),
+        ("start_character_analysis", (7, True, True), "post"),
+        ("list_characters", (7,), "get"),
+        ("get_character", (7, 11), "get"),
+        ("list_character_appearances", (7, 11), "get"),
+        ("list_character_relationships", (7, 11), "get"),
+    ],
+)
+def test_character_clients_reject_non_object_json(
+    function_name: str,
+    arguments: tuple,
+    request_method: str,
+) -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = []
+    with patch(
+        f"frontend.api_client.requests.{request_method}",
+        return_value=response,
+    ):
+        client_function = getattr(api_client, function_name)
+        with pytest.raises(NovelApiError, match="无法解析"):
+            client_function(*arguments)

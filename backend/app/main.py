@@ -3,6 +3,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from backend.app.api.characters import router as characters_router
 from backend.app.api.novels import router as novels_router
 from backend.app.api.summaries import router as summaries_router
 from backend.app.api.system import router as system_router
@@ -20,6 +21,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.include_router(characters_router, prefix="/api")
 app.include_router(novels_router, prefix="/api")
 app.include_router(summaries_router, prefix="/api")
 app.include_router(system_router, prefix="/api")

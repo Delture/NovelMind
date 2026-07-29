@@ -22,6 +22,7 @@ from backend.app.analyzer.llm import (
     ProviderUnavailableError,
 )
 from backend.app.analyzer import summaries as summaries_service
+from backend.app.analyzer import jobs as jobs_service
 from backend.app.analyzer.summaries import (
     ChapterSummaryPayload,
     fail_interrupted_jobs,
@@ -72,7 +73,10 @@ class FakeProvider:
         response_model: Type[BaseModel],
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
+        before_attempt: Optional[Callable[[], None]] = None,
     ) -> JsonGenerationResult:
+        if before_attempt is not None:
+            before_attempt()
         self.calls.append(
             {
                 "system_prompt": system_prompt,
@@ -129,6 +133,7 @@ class BlockingFakeProvider(FakeProvider):
         response_model: Type[BaseModel],
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
+        before_attempt: Optional[Callable[[], None]] = None,
     ) -> JsonGenerationResult:
         with self._entry_lock:
             self.entry_count += 1
@@ -141,6 +146,7 @@ class BlockingFakeProvider(FakeProvider):
             response_model=response_model,
             thinking=thinking,
             reasoning_effort=reasoning_effort,
+            before_attempt=before_attempt,
         )
 
 
@@ -864,7 +870,7 @@ def test_run_summary_job_terminalizes_save_lock_and_allows_requeue(
             provider.release_lock()
 
     monkeypatch.setattr(
-        summaries_service,
+        jobs_service,
         "_sleep_before_sqlite_retry",
         release_lock_after_retries,
     )

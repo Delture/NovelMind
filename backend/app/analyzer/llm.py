@@ -1,7 +1,15 @@
 """Provider-neutral contracts for structured LLM generation."""
 
 from dataclasses import dataclass
-from typing import Generic, Optional, Protocol, Type, TypeVar, runtime_checkable
+from typing import (
+    Callable,
+    Generic,
+    Optional,
+    Protocol,
+    Type,
+    TypeVar,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel
 
@@ -125,8 +133,9 @@ class LLMProvider(Protocol):
         response_model: Type[T],
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
+        before_attempt: Optional[Callable[[], None]] = None,
     ) -> JsonGenerationResult[T]:
-        """Generate and validate one JSON object."""
+        """Generate JSON, checking ``before_attempt`` before each send."""
         ...
 
     def close(self) -> None:

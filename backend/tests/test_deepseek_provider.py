@@ -291,6 +291,68 @@ def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
     assert result.value.summary == "valid"
 
 
+def test_before_attempt_can_stop_semantic_retries() -> None:
+    calls = 0
+    checks = 0
+
+    class Cancelled(RuntimeError):
+        pass
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response("{not-json")
+
+    def before_attempt() -> None:
+        nonlocal checks
+        checks += 1
+        if checks > 1:
+            raise Cancelled()
+
+    provider = make_provider(handler)
+    with pytest.raises(Cancelled):
+        provider.generate_json(
+            system_prompt="Return JSON.",
+            user_prompt="Analyze.",
+            response_model=AnalysisPayload,
+            before_attempt=before_attempt,
+        )
+
+    assert calls == 1
+    assert checks == 2
+
+
+def test_before_attempt_can_stop_network_retries() -> None:
+    calls = 0
+    checks = 0
+
+    class Cancelled(RuntimeError):
+        pass
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(status_code=503)
+
+    def before_attempt() -> None:
+        nonlocal checks
+        checks += 1
+        if checks > 1:
+            raise Cancelled()
+
+    provider = make_provider(handler)
+    with pytest.raises(Cancelled):
+        provider.generate_json(
+            system_prompt="Return JSON.",
+            user_prompt="Analyze.",
+            response_model=AnalysisPayload,
+            before_attempt=before_attempt,
+        )
+
+    assert calls == 1
+    assert checks == 2
+
+
 @pytest.mark.parametrize(
     "invalid_content",
     [

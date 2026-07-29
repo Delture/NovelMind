@@ -24,9 +24,11 @@ from backend.app.analyzer.deepseek import (
     DeepSeekProvider,
 )
 from backend.app.analyzer.llm import LLMProvider
+from backend.app.analyzer.jobs import (
+    mark_analysis_job_failed_with_sqlite_lock_retry,
+)
 from backend.app.analyzer.summaries import (
     estimate_summary_generation_steps,
-    mark_summary_job_failed_with_sqlite_lock_retry,
     run_summary_job,
 )
 from backend.app.core.config import Settings, get_settings
@@ -201,9 +203,10 @@ def _mark_committed_summary_job_failed(
             "undispatched summary job %s.",
             job_id,
         )
-    return mark_summary_job_failed_with_sqlite_lock_retry(
+    return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
+        "chapter_summaries",
         "摘要任务未能加入后台队列，请重试。",
         expected_status="queued",
         failure_context="background dispatch failure",

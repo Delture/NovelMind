@@ -68,6 +68,9 @@ NovelMind/
 - TXT 章节解析：`backend/app/parser/chapter_splitter.py`
 - TXT 小说上传接口：`POST /api/novels/upload`
 - SQLite 保存小说和章节：`backend/app/core/database.py`、`backend/app/models/novel.py`
+- DeepSeek 结构化章节摘要、缓存和持久化后台任务。
+- DeepSeek 人物分页抽取、全书归并、关系推理和本地确定性统计。
+- 人物搜索排序、详情、出场记录、关系查询和 Streamlit 人物工作区。
 - 基础文档：`README.md` 和 `docs/`
 
 `GET /health` 应返回：
@@ -175,13 +178,12 @@ test(parser): add chapter splitter tests
 3. SQLite 保存小说和章节（已完成）
 4. Streamlit 上传页面（已完成）
 5. 章节摘要（已完成）
-6. 角色抽取与统计
+6. 角色抽取与统计（已完成）
 7. RAG 问答
 8. 分析报告
 
-当前最推荐的下一步是实现角色抽取与统计。文本生成继续使用 DeepSeek V4 Pro
-API；RAG 所需 embedding 也必须使用外部 API，并在进入 RAG 里程碑前确定
-提供商。
+当前最推荐的下一步是先确认外部 embedding API 提供商，再实现 RAG 问答。
+文本生成继续使用 DeepSeek V4 Pro API；embedding 也必须使用外部 API。
 
 ## TXT 小说上传接口
 
@@ -208,6 +210,11 @@ Content-Type: application/octet-stream
 - 后端启动时自动创建缺少的表。
 - `novels` 表保存小说基本信息。
 - `chapters` 表保存章节顺序、标题、正文和字符数。
+- `chapter_summaries` 表保存结构化摘要、来源哈希、模型和提示词版本。
+- `analysis_jobs` 表保存持久化任务范围、状态和进度。
+- `chapter_character_extractions` 表保存逐章人物观察缓存。
+- `character_analyses`、`characters`、`character_appearances` 和
+  `character_relationships` 保存当前全书人物快照及本地统计。
 - 测试必须使用独立数据库，不得写入开发数据库。
 
 ## TXT 章节解析模块目标

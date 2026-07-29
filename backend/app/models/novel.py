@@ -39,6 +39,13 @@ class Novel(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    character_analysis = relationship(
+        "CharacterAnalysis",
+        back_populates="novel",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
 
 
 class Chapter(Base):
@@ -50,6 +57,11 @@ class Chapter(Base):
             "novel_id",
             "chapter_index",
             name="ux_chapters_novel_index",
+        ),
+        UniqueConstraint(
+            "novel_id",
+            "id",
+            name="uq_chapters_novel_id_id",
         ),
     )
 
@@ -73,7 +85,21 @@ class Chapter(Base):
         passive_deletes=True,
         uselist=False,
     )
+    character_extraction = relationship(
+        "ChapterCharacterExtraction",
+        back_populates="chapter",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+    character_appearances = relationship(
+        "CharacterAppearance",
+        back_populates="chapter",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 # Register string-based relationships when this module is imported alone.
 from backend.app.models import analysis as _analysis  # noqa: E402,F401
+from backend.app.models import character as _character  # noqa: E402,F401

@@ -54,6 +54,7 @@ def get_db() -> Generator[Session, None, None]:
 def init_db(db_engine: Engine = engine) -> None:
     """Create current tables, then apply and record schema migrations."""
     from backend.app.models import analysis  # noqa: F401
+    from backend.app.models import character  # noqa: F401
     from backend.app.models import novel  # noqa: F401
     from backend.app.core.migrations import run_migrations
 

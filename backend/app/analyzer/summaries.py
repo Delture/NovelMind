@@ -18,6 +18,10 @@ from pydantic import (
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from backend.app.analyzer.jobs import (
+    is_sqlite_lock_error,
+    mark_analysis_job_failed_with_sqlite_lock_retry,
+)
 from backend.app.analyzer.llm import LLMProvider, LLMProviderError
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob, ChapterSummary
@@ -180,6 +184,11 @@ def _summarize_text(
             ),
             response_model=ChapterSummaryPayload,
             thinking=False,
+            before_attempt=(
+                lambda: _ensure_summary_job_can_continue(
+                    should_continue
+                )
+            ),
         )
         partial_results.append(result.value)
         result_model = result.model
@@ -210,6 +219,11 @@ def _summarize_text(
                 ),
                 response_model=ChapterSummaryPayload,
                 thinking=False,
+                before_attempt=(
+                    lambda: _ensure_summary_job_can_continue(
+                        should_continue
+                    )
+                ),
             )
             reduced.append(result.value)
             result_model = result.model
@@ -279,14 +293,6 @@ def generate_chapter_summary(
     return existing, True
 
 
-def _is_sqlite_lock_error(error: OperationalError) -> bool:
-    message = str(getattr(error, "orig", error)).lower()
-    return (
-        "database is locked" in message
-        or "database table is locked" in message
-    )
-
-
 def _sleep_before_sqlite_retry(failed_attempt: int) -> None:
     time.sleep(
         SUMMARY_JOB_SQLITE_RETRY_BASE_SECONDS
@@ -324,7 +330,7 @@ def _claim_summary_job(
         except OperationalError as error:
             db.rollback()
             if (
-                not _is_sqlite_lock_error(error)
+                not is_sqlite_lock_error(error)
                 or attempt == SUMMARY_JOB_SQLITE_MAX_ATTEMPTS
             ):
                 raise
@@ -339,77 +345,15 @@ def _claim_summary_job(
     return 0
 
 
-def mark_summary_job_failed_with_sqlite_lock_retry(
-    session_factory: Callable[[], Session],
-    job_id: str,
-    error_message: str,
-    *,
-    expected_status: str,
-    failure_context: str,
-) -> bool:
-    """Conditionally terminalize a summary job using fresh sessions."""
-    for attempt in range(1, SUMMARY_JOB_SQLITE_MAX_ATTEMPTS + 1):
-        try:
-            with session_factory() as status_db:
-                updated = (
-                    status_db.query(AnalysisJob)
-                    .filter(
-                        AnalysisJob.id == job_id,
-                        AnalysisJob.job_type == "chapter_summaries",
-                        AnalysisJob.status == expected_status,
-                    )
-                    .update(
-                        {
-                            AnalysisJob.status: "failed",
-                            AnalysisJob.error_message: error_message,
-                            AnalysisJob.completed_at: utc_now(),
-                        },
-                        synchronize_session=False,
-                    )
-                )
-                status_db.commit()
-                if updated == 1:
-                    return True
-                job = status_db.get(AnalysisJob, job_id)
-                return job is None or job.status != expected_status
-        except OperationalError as error:
-            if (
-                not _is_sqlite_lock_error(error)
-                or attempt == SUMMARY_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                logger.error(
-                    "Could not mark summary job %s failed after %s.",
-                    job_id,
-                    failure_context,
-                )
-                return False
-            logger.warning(
-                "Summary job %s terminalization after %s hit a SQLite "
-                "write lock (attempt %s/%s).",
-                job_id,
-                failure_context,
-                attempt,
-                SUMMARY_JOB_SQLITE_MAX_ATTEMPTS,
-            )
-        except Exception:
-            logger.exception(
-                "Could not mark summary job %s failed after %s.",
-                job_id,
-                failure_context,
-            )
-            return False
-        _sleep_before_sqlite_retry(attempt)
-    return False
-
-
 def _mark_queued_job_failed_after_claim_error(
     session_factory: Callable[[], Session],
     job_id: str,
     error_message: str,
 ) -> bool:
-    return mark_summary_job_failed_with_sqlite_lock_retry(
+    return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
+        "chapter_summaries",
         error_message,
         expected_status="queued",
         failure_context="claim failure",
@@ -421,9 +365,10 @@ def _mark_running_job_failed_after_execution_error(
     job_id: str,
     error_message: str,
 ) -> bool:
-    return mark_summary_job_failed_with_sqlite_lock_retry(
+    return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
+        "chapter_summaries",
         error_message,
         expected_status="running",
         failure_context="execution failure",
@@ -488,7 +433,7 @@ def _run_summary_job(
             claimed = _claim_summary_job(db, job_id, claimed_at)
         except OperationalError as error:
             db.rollback()
-            is_lock_error = _is_sqlite_lock_error(error)
+            is_lock_error = is_sqlite_lock_error(error)
             if is_lock_error:
                 logger.error(
                     "Could not claim summary job %s after %s attempts.",
@@ -665,11 +610,11 @@ def _run_summary_job(
                         "Could not verify summary job %s cancellation.",
                         job_id,
                     )
-            is_sqlite_lock_error = (
+            sqlite_lock_failure = (
                 isinstance(error, OperationalError)
-                and _is_sqlite_lock_error(error)
+                and is_sqlite_lock_error(error)
             )
-            if is_sqlite_lock_error:
+            if sqlite_lock_failure:
                 logger.error(
                     "Summary job %s could not persist local progress "
                     "because the SQLite database remained locked.",
@@ -682,7 +627,7 @@ def _run_summary_job(
                 if isinstance(error, LLMProviderError)
                 else (
                     "摘要任务无法获取本地数据库写锁，请重试。"
-                    if is_sqlite_lock_error
+                    if sqlite_lock_failure
                     else "章节摘要任务执行失败，请查看后端日志后重试。"
                 )
             )[:1_000]

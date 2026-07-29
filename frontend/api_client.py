@@ -377,3 +377,165 @@ def list_analysis_jobs(
             "无法连接后端服务，请确认 FastAPI 已启动。"
         ) from error
     return _parse_response(response, "读取分析任务列表失败，请稍后重试。")
+
+
+def get_character_estimate(
+    novel_id: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return external-processing scope before character analysis."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/characters/estimate",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(
+        response,
+        "读取人物统计估算失败，请稍后重试。",
+    )
+
+
+def start_character_analysis(
+    novel_id: int,
+    confirm_external_processing: bool,
+    confirm_content_rights: bool,
+    force: bool = False,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start asynchronous character extraction for one novel."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.post(
+            f"{base_url}/api/novels/{novel_id}/characters",
+            json={
+                "confirm_external_processing": confirm_external_processing,
+                "confirm_content_rights": confirm_content_rights,
+                "force": force,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(
+        response,
+        "启动人物统计任务失败，请稍后重试。",
+    )
+
+
+def list_characters(
+    novel_id: int,
+    offset: int = 0,
+    limit: int = 20,
+    search: str = "",
+    sort: str = "mention_count",
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one searched and sorted page of saved characters."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/characters",
+            params={
+                "offset": offset,
+                "limit": limit,
+                "search": search,
+                "sort": sort,
+            },
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(
+        response,
+        "读取人物列表失败，请稍后重试。",
+    )
+
+
+def get_character(
+    novel_id: int,
+    character_id: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one saved character profile."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            (
+                f"{base_url}/api/novels/{novel_id}"
+                f"/characters/{character_id}"
+            ),
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(
+        response,
+        "读取人物详情失败，请稍后重试。",
+    )
+
+
+def list_character_appearances(
+    novel_id: int,
+    character_id: int,
+    offset: int = 0,
+    limit: int = 100,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return saved chapter appearances for one character."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            (
+                f"{base_url}/api/novels/{novel_id}"
+                f"/characters/{character_id}/appearances"
+            ),
+            params={"offset": offset, "limit": limit},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(
+        response,
+        "读取人物出场记录失败，请稍后重试。",
+    )
+
+
+def list_character_relationships(
+    novel_id: int,
+    character_id: int,
+    offset: int = 0,
+    limit: int = 100,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return saved relationships involving one character."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            (
+                f"{base_url}/api/novels/{novel_id}"
+                f"/characters/{character_id}/relationships"
+            ),
+            params={"offset": offset, "limit": limit},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(
+        response,
+        "读取人物关系失败，请稍后重试。",
+    )

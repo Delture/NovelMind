@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.analyzer import summaries as summaries_service
+from backend.app.analyzer import jobs as jobs_service
 from backend.app.api import summaries as summaries_api
 from backend.app.api.summaries import (
     StartSummariesRequest,
@@ -528,7 +529,7 @@ def test_dispatch_failure_retries_locked_terminalization_and_allows_requeue(
             tasks.release_lock()
 
     monkeypatch.setattr(
-        summaries_service,
+        jobs_service,
         "_sleep_before_sqlite_retry",
         release_lock_after_retries,
     )
