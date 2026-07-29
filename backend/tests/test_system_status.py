@@ -17,8 +17,10 @@ def test_system_status_reports_models_without_exposing_secrets() -> None:
         load_settings({}),
         deepseek_api_key="super-secret-api-key",
         embedding_api_key="embedding-secret-key",
-        embedding_base_url="https://embedding.example/v1",
-        embedding_model="embedding-model",
+        embedding_base_url=(
+            "https://ws-123.cn-beijing.maas.aliyuncs.com/"
+            "compatible-mode/v1"
+        ),
     )
 
     result = get_system_status(settings=settings)
@@ -32,8 +34,10 @@ def test_system_status_reports_models_without_exposing_secrets() -> None:
             "configured": True,
         },
         "embedding": {
-            "provider": "external_api",
-            "model": "embedding-model",
+            "provider": "aliyun_model_studio",
+            "model": "text-embedding-v4",
+            "dimensions": 1024,
+            "region": "cn-beijing",
             "configured": True,
         },
     }

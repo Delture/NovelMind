@@ -729,3 +729,172 @@ def test_character_clients_reject_non_object_json(
         client_function = getattr(api_client, function_name)
         with pytest.raises(NovelApiError, match="无法解析"):
             client_function(*arguments)
+
+
+@patch("frontend.api_client.requests.get")
+def test_rag_estimate_and_status_use_expected_endpoints(
+    mock_get: Mock,
+) -> None:
+    estimate_response = Mock()
+    estimate_response.status_code = 200
+    estimate_response.json.return_value = {"chunk_count": 4}
+    status_response = Mock()
+    status_response.status_code = 200
+    status_response.json.return_value = {"current": True}
+    mock_get.side_effect = [estimate_response, status_response]
+
+    assert api_client.get_rag_estimate(
+        7,
+        force=True,
+        backend_url="http://testserver/",
+    )["chunk_count"] == 4
+    assert api_client.get_rag_index_status(
+        7,
+        backend_url="http://testserver/",
+    )["current"] is True
+    assert mock_get.call_args_list[0].args[0] == (
+        "http://testserver/api/novels/7/rag/estimate"
+    )
+    assert mock_get.call_args_list[0].kwargs["params"] == {"force": True}
+    assert mock_get.call_args_list[1].args[0] == (
+        "http://testserver/api/novels/7/rag/index"
+    )
+
+
+@patch("frontend.api_client.requests.post")
+def test_start_rag_index_sends_all_confirmations(
+    mock_post: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 202
+    response.json.return_value = {"id": "rag-index-job", "status": "queued"}
+    mock_post.return_value = response
+
+    result = api_client.start_rag_index(
+        7,
+        confirm_external_processing=True,
+        confirm_content_rights=True,
+        force=True,
+        confirm_force_refresh=True,
+        backend_url="http://testserver/",
+    )
+
+    assert result["id"] == "rag-index-job"
+    mock_post.assert_called_once_with(
+        "http://testserver/api/novels/7/rag/index",
+        json={
+            "confirm_external_processing": True,
+            "confirm_content_rights": True,
+            "force": True,
+            "confirm_force_refresh": True,
+        },
+        timeout=30,
+    )
+
+
+@patch("frontend.api_client.requests.post")
+def test_start_rag_question_sends_provider_specific_consents(
+    mock_post: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 202
+    response.json.return_value = {
+        "id": "rag-question",
+        "status": "queued",
+    }
+    mock_post.return_value = response
+
+    result = api_client.start_rag_question(
+        7,
+        "钥匙在哪里？",
+        6,
+        confirm_embedding_processing=True,
+        confirm_generation_processing=True,
+        confirm_content_rights=True,
+        backend_url="http://testserver/",
+    )
+
+    assert result["id"] == "rag-question"
+    mock_post.assert_called_once_with(
+        "http://testserver/api/novels/7/rag/questions",
+        json={
+            "question": "钥匙在哪里？",
+            "top_k": 6,
+            "confirm_embedding_processing": True,
+            "confirm_generation_processing": True,
+            "confirm_content_rights": True,
+        },
+        timeout=30,
+    )
+
+
+@patch("frontend.api_client.requests.get")
+def test_rag_history_and_detail_use_persisted_question_endpoints(
+    mock_get: Mock,
+) -> None:
+    list_response = Mock()
+    list_response.status_code = 200
+    list_response.json.return_value = {
+        "items": [],
+        "total": 0,
+        "offset": 20,
+        "limit": 10,
+    }
+    detail_response = Mock()
+    detail_response.status_code = 200
+    detail_response.json.return_value = {
+        "id": "question-id",
+        "status": "succeeded",
+    }
+    mock_get.side_effect = [list_response, detail_response]
+
+    api_client.list_rag_questions(
+        7,
+        offset=20,
+        limit=10,
+        backend_url="http://testserver/",
+    )
+    api_client.get_rag_question(
+        7,
+        "question-id",
+        backend_url="http://testserver/",
+    )
+
+    assert mock_get.call_args_list[0].args[0] == (
+        "http://testserver/api/novels/7/rag/questions"
+    )
+    assert mock_get.call_args_list[0].kwargs["params"] == {
+        "offset": 20,
+        "limit": 10,
+    }
+    assert mock_get.call_args_list[1].args[0] == (
+        "http://testserver/api/novels/7/rag/questions/question-id"
+    )
+
+
+@pytest.mark.parametrize(
+    ("function_name", "arguments", "request_method"),
+    [
+        ("get_rag_estimate", (7,), "get"),
+        ("get_rag_index_status", (7,), "get"),
+        ("start_rag_index", (7, True, True), "post"),
+        (
+            "start_rag_question",
+            (7, "问题", 6, True, True, True),
+            "post",
+        ),
+        ("list_rag_questions", (7,), "get"),
+        ("get_rag_question", (7, "question-id"), "get"),
+    ],
+)
+def test_rag_clients_handle_connection_errors(
+    function_name: str,
+    arguments: tuple,
+    request_method: str,
+) -> None:
+    with patch(
+        f"frontend.api_client.requests.{request_method}",
+        side_effect=requests.ConnectionError,
+    ):
+        with pytest.raises(NovelApiError, match="无法连接后端服务"):
+            getattr(api_client, function_name)(*arguments)

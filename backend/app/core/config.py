@@ -1,6 +1,7 @@
 """Typed application settings loaded from environment variables."""
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Mapping, Optional
 from urllib.parse import urlparse
@@ -26,7 +27,10 @@ class Settings:
     deepseek_max_tokens: int
     embedding_api_key: Optional[str]
     embedding_base_url: Optional[str]
-    embedding_model: Optional[str]
+    embedding_model: str
+    embedding_dimensions: int
+    embedding_timeout_seconds: int
+    embedding_max_attempts: int
     chroma_path: str
 
     @property
@@ -37,13 +41,7 @@ class Settings:
     @property
     def embedding_configured(self) -> bool:
         """Return whether a complete external embedding API is configured."""
-        return all(
-            (
-                self.embedding_api_key,
-                self.embedding_base_url,
-                self.embedding_model,
-            )
-        )
+        return bool(self.embedding_api_key and self.embedding_base_url)
 
 
 def _required_value(
@@ -114,13 +112,38 @@ def _normalize_deepseek_base_url(value: str) -> str:
 
 
 def _normalize_embedding_base_url(value: str) -> str:
-    """Require encrypted transport for external embedding credentials."""
+    """Allow only a Beijing Model Studio workspace-compatible endpoint."""
     normalized = _normalize_http_url("EMBEDDING_BASE_URL", value)
-    if urlparse(normalized).scheme != "https":
+    parsed = urlparse(normalized)
+    hostname = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError as error:
         raise ConfigurationError(
-            "EMBEDDING_BASE_URL must use HTTPS"
+            "EMBEDDING_BASE_URL contains an invalid port"
+        ) from error
+    suffix = ".cn-beijing.maas.aliyuncs.com"
+    workspace_id = (
+        hostname[: -len(suffix)]
+        if hostname.endswith(suffix)
+        else ""
+    )
+    if (
+        parsed.scheme != "https"
+        or port is not None
+        or parsed.path != "/compatible-mode/v1"
+        or not re.fullmatch(
+            r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+            workspace_id,
         )
-    return normalized
+    ):
+        raise ConfigurationError(
+            "EMBEDDING_BASE_URL must be a Beijing Model Studio "
+            "workspace endpoint such as "
+            "https://WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/"
+            "compatible-mode/v1"
+        )
+    return f"https://{hostname}/compatible-mode/v1"
 
 
 def load_settings(environ: Mapping[str, str]) -> Settings:
@@ -142,16 +165,28 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         embedding_base_url = _normalize_embedding_base_url(
             embedding_base_url,
         )
-    embedding_model = _optional_value(environ, "EMBEDDING_MODEL")
-    embedding_values = (
-        embedding_api_key,
-        embedding_base_url,
-        embedding_model,
+    embedding_model = _required_value(
+        environ,
+        "EMBEDDING_MODEL",
+        "text-embedding-v4",
     )
-    if any(embedding_values) and not all(embedding_values):
+    if embedding_model != "text-embedding-v4":
         raise ConfigurationError(
-            "EMBEDDING_API_KEY, EMBEDDING_BASE_URL, and "
-            "EMBEDDING_MODEL must be configured together"
+            "EMBEDDING_MODEL must be text-embedding-v4"
+        )
+    embedding_dimensions = _positive_integer(
+        environ,
+        "EMBEDDING_DIMENSIONS",
+        1_024,
+    )
+    if embedding_dimensions != 1_024:
+        raise ConfigurationError(
+            "EMBEDDING_DIMENSIONS must be 1024"
+        )
+    if bool(embedding_api_key) != bool(embedding_base_url):
+        raise ConfigurationError(
+            "EMBEDDING_API_KEY and EMBEDDING_BASE_URL must be "
+            "configured together"
         )
 
     return Settings(
@@ -186,6 +221,17 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
         embedding_api_key=embedding_api_key,
         embedding_base_url=embedding_base_url,
         embedding_model=embedding_model,
+        embedding_dimensions=embedding_dimensions,
+        embedding_timeout_seconds=_positive_integer(
+            environ,
+            "EMBEDDING_TIMEOUT_SECONDS",
+            120,
+        ),
+        embedding_max_attempts=_positive_integer(
+            environ,
+            "EMBEDDING_MAX_ATTEMPTS",
+            3,
+        ),
         chroma_path=_required_value(
             environ,
             "CHROMA_PATH",

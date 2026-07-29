@@ -1,5 +1,6 @@
 """API endpoints for uploading novels."""
 
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -19,12 +20,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
+from backend.app.core.config import Settings, get_settings
 from backend.app.models.novel import Chapter as ChapterModel
 from backend.app.models.novel import Novel
+from backend.app.models.rag import RagIndex
 from backend.app.parser.chapter_splitter import split_chapters
+from backend.app.rag.vector_store import ChromaVectorStore
 
 
 router = APIRouter(prefix="/novels", tags=["novels"])
+logger = logging.getLogger(__name__)
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_CHAPTERS = 10_000
@@ -397,9 +402,13 @@ def get_chapter(
 def delete_novel(
     novel_id: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> Response:
     """Delete one novel and all of its dependent records."""
     novel = get_novel_or_404(db, novel_id)
+    collection_name = db.query(RagIndex.collection_name).filter(
+        RagIndex.novel_id == novel_id
+    ).scalar()
     try:
         db.delete(novel)
         db.commit()
@@ -409,4 +418,16 @@ def delete_novel(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="小说删除失败，请稍后重试。",
         ) from error
+    if collection_name:
+        try:
+            ChromaVectorStore(settings.chroma_path).delete_collection(
+                str(collection_name)
+            )
+        except Exception:
+            logger.exception(
+                "Novel %s was deleted but its derived RAG collection "
+                "%s could not be cleaned immediately.",
+                novel_id,
+                collection_name,
+            )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

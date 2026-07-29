@@ -6,7 +6,7 @@
 
 NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统。
 
-当前阶段的重点不是完整 RAG，而是先把“小说文本解析、上传、存储、展示”这些基础能力逐步做好。
+当前已完成文本基础、摘要、人物分析和 RAG 问答，下一阶段是分析报告。
 
 ## 使用者背景
 
@@ -25,7 +25,8 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - 前端展示：Streamlit
 - 数据库：SQLite
 - ORM：SQLAlchemy
-- 向量库：Chroma，当前只保留接口和占位设计，不急着完整接入
+- 外部 embedding：阿里云百炼北京区 `text-embedding-v4`，固定 1024 维
+- 向量库：Chroma，只保存外部生成的派生向量
 - 测试：pytest
 
 ## 当前项目结构
@@ -38,7 +39,7 @@ NovelMind/
       core/         # 配置、数据库连接等基础能力
       models/       # SQLAlchemy 数据模型
       parser/       # 小说章节解析逻辑
-      rag/          # RAG 和向量库相关代码，当前先占位
+      rag/          # 分块、百炼 embedding、Chroma、问答和清理
       analyzer/     # 摘要、角色抽取、结构分析等逻辑
       main.py       # FastAPI 应用入口
     tests/          # pytest 测试
@@ -140,7 +141,7 @@ python -m pytest -q
 - 后端接口放在 `backend/app/api/`，基础配置放在 `backend/app/core/`。
 - 数据模型放在 `backend/app/models/`。
 - 章节解析逻辑放在 `backend/app/parser/`。
-- RAG 相关代码放在 `backend/app/rag/`，当前阶段保持轻量占位。
+- RAG 相关代码放在 `backend/app/rag/`，不得引入本地模型运行时。
 - 分析类功能放在 `backend/app/analyzer/`。
 - 测试文件放在 `backend/tests/`，文件名使用 `test_*.py`。
 
@@ -179,11 +180,11 @@ test(parser): add chapter splitter tests
 4. Streamlit 上传页面（已完成）
 5. 章节摘要（已完成）
 6. 角色抽取与统计（已完成）
-7. RAG 问答
+7. RAG 问答（已完成）
 8. 分析报告
 
-当前最推荐的下一步是先确认外部 embedding API 提供商，再实现 RAG 问答。
-文本生成继续使用 DeepSeek V4 Pro API；embedding 也必须使用外部 API。
+当前最推荐的下一步是实现外部 API 生成的分析报告。文本生成继续使用
+DeepSeek V4 Pro API；embedding 使用百炼北京区 `text-embedding-v4`。
 
 ## TXT 小说上传接口
 
@@ -252,7 +253,7 @@ def split_chapters(raw_text: str) -> list[Chapter]:
 
 ## RAG 设计原则
 
-RAG 不要过早实现。后续设计方向：
+RAG 已实现的数据流：
 
 ```text
 用户问题
@@ -266,13 +267,14 @@ RAG 不要过早实现。后续设计方向：
 返回答案 + 引用来源
 ```
 
-未来需要考虑：
+实现约束：
 
-- 章节文本 chunk 切分大小。
-- 中文网络小说章节标题识别。
-- 人物、地点、事件抽取。
-- Chroma 向量数据和 SQLite 章节数据之间的关联。
-- RAG 回答中的引用来源展示。
+- 确定性 1200 字符分块、200 字符重叠，分块算法必须版本化。
+- embedding 端点只允许百炼北京区专属工作空间，模型固定 1024 维。
+- Chroma 不保存原文，也不运行 embedding function。
+- 新版本集合完整校验后才切换 SQLite 当前指针，失败保留旧索引。
+- 检索命中必须回查 SQLite 并校验原文范围与哈希。
+- DeepSeek 引用只能来自本次检索 ID，答案和引用只按纯文本展示。
 
 ## 已知依赖注意事项
 

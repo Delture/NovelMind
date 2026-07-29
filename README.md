@@ -3,8 +3,8 @@
 NovelMind 是一个面向本地单用户的网络小说结构分析与写作辅助系统。
 
 本地负责 TXT 解析、SQLite 存储、任务编排、统计和界面展示；生成与理解类
-能力通过外部 API 完成。目前已接入 DeepSeek V4 Pro 章节摘要与人物分析，
-后续将继续加入 RAG 问答和分析报告。
+能力通过外部 API 完成。目前已接入 DeepSeek V4 Pro 章节摘要、人物分析和
+带引用的 RAG 问答；后续将继续加入分析报告。
 
 ## 技术栈
 
@@ -13,7 +13,8 @@ NovelMind 是一个面向本地单用户的网络小说结构分析与写作辅�
 - 数据库：SQLite
 - ORM：SQLAlchemy
 - 文本生成：DeepSeek V4 Pro API
-- 向量库：Chroma（RAG 阶段接入）
+- 外部 embedding：阿里云百炼北京区 `text-embedding-v4`（1024 维）
+- 向量库：Chroma（只存储外部生成的向量，不运行本地模型）
 - 测试：pytest
 
 ## 安装依赖
@@ -53,6 +54,17 @@ Copy-Item .env.example .env
 章节标题与正文，并分别要求确认外部处理和内容处理权利。DeepSeek 的缓存、
 留存、服务改进和数据处理规则以界面链接的官方条款与隐私政策为准。
 
+如需使用 RAG，请同时在本地 `.env` 填写 `EMBEDDING_API_KEY` 和北京区
+专属工作空间端点 `EMBEDDING_BASE_URL`。端点格式必须为：
+
+```text
+https://WORKSPACE_ID.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+```
+
+模型固定为 `text-embedding-v4`，维度固定为 `1024`。Key 和工作空间端点
+必须同属北京区。建索引会把章节标题和原文片段发送至百炼；提问会把问题发送
+至百炼，再把问题和检索片段发送至 DeepSeek。界面会逐项披露并要求确认。
+
 ## 启动后端
 
 ```powershell
@@ -73,7 +85,8 @@ streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 ```
 
 浏览器通常会自动打开 `http://127.0.0.1:8501`。页面显示“后端已连接”后，
-即可导入小说、从资料库重新打开小说、阅读正文、生成章节摘要或分析人物。
+即可导入小说、从资料库重新打开小说、阅读正文、生成章节摘要、分析人物或
+使用 RAG 原文问答。
 `.streamlit/config.toml` 也固定监听 `127.0.0.1` 并保持 CORS/XSRF 防护开启；
 不要为本地单用户模式改成 `0.0.0.0`。
 
@@ -92,9 +105,14 @@ streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 - 已在发送正文前展示处理范围、官方条款与隐私政策，并要求用户分别确认
   外部处理和内容处理权利。
 - 已提供 Streamlit 上传、资料库、正文阅读、摘要和人物统计工作区。
+- 已接入百炼北京区外部 embedding、确定性分块和增量向量复用。
+- 已提供版本化 Chroma 集合、SQLite 原子索引指针、失败保留旧索引和
+  启动孤立集合清理。
+- 已提供索引估算与授权、查询向量、原文来源复核、DeepSeek 结构化回答、
+  引用白名单、证据不足标记和可恢复问答历史。
+- 已提供 Streamlit RAG 工作区；答案和原文引用只按纯文本展示。
 
-RAG 问答和分析报告尚未实现。RAG 所需的 embedding 也将调用外部 API，
-不在本地运行模型；提供商会在进入 RAG 里程碑前确定。
+分析报告尚未实现；报告生成仍将调用外部 API，不在本地运行模型。
 
 默认数据库文件位于 `data/novelmind.db`，启动后端时自动创建。该文件已被 Git 忽略。
 
@@ -108,7 +126,10 @@ python -m pytest -q
 
 默认测试使用假模型提供商，不访问真实付费 API。
 
-当前完整回归基线为 `360 passed`。人物抽取单页最多返回 8 条观察；如果
+当前完整回归基线为 `450 passed`。人物抽取单页最多返回 8 条观察；如果
 DeepSeek 声明仍有未返回人物，后端会继续调用 API（每个片段最多 16 页）。
 重复页、空续页、越界 ID 或超过页数上限都会让本次任务原子失败，不会用
 不完整结果覆盖旧人物快照。
+
+RAG 测试使用假百炼/DeepSeek 提供商和临时 Chroma，不访问真实付费 API；
+会校验 1024 维响应、增量复用、原子索引、正文篡改、伪造引用和纯文本渲染。

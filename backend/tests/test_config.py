@@ -18,7 +18,10 @@ def test_load_settings_uses_safe_local_defaults() -> None:
     assert settings.deepseek_max_tokens == 8_192
     assert settings.embedding_api_key is None
     assert settings.embedding_base_url is None
-    assert settings.embedding_model is None
+    assert settings.embedding_model == "text-embedding-v4"
+    assert settings.embedding_dimensions == 1_024
+    assert settings.embedding_timeout_seconds == 120
+    assert settings.embedding_max_attempts == 3
     assert settings.chroma_path == "./chroma_db"
     assert settings.deepseek_configured is False
     assert settings.embedding_configured is False
@@ -36,8 +39,14 @@ def test_load_settings_normalizes_explicit_values() -> None:
             "DEEPSEEK_MAX_ATTEMPTS": "4",
             "DEEPSEEK_MAX_TOKENS": "4096",
             "EMBEDDING_API_KEY": " embedding-secret ",
-            "EMBEDDING_BASE_URL": "https://embedding.example/v1/",
-            "EMBEDDING_MODEL": "embedding-model",
+            "EMBEDDING_BASE_URL": (
+                "https://ws-123.cn-beijing.maas.aliyuncs.com/"
+                "compatible-mode/v1/"
+            ),
+            "EMBEDDING_MODEL": "text-embedding-v4",
+            "EMBEDDING_DIMENSIONS": "1024",
+            "EMBEDDING_TIMEOUT_SECONDS": "180",
+            "EMBEDDING_MAX_ATTEMPTS": "4",
             "CHROMA_PATH": "./data/vectors",
         }
     )
@@ -51,8 +60,14 @@ def test_load_settings_normalizes_explicit_values() -> None:
     assert settings.deepseek_max_attempts == 4
     assert settings.deepseek_max_tokens == 4_096
     assert settings.embedding_api_key == "embedding-secret"
-    assert settings.embedding_base_url == "https://embedding.example/v1"
-    assert settings.embedding_model == "embedding-model"
+    assert settings.embedding_base_url == (
+        "https://ws-123.cn-beijing.maas.aliyuncs.com/"
+        "compatible-mode/v1"
+    )
+    assert settings.embedding_model == "text-embedding-v4"
+    assert settings.embedding_dimensions == 1_024
+    assert settings.embedding_timeout_seconds == 180
+    assert settings.embedding_max_attempts == 4
     assert settings.chroma_path == "./data/vectors"
     assert settings.deepseek_configured is True
     assert settings.embedding_configured is True
@@ -67,6 +82,9 @@ def test_load_settings_normalizes_explicit_values() -> None:
         ("DEEPSEEK_MAX_ATTEMPTS", "2.5"),
         ("DEEPSEEK_MAX_TOKENS", "0"),
         ("DEEPSEEK_MAX_TOKENS", "2.5"),
+        ("EMBEDDING_TIMEOUT_SECONDS", "0"),
+        ("EMBEDDING_MAX_ATTEMPTS", "not-a-number"),
+        ("EMBEDDING_DIMENSIONS", "0"),
     ],
 )
 def test_load_settings_rejects_invalid_positive_integers(
@@ -96,11 +114,15 @@ def test_load_settings_rejects_blank_required_values(name: str) -> None:
     "environ",
     [
         {"EMBEDDING_API_KEY": "key"},
-        {"EMBEDDING_BASE_URL": "https://embedding.example/v1"},
-        {"EMBEDDING_MODEL": "embedding-model"},
+        {
+            "EMBEDDING_BASE_URL": (
+                "https://ws-123.cn-beijing.maas.aliyuncs.com/"
+                "compatible-mode/v1"
+            )
+        },
         {
             "EMBEDDING_API_KEY": "key",
-            "EMBEDDING_MODEL": "embedding-model",
+            "EMBEDDING_MODEL": "text-embedding-v4",
         },
     ],
 )
@@ -122,8 +144,11 @@ def test_embedding_api_configuration_must_be_complete(
             "EMBEDDING_BASE_URL",
             {
                 "EMBEDDING_API_KEY": "key",
-                "EMBEDDING_BASE_URL": "embedding.example/v1",
-                "EMBEDDING_MODEL": "embedding-model",
+                "EMBEDDING_BASE_URL": (
+                    "ws-123.cn-beijing.maas.aliyuncs.com/"
+                    "compatible-mode/v1"
+                ),
+                "EMBEDDING_MODEL": "text-embedding-v4",
             },
         ),
     ],
@@ -155,9 +180,12 @@ def test_deepseek_base_url_rejects_non_official_origins_and_paths(
 @pytest.mark.parametrize(
     "base_url",
     [
-        "http://embedding.example/v1",
-        "http://127.0.0.1:8080/v1",
-        "http://localhost:8080/v1",
+        (
+            "http://ws-123.cn-beijing.maas.aliyuncs.com/"
+            "compatible-mode/v1"
+        ),
+        "http://127.0.0.1:8080/compatible-mode/v1",
+        "http://localhost:8080/compatible-mode/v1",
     ],
 )
 def test_embedding_base_url_requires_https(base_url: str) -> None:
@@ -166,6 +194,45 @@ def test_embedding_base_url_requires_https(base_url: str) -> None:
             {
                 "EMBEDDING_API_KEY": "key",
                 "EMBEDDING_BASE_URL": base_url,
-                "EMBEDDING_MODEL": "embedding-model",
+                "EMBEDDING_MODEL": "text-embedding-v4",
             }
         )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "https://ws-123.cn-shanghai.maas.aliyuncs.com/compatible-mode/v1",
+        "https://ws-123.cn-beijing.maas.aliyuncs.com/v1",
+        "https://ws-123.cn-beijing.maas.aliyuncs.com:443/compatible-mode/v1",
+        "https://ws-123.cn-beijing.maas.aliyuncs.com:bad/compatible-mode/v1",
+        "https://a.b.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        "https://-bad.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    ],
+)
+def test_embedding_base_url_rejects_non_workspace_beijing_origins(
+    base_url: str,
+) -> None:
+    with pytest.raises(ConfigurationError, match="EMBEDDING_BASE_URL"):
+        load_settings(
+            {
+                "EMBEDDING_API_KEY": "key",
+                "EMBEDDING_BASE_URL": base_url,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {"EMBEDDING_MODEL": "text-embedding-v3"},
+        {"EMBEDDING_DIMENSIONS": "768"},
+        {"EMBEDDING_DIMENSIONS": "2048"},
+    ],
+)
+def test_embedding_model_and_dimensions_are_fixed(
+    environ: dict[str, str],
+) -> None:
+    with pytest.raises(ConfigurationError, match="EMBEDDING_"):
+        load_settings(environ)

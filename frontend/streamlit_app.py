@@ -15,6 +15,9 @@ from api_client import (
     get_chapter,
     get_chapter_summary,
     get_novel,
+    get_rag_estimate,
+    get_rag_index_status,
+    get_rag_question,
     get_summary_estimate,
     get_system_status,
     list_analysis_jobs,
@@ -23,10 +26,14 @@ from api_client import (
     list_characters,
     list_chapters,
     list_novels,
+    list_rag_index_jobs,
+    list_rag_questions,
     list_summaries,
     start_character_analysis,
     start_chapter_summary,
     start_summaries,
+    start_rag_index,
+    start_rag_question,
     upload_novel,
 )
 from ui_styles import APP_CSS
@@ -38,6 +45,7 @@ CHAPTER_PAGE_SIZE = 50
 SUMMARY_PAGE_SIZE = 20
 CHARACTER_PAGE_SIZE = 20
 CHARACTER_DETAIL_PAGE_SIZE = 50
+RAG_HISTORY_PAGE_SIZE = 10
 ACTIVE_JOB_STATUSES = {"queued", "running"}
 
 
@@ -222,6 +230,38 @@ def _require_deepseek_url(
     return value
 
 
+def _require_policy_url(
+    payload: Dict[str, Any],
+    key: str,
+    context: str,
+    *,
+    allowed_hostname: str,
+) -> str:
+    """Return a credential-free HTTPS policy link on one exact host."""
+    value = _require_text(payload, key, context)
+    try:
+        parsed = urlparse(value)
+    except ValueError as error:
+        raise UiPayloadError(
+            f"{context}.{key} 不是有效链接"
+        ) from error
+    if (
+        parsed.scheme != "https"
+        or (parsed.hostname or "").lower() != allowed_hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port is not None
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() for character in value)
+        or any(character in value for character in "()")
+    ):
+        raise UiPayloadError(
+            f"{context}.{key} 应为 {allowed_hostname} 官方 HTTPS 链接"
+        )
+    return value
+
+
 def _show_payload_error(context: str, error: UiPayloadError) -> None:
     """Explain a response-contract problem without exposing a traceback."""
     st.error(
@@ -265,6 +305,7 @@ def initialize_session_state() -> None:
         "reader_chapter_page": 0,
         "reader_chapter_index": None,
         "delete_candidate_id": None,
+        "rag_history_pages": {},
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -665,12 +706,12 @@ def render_novel_detail(novel_id: int, backend_online: bool) -> None:
 
     render_page_heading(
         novel["filename"],
-        "章节阅读、DeepSeek 摘要与人物统计",
+        "章节阅读、DeepSeek 分析与 RAG 原文问答",
     )
     render_novel_metrics(novel)
     mode = st.radio(
         "小说工作区",
-        options=["章节摘要", "正文阅读", "人物统计"],
+        options=["章节摘要", "正文阅读", "人物统计", "RAG 问答"],
         horizontal=True,
         key=f"novel_mode_{novel_id}",
     )
@@ -678,8 +719,10 @@ def render_novel_detail(novel_id: int, backend_online: bool) -> None:
         render_summary_workspace(novel)
     elif mode == "正文阅读":
         render_reader_workspace(novel)
-    else:
+    elif mode == "人物统计":
         render_character_workspace(novel)
+    else:
+        render_rag_workspace(novel)
 
 
 def _summary_start_error(error: NovelApiError) -> None:
@@ -2327,6 +2370,580 @@ def render_character_workspace(novel: Dict[str, Any]) -> None:
         force_maximum_attempts,
     )
     _render_character_results(novel_id)
+
+
+def _load_rag_context(novel_id: int) -> Optional[Dict[str, Any]]:
+    """Validate RAG disclosures, readiness, and the latest index task."""
+    try:
+        estimate = get_rag_estimate(novel_id)
+        index_status = get_rag_index_status(novel_id)
+        jobs = list_rag_index_jobs(novel_id, limit=10)
+    except NovelApiError as error:
+        st.error(f"无法读取 RAG 状态：{error}")
+        return None
+    try:
+        estimate = _require_object(estimate, "RAG 估算")
+        index_status = _require_object(index_status, "RAG 索引状态")
+        jobs = _require_object(jobs, "RAG 索引任务列表")
+        if _require_int(
+            estimate,
+            "novel_id",
+            "RAG 估算",
+            minimum=1,
+        ) != novel_id:
+            raise UiPayloadError("RAG 估算.novel_id 与当前小说不符")
+        chapter_count = _require_int(
+            estimate,
+            "chapter_count",
+            "RAG 估算",
+        )
+        character_count = _require_int(
+            estimate,
+            "character_count",
+            "RAG 估算",
+        )
+        chunk_count = _require_int(
+            estimate,
+            "chunk_count",
+            "RAG 估算",
+        )
+        reusable_count = _require_int(
+            estimate,
+            "reusable_chunk_count",
+            "RAG 估算",
+        )
+        new_embedding_count = _require_int(
+            estimate,
+            "estimated_new_embedding_count",
+            "RAG 估算",
+        )
+        max_index_attempts = _require_int(
+            estimate,
+            "maximum_index_embedding_attempts",
+            "RAG 估算",
+        )
+        max_question_attempts = _require_int(
+            estimate,
+            "maximum_question_embedding_attempts",
+            "RAG 估算",
+        )
+        max_answer_attempts = _require_int(
+            estimate,
+            "maximum_answer_generation_attempts",
+            "RAG 估算",
+        )
+        embedding_configured = _require_bool(
+            estimate,
+            "embedding_configured",
+            "RAG 估算",
+        )
+        generation_configured = _require_bool(
+            estimate,
+            "generation_configured",
+            "RAG 估算",
+        )
+        index_current = _require_bool(
+            estimate,
+            "index_current",
+            "RAG 估算",
+        )
+        embedding_provider = _require_text(
+            estimate,
+            "embedding_provider",
+            "RAG 估算",
+        )
+        embedding_model = _require_text(
+            estimate,
+            "embedding_model",
+            "RAG 估算",
+        )
+        dimensions = _require_int(
+            estimate,
+            "embedding_dimensions",
+            "RAG 估算",
+            minimum=1,
+        )
+        region = _require_text(
+            estimate,
+            "embedding_region",
+            "RAG 估算",
+        )
+        generation_model = _require_text(
+            estimate,
+            "generation_model",
+            "RAG 估算",
+        )
+        if (
+            embedding_provider != "aliyun_model_studio"
+            or embedding_model != "text-embedding-v4"
+            or dimensions != 1_024
+            or region != "cn-beijing"
+        ):
+            raise UiPayloadError("RAG embedding 配置不是已选定的北京区方案")
+        for key in (
+            "sends_chapter_titles_and_original_chunks_to_bailian",
+            "sends_question_to_bailian",
+            "sends_question_and_retrieved_chunks_to_deepseek",
+        ):
+            if not _require_bool(estimate, key, "RAG 估算"):
+                raise UiPayloadError(f"RAG 估算.{key} 应为 true")
+        notice = _require_text(
+            estimate,
+            "data_handling_notice",
+            "RAG 估算",
+        )
+        bailian_terms = _require_policy_url(
+            estimate,
+            "bailian_terms_url",
+            "RAG 估算",
+            allowed_hostname="help.aliyun.com",
+        )
+        bailian_privacy = _require_policy_url(
+            estimate,
+            "bailian_privacy_url",
+            "RAG 估算",
+            allowed_hostname="help.aliyun.com",
+        )
+        deepseek_terms = _require_policy_url(
+            estimate,
+            "deepseek_terms_url",
+            "RAG 估算",
+            allowed_hostname="cdn.deepseek.com",
+        )
+        deepseek_privacy = _require_policy_url(
+            estimate,
+            "deepseek_privacy_url",
+            "RAG 估算",
+            allowed_hostname="cdn.deepseek.com",
+        )
+        if _require_int(
+            index_status,
+            "novel_id",
+            "RAG 索引状态",
+            minimum=1,
+        ) != novel_id:
+            raise UiPayloadError("RAG 索引状态.novel_id 与当前小说不符")
+        status_ready = _require_bool(
+            index_status,
+            "ready",
+            "RAG 索引状态",
+        )
+        status_current = _require_bool(
+            index_status,
+            "current",
+            "RAG 索引状态",
+        )
+        stored_chunk_count = _require_int(
+            index_status,
+            "chunk_count",
+            "RAG 索引状态",
+        )
+        items = _require_list(jobs, "items", "RAG 索引任务列表")
+        _require_int(jobs, "total", "RAG 索引任务列表")
+        latest_job: Optional[Dict[str, Any]] = None
+        if items:
+            latest_job = _require_object(
+                items[0],
+                "RAG 索引任务列表.items[0]",
+            )
+            _require_text(
+                latest_job,
+                "id",
+                "RAG 索引任务列表.items[0]",
+            )
+            _require_text(
+                latest_job,
+                "status",
+                "RAG 索引任务列表.items[0]",
+            )
+            _require_int(
+                latest_job,
+                "progress_current",
+                "RAG 索引任务列表.items[0]",
+            )
+            _require_int(
+                latest_job,
+                "progress_total",
+                "RAG 索引任务列表.items[0]",
+            )
+    except UiPayloadError as error:
+        _show_payload_error("无法读取 RAG 状态", error)
+        return None
+
+    columns = st.columns(4)
+    columns[0].metric("章节", f"{chapter_count:,}")
+    columns[1].metric("正文字符", f"{character_count:,}")
+    columns[2].metric("索引片段", f"{chunk_count:,}")
+    columns[3].metric("可复用向量", f"{reusable_count:,}")
+    st.caption(
+        f"百炼北京区 · {embedding_model} · {dimensions} 维；"
+        f"DeepSeek · {generation_model}"
+    )
+    st.caption(
+        f"预计新嵌入 {new_embedding_count:,} 段；索引最多请求尝试 "
+        f"{max_index_attempts:,} 次；每次提问最多百炼 "
+        f"{max_question_attempts:,} 次、DeepSeek "
+        f"{max_answer_attempts:,} 次。"
+    )
+    st.warning(notice)
+    st.markdown(
+        f"[阿里云百炼服务说明]({bailian_terms}) · "
+        f"[阿里云百炼隐私声明]({bailian_privacy}) · "
+        f"[DeepSeek 服务条款]({deepseek_terms}) · "
+        f"[DeepSeek 隐私政策]({deepseek_privacy})"
+    )
+    if not embedding_configured:
+        st.error(
+            "尚未配置阿里云百炼北京区 API Key 与专属工作空间端点。"
+        )
+    if not generation_configured:
+        st.error("尚未配置 DeepSeek API Key。")
+    if status_current and index_current:
+        st.success(f"RAG 索引已就绪，共 {stored_chunk_count:,} 个片段。")
+    elif status_ready:
+        st.warning("现有 RAG 索引已过期，请重建后再提问。")
+    else:
+        st.info("尚未建立 RAG 索引。")
+
+    if latest_job is not None:
+        latest_status = str(latest_job["status"])
+        current = int(latest_job["progress_current"])
+        total = int(latest_job["progress_total"])
+        st.subheader("最近索引任务")
+        st.write(f"状态：{latest_status} · 进度：{current:,}/{total:,}")
+        error_message = latest_job.get("error_message")
+        if latest_status == "failed" and isinstance(error_message, str):
+            _render_plain_text(error_message)
+    return {
+        "embedding_configured": embedding_configured,
+        "generation_configured": generation_configured,
+        "index_current": bool(status_current and index_current),
+        "latest_job": latest_job,
+    }
+
+
+def _render_rag_index_actions(
+    novel_id: int,
+    context: Dict[str, Any],
+) -> None:
+    """Render explicit Bailian source-processing confirmation gates."""
+    st.subheader("建立检索索引")
+    external_consent = st.checkbox(
+        (
+            "我明确同意将章节标题和小说原文片段发送至"
+            "阿里云百炼北京区 text-embedding-v4 API"
+        ),
+        key=f"rag_index_external_consent_{novel_id}",
+    )
+    content_rights = st.checkbox(
+        "我确认有权将该小说内容交给阿里云百炼处理",
+        key=f"rag_index_content_rights_{novel_id}",
+    )
+    force = st.checkbox(
+        "强制全量重建索引并重新发送全部片段",
+        key=f"rag_index_force_{novel_id}",
+    )
+    force_confirmed = False
+    if force:
+        st.warning("强制重建不会复用旧向量，会再次发送全部原文片段。")
+        force_confirmed = st.checkbox(
+            "我确认重新发送全部原文片段",
+            key=f"rag_index_force_confirm_{novel_id}",
+        )
+    latest_job = context.get("latest_job")
+    active = (
+        isinstance(latest_job, dict)
+        and str(latest_job.get("status")) in ACTIVE_JOB_STATUSES
+    )
+    clicked = st.button(
+        "建立或更新索引" if not force else "强制重建索引",
+        key=f"start_rag_index_{novel_id}",
+        disabled=(
+            not bool(context["embedding_configured"])
+            or not external_consent
+            or not content_rights
+            or active
+            or (force and not force_confirmed)
+        ),
+    )
+    if not clicked:
+        return
+    try:
+        job = start_rag_index(
+            novel_id,
+            confirm_external_processing=external_consent,
+            confirm_content_rights=content_rights,
+            force=force,
+            confirm_force_refresh=force_confirmed,
+        )
+        job = _require_object(job, "RAG 索引任务")
+        job_id = _require_text(job, "id", "RAG 索引任务")
+    except NovelApiError as error:
+        if error.status_code == 409:
+            st.warning(str(error))
+        else:
+            st.error(str(error))
+        return
+    except UiPayloadError as error:
+        _show_payload_error("无法确认 RAG 索引任务", error)
+        return
+    st.success(f"RAG 索引任务已创建：{job_id}")
+    st.rerun()
+
+
+def _validate_rag_question_item(
+    value: Any,
+    context: str,
+) -> Dict[str, Any]:
+    item = _require_object(value, context)
+    _require_text(item, "id", context)
+    _require_int(item, "novel_id", context, minimum=1)
+    _require_text(item, "question", context)
+    _require_int(item, "top_k", context, minimum=3)
+    status_value = _require_text(item, "status", context)
+    if status_value not in {"queued", "running", "succeeded", "failed"}:
+        raise UiPayloadError(f"{context}.status 无效")
+    _require_text(item, "generation_model", context)
+    _require_int(item, "retrieved_evidence_count", context)
+    citations = _require_list(item, "citations", context)
+    for index, raw_citation in enumerate(citations):
+        citation_context = f"{context}.citations[{index}]"
+        citation = _require_object(raw_citation, citation_context)
+        _require_text(citation, "chunk_id", citation_context)
+        _require_int(
+            citation,
+            "chapter_index",
+            citation_context,
+            minimum=1,
+        )
+        _require_text(citation, "chapter_title", citation_context)
+        start_char = _require_int(
+            citation,
+            "start_char",
+            citation_context,
+        )
+        end_char = _require_int(
+            citation,
+            "end_char",
+            citation_context,
+            minimum=1,
+        )
+        if end_char <= start_char:
+            raise UiPayloadError(f"{citation_context} 字符范围无效")
+        _require_text(citation, "excerpt", citation_context)
+    return item
+
+
+def _load_rag_history(
+    novel_id: int,
+) -> tuple[list[Dict[str, Any]], int]:
+    pages = st.session_state.setdefault("rag_history_pages", {})
+    page = int(pages.get(novel_id, 0))
+    try:
+        payload = list_rag_questions(
+            novel_id,
+            offset=page * RAG_HISTORY_PAGE_SIZE,
+            limit=RAG_HISTORY_PAGE_SIZE,
+        )
+        payload = _require_object(payload, "RAG 问答历史")
+        total = _require_int(payload, "total", "RAG 问答历史")
+        if _require_int(payload, "offset", "RAG 问答历史") != (
+            page * RAG_HISTORY_PAGE_SIZE
+        ):
+            raise UiPayloadError("RAG 问答历史.offset 与请求不符")
+        items = [
+            _validate_rag_question_item(
+                item,
+                f"RAG 问答历史.items[{index}]",
+            )
+            for index, item in enumerate(
+                _require_list(payload, "items", "RAG 问答历史")
+            )
+        ]
+    except NovelApiError as error:
+        st.error(f"无法读取 RAG 问答历史：{error}")
+        return [], 0
+    except UiPayloadError as error:
+        _show_payload_error("无法读取 RAG 问答历史", error)
+        return [], 0
+    final_page = last_page_index(total, RAG_HISTORY_PAGE_SIZE)
+    if page > final_page:
+        pages[novel_id] = final_page
+        st.rerun()
+    return items, total
+
+
+def _render_rag_question_actions(
+    novel_id: int,
+    context: Dict[str, Any],
+    history: list[Dict[str, Any]],
+) -> None:
+    """Render independent Bailian, DeepSeek, and rights confirmations."""
+    st.subheader("基于原文提问")
+    question = st.text_area(
+        "问题",
+        key=f"rag_question_text_{novel_id}",
+        max_chars=2_000,
+        placeholder="例如：主角在雨夜发现了什么？",
+    )
+    top_k = st.selectbox(
+        "检索片段数量",
+        options=list(range(3, 11)),
+        index=3,
+        key=f"rag_top_k_{novel_id}",
+    )
+    embedding_consent = st.checkbox(
+        "我同意将问题发送至阿里云百炼北京区生成查询向量",
+        key=f"rag_question_embedding_consent_{novel_id}",
+    )
+    generation_consent = st.checkbox(
+        "我同意将问题和检索到的原文片段发送至 DeepSeek 生成答案",
+        key=f"rag_question_generation_consent_{novel_id}",
+    )
+    content_rights = st.checkbox(
+        "我确认有权将相关小说片段交给上述外部服务处理",
+        key=f"rag_question_content_rights_{novel_id}",
+    )
+    active = any(
+        str(item.get("status")) in ACTIVE_JOB_STATUSES
+        for item in history
+    )
+    clicked = st.button(
+        "提交 RAG 问题",
+        key=f"start_rag_question_{novel_id}",
+        disabled=(
+            not bool(context["embedding_configured"])
+            or not bool(context["generation_configured"])
+            or not bool(context["index_current"])
+            or not question.strip()
+            or not embedding_consent
+            or not generation_consent
+            or not content_rights
+            or active
+        ),
+    )
+    if not clicked:
+        return
+    try:
+        result = start_rag_question(
+            novel_id,
+            question=question,
+            top_k=int(top_k),
+            confirm_embedding_processing=embedding_consent,
+            confirm_generation_processing=generation_consent,
+            confirm_content_rights=content_rights,
+        )
+        result = _validate_rag_question_item(result, "RAG 问答任务")
+    except NovelApiError as error:
+        if error.status_code == 409:
+            st.warning(str(error))
+        else:
+            st.error(str(error))
+        return
+    except UiPayloadError as error:
+        _show_payload_error("无法确认 RAG 问答任务", error)
+        return
+    st.success(f"RAG 问答任务已创建：{result['id']}")
+    st.rerun()
+
+
+def _render_rag_history(
+    novel_id: int,
+    items: list[Dict[str, Any]],
+    total: int,
+) -> None:
+    """Render all model output and original excerpts as plain text."""
+    st.subheader(f"问答历史 · {total:,}")
+    if not items:
+        st.info("尚未提交 RAG 问题。")
+    for item in items:
+        with st.expander("RAG 问答记录"):
+            st.caption("问题")
+            _render_plain_text(str(item["question"]))
+            status_value = str(item["status"])
+            st.write(f"状态：{status_value}")
+            if status_value in ACTIVE_JOB_STATUSES:
+                st.info("问答正在后台运行，可刷新状态。")
+            elif status_value == "failed":
+                error_message = item.get("error_message")
+                _render_plain_text(
+                    str(error_message or "RAG 问答失败，请重新提交。")
+                )
+            elif status_value == "succeeded":
+                answer = item.get("answer")
+                if not isinstance(answer, str) or not answer.strip():
+                    st.error("已保存的 RAG 答案格式无效。")
+                    continue
+                st.caption("答案")
+                _render_plain_text(answer)
+                if item.get("insufficient_evidence") is True:
+                    st.warning("DeepSeek 标记为证据不足。")
+                citations = list(item["citations"])
+                st.caption(f"引用来源 · {len(citations)}")
+                if not citations:
+                    _render_plain_text("无引用")
+                for citation in citations:
+                    _render_plain_text(
+                        (
+                            f"第 {int(citation['chapter_index'])} 章 · "
+                            f"{citation['chapter_title']} · 字符 "
+                            f"{int(citation['start_char'])}-"
+                            f"{int(citation['end_char'])}"
+                        )
+                    )
+                    _render_plain_text(str(citation["excerpt"]))
+    pages = st.session_state.setdefault("rag_history_pages", {})
+    page = int(pages.get(novel_id, 0))
+    final_page = last_page_index(total, RAG_HISTORY_PAGE_SIZE)
+    columns = st.columns(3)
+    if columns[0].button(
+        "上一页问答",
+        key=f"rag_history_previous_{novel_id}",
+        disabled=page <= 0,
+    ):
+        pages[novel_id] = page - 1
+        st.rerun()
+    columns[1].write(f"问答页 {page + 1} / {final_page + 1}")
+    if columns[2].button(
+        "下一页问答",
+        key=f"rag_history_next_{novel_id}",
+        disabled=page >= final_page,
+    ):
+        pages[novel_id] = page + 1
+        st.rerun()
+    if st.button(
+        "刷新 RAG 状态",
+        key=f"refresh_rag_{novel_id}",
+    ):
+        st.rerun()
+
+
+def render_rag_workspace(novel: Dict[str, Any]) -> None:
+    """Render external embeddings, retrieval, answer, and citations."""
+    try:
+        novel = _require_object(novel, "小说信息")
+        novel_id = _require_int(
+            novel,
+            "id",
+            "小说信息",
+            minimum=1,
+        )
+    except UiPayloadError as error:
+        _show_payload_error("无法打开 RAG 工作区", error)
+        return
+    st.markdown("---")
+    st.subheader("RAG 原文问答")
+    context = _load_rag_context(novel_id)
+    if context is None:
+        return
+    _render_rag_index_actions(novel_id, context)
+    history, total = _load_rag_history(novel_id)
+    _render_rag_question_actions(
+        novel_id,
+        context,
+        history,
+    )
+    _render_rag_history(novel_id, history, total)
 
 
 def render_reader_workspace(novel: Dict[str, Any]) -> None:

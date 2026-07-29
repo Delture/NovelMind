@@ -539,3 +539,188 @@ def list_character_relationships(
         response,
         "读取人物关系失败，请稍后重试。",
     )
+
+
+def get_rag_estimate(
+    novel_id: int,
+    force: bool = False,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return RAG cost bounds and external-processing disclosures."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/rag/estimate",
+            params={"force": force},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取 RAG 估算失败，请稍后重试。")
+
+
+def get_rag_index_status(
+    novel_id: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return current local RAG index readiness."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/rag/index",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取 RAG 索引状态失败，请稍后重试。")
+
+
+def start_rag_index(
+    novel_id: int,
+    confirm_external_processing: bool,
+    confirm_content_rights: bool,
+    force: bool = False,
+    confirm_force_refresh: bool = False,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start external source embedding for one novel."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.post(
+            f"{base_url}/api/novels/{novel_id}/rag/index",
+            json={
+                "confirm_external_processing": (
+                    confirm_external_processing
+                ),
+                "confirm_content_rights": confirm_content_rights,
+                "force": force,
+                "confirm_force_refresh": confirm_force_refresh,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "启动 RAG 索引失败，请稍后重试。")
+
+
+def list_rag_index_jobs(
+    novel_id: int,
+    limit: int = 10,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return recent RAG index jobs as an object for UI consistency."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/rag/index/jobs",
+            params={"limit": limit},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise NovelApiError(
+            "后端返回了无法解析的响应。",
+            status_code=(
+                response.status_code
+                if response.status_code >= 400
+                else None
+            ),
+        ) from error
+    if response.status_code >= 400:
+        detail = (
+            payload.get("detail", "读取 RAG 索引任务失败，请稍后重试。")
+            if isinstance(payload, dict)
+            else "读取 RAG 索引任务失败，请稍后重试。"
+        )
+        raise NovelApiError(str(detail), status_code=response.status_code)
+    if not isinstance(payload, list):
+        raise NovelApiError("后端返回了无法解析的响应。")
+    return {"items": payload, "total": len(payload)}
+
+
+def start_rag_question(
+    novel_id: int,
+    question: str,
+    top_k: int,
+    confirm_embedding_processing: bool,
+    confirm_generation_processing: bool,
+    confirm_content_rights: bool,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start one external-embedding and DeepSeek RAG question."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.post(
+            f"{base_url}/api/novels/{novel_id}/rag/questions",
+            json={
+                "question": question,
+                "top_k": top_k,
+                "confirm_embedding_processing": (
+                    confirm_embedding_processing
+                ),
+                "confirm_generation_processing": (
+                    confirm_generation_processing
+                ),
+                "confirm_content_rights": confirm_content_rights,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "启动 RAG 问答失败，请稍后重试。")
+
+
+def list_rag_questions(
+    novel_id: int,
+    offset: int = 0,
+    limit: int = 20,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one page of persisted RAG questions and answers."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/rag/questions",
+            params={"offset": offset, "limit": limit},
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取 RAG 问答历史失败，请稍后重试。")
+
+
+def get_rag_question(
+    novel_id: int,
+    question_id: str,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one recoverable RAG question task."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            (
+                f"{base_url}/api/novels/{novel_id}"
+                f"/rag/questions/{question_id}"
+            ),
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取 RAG 问答结果失败，请稍后重试。")

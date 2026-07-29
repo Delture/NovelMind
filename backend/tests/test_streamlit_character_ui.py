@@ -39,6 +39,9 @@ class FakeBlock:
     def markdown(self, body: str, **kwargs: object) -> None:
         self.root.markdown(body, **kwargs)
 
+    def write(self, body: object) -> None:
+        self.root.write(body)
+
 
 class FakeStreamlit(ModuleType):
     """Small Streamlit test double for the character workspace."""
@@ -52,6 +55,8 @@ class FakeStreamlit(ModuleType):
         self.button_calls: list[dict[str, object]] = []
         self.text_input_values: dict[str, str] = {}
         self.text_input_calls: list[dict[str, object]] = []
+        self.text_area_values: dict[str, str] = {}
+        self.text_area_calls: list[dict[str, object]] = []
         self.selectbox_values: dict[str, object] = {}
         self.selectbox_calls: list[dict[str, object]] = []
         self.radio_value: object | None = None
@@ -140,6 +145,15 @@ class FakeStreamlit(ModuleType):
     ) -> str:
         self.text_input_calls.append({"label": label, "key": key})
         return self.text_input_values.get(key, "")
+
+    def text_area(
+        self,
+        label: str,
+        key: str,
+        **__: object,
+    ) -> str:
+        self.text_area_calls.append({"label": label, "key": key})
+        return self.text_area_values.get(key, "")
 
     def selectbox(
         self,
@@ -380,7 +394,12 @@ def test_novel_detail_exposes_third_character_mode(
 
     module.render_novel_detail(7, backend_online=True)
 
-    assert fake.radio_options == ["章节摘要", "正文阅读", "人物统计"]
+    assert fake.radio_options == [
+        "章节摘要",
+        "正文阅读",
+        "人物统计",
+        "RAG 问答",
+    ]
     character_workspace.assert_called_once()
     summary_workspace.assert_not_called()
     reader_workspace.assert_not_called()

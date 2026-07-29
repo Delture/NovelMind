@@ -23,7 +23,9 @@ class EmbeddingStatus(BaseModel):
     """Public embedding-provider configuration."""
 
     provider: str
-    model: Optional[str]
+    model: str
+    dimensions: int
+    region: str
     configured: bool
 
 
@@ -48,8 +50,10 @@ def get_system_status(
             configured=settings.deepseek_configured,
         ),
         embedding=EmbeddingStatus(
-            provider="external_api",
+            provider="aliyun_model_studio",
             model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+            region="cn-beijing",
             configured=settings.embedding_configured,
         ),
     )
