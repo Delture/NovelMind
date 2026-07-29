@@ -26,8 +26,10 @@ from backend.app.core.config import Settings
 
 
 _JSON_INSTRUCTION = (
-    "\n\n请仅输出有效的 JSON 对象，不要包含 Markdown 代码块或其他文本。"
-    'JSON 字面对象示例：{"field":"value"}；实际字段必须遵循当前任务要求。'
+    "\n\n请仅输出一个有效的 JSON 对象，不要包含 Markdown 代码块、注释、"
+    "前后说明或思维过程。严格遵循当前任务要求的字段名、字段类型、数量"
+    "限制与 null 规则，不得增加字段。"
+    'JSON 字面对象示例：{"field":"value"}；示例只说明语法，不是输出模板。'
 )
 _RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
 _TERMINAL_FINISH_REASONS = frozenset(

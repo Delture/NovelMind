@@ -406,6 +406,10 @@ def test_summary_prompts_treat_titles_text_and_partial_results_as_data(
     assert "正文" in system_prompt
     assert "片段分析" in system_prompt
     assert "不可信数据" in system_prompt
+    assert "最小充分状态" in system_prompt
+    assert "关键选择" in system_prompt
+    assert "隐藏思维链" in system_prompt
+    assert "静默质检" in system_prompt
     map_calls = provider.calls[:-1]
     assert len(map_calls) == 2
     map_payloads = [
@@ -416,6 +420,8 @@ def test_summary_prompts_treat_titles_text_and_partial_results_as_data(
     assert "".join(item["text"] for item in map_payloads) == malicious_content
 
     reduction_prompt = str(provider.calls[-1]["user_prompt"])
+    assert "不得丢失" in reduction_prompt
+    assert "规则变化" in reduction_prompt
     reduction_data = json.loads(reduction_prompt.split("\n", 1)[1])
     assert reduction_data["title"] == malicious_title
     assert len(reduction_data["partial_analyses"]) == len(map_calls)

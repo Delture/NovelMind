@@ -104,7 +104,7 @@ def saved_report(
             "recommendations": [report_section("建议", "建议证据")],
         },
         "model": "deepseek-v4-pro",
-        "prompt_version": "novel-report-v1",
+        "prompt_version": "novel-report-v2",
         "summary_count": 3,
         "character_count": 5,
         "generation_steps": 2,

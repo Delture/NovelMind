@@ -146,6 +146,21 @@ def report_payload(
     )
 
 
+def test_report_payload_allows_empty_unsupported_optional_sections() -> None:
+    payload = NovelReportPayload(
+        title="材料边界报告",
+        executive_summary=section("执行摘要"),
+        plot_structure=section("情节结构"),
+        character_dynamics=section("人物动态"),
+        pacing=section("节奏"),
+    )
+
+    assert payload.themes == []
+    assert payload.strengths == []
+    assert payload.risks == []
+    assert payload.recommendations == []
+
+
 class FakeReportProvider:
     model = "deepseek-v4-pro"
 
@@ -321,8 +336,16 @@ def test_report_generation_uses_only_derived_text_and_external_calls(
     all_prompts = "\n".join(
         str(call["user_prompt"]) for call in provider.calls
     )
+    all_system_prompts = "\n".join(
+        str(call["system_prompt"]) for call in provider.calls
+    )
     assert "第1章派生摘要" in all_prompts
     assert "ORIGINAL_SECRET" not in all_prompts
+    assert "最小充分证据集" in all_prompts
+    assert "对象/阶段、根因、具体操作" in all_prompts
+    assert "派生摘要，不是小说原文" in all_system_prompts
+    assert "不能可靠评价原文句式" in all_system_prompts
+    assert "可选数组没有可靠内容时返回空数组" in all_system_prompts
     assert provider.calls[-1]["thinking"] is True
     assert provider.calls[-1]["reasoning_effort"] == "high"
 

@@ -181,6 +181,34 @@ def _prompt_data(user_prompt: str) -> dict[str, object]:
     return json.loads(user_prompt.split("\n", 1)[1])
 
 
+def test_character_prompts_enforce_evidence_aware_disambiguation() -> None:
+    extraction = character_service._extraction_system_prompt()
+    merge = character_service._merge_system_prompt()
+    reconciliation = character_service._reconciliation_system_prompt()
+    synthesis = character_service._synthesis_system_prompt()
+    relationships = character_service._relationship_system_prompt()
+
+    assert "代词" in extraction
+    assert "mention_count" in extraction
+    assert "关键行动" in extraction
+    assert "同名本身不是充分证据" in merge
+    assert "冲突或不确定" in merge
+    assert "同名、同类" in reconciliation
+    assert "不重新拆组" in synthesis
+    assert "同场出现" in relationships
+    assert "关系依据、当前状态" in relationships
+    assert all(
+        "隐藏思维链" in prompt
+        for prompt in (
+            extraction,
+            merge,
+            reconciliation,
+            synthesis,
+            relationships,
+        )
+    )
+
+
 def _merge_by_name(
     _: Type[BaseModel],
     user_prompt: str,
