@@ -60,3 +60,29 @@ def test_preface_is_kept_in_first_chapter() -> None:
     chapters = split_chapters(text)
 
     assert chapters[0].content == "作品简介\n这是序言。\n\n章节内容。"
+
+
+def test_split_common_titles_without_spaces() -> None:
+    text = "第一章初见\n内容一。\n第2章：重逢\n内容二。\nChapter 3: End\n内容三。"
+
+    chapters = split_chapters(text)
+
+    assert [chapter.title for chapter in chapters] == [
+        "第一章初见",
+        "第2章：重逢",
+        "Chapter 3: End",
+    ]
+
+
+def test_very_long_line_is_not_treated_as_a_chapter_title() -> None:
+    long_sentence = "第1章" + "这是一段正文" * 50
+
+    chapters = split_chapters(f"{long_sentence}\n后续正文。")
+
+    assert chapters == [
+        Chapter(
+            index=1,
+            title="第1章",
+            content=f"{long_sentence}\n后续正文。",
+        )
+    ]

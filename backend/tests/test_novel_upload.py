@@ -7,13 +7,13 @@ from unittest.mock import Mock
 from urllib.parse import urlencode
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.api import novels as novels_api
 from backend.app.api.novels import MAX_UPLOAD_BYTES
-from backend.app.core.database import Base, get_db
+from backend.app.core.database import Base, create_db_engine, get_db
 from backend.app.main import app
 from backend.app.models.novel import Novel
 
@@ -21,9 +21,8 @@ from backend.app.models.novel import Novel
 @pytest.fixture(autouse=True)
 def db_session() -> Generator[Session, None, None]:
     """Use a fresh in-memory SQLite database for each test."""
-    test_engine = create_engine(
+    test_engine = create_db_engine(
         "sqlite://",
-        connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     testing_session = sessionmaker(
@@ -204,3 +203,41 @@ def test_database_error_rolls_back() -> None:
     assert status_code == 500
     assert result["detail"] == "小说保存失败，请稍后重试。"
     failing_session.rollback.assert_called_once()
+
+
+def test_reject_text_with_null_bytes(db_session: Session) -> None:
+    status_code, result = send_request(
+        "第一章 开始\x00\n正文。".encode("utf-8"),
+        "novel.txt",
+    )
+
+    assert status_code == 400
+    assert result["detail"] == "TXT 文件包含无效的二进制控制字符。"
+    assert db_session.query(Novel).count() == 0
+
+
+def test_reject_excessive_chapter_count(db_session: Session) -> None:
+    text = "\n".join(
+        f"第{index}章\n正文"
+        for index in range(1, novels_api.MAX_CHAPTERS + 2)
+    )
+
+    status_code, result = send_request(text.encode("utf-8"), "novel.txt")
+
+    assert status_code == 400
+    assert result["detail"] == (
+        f"单本小说不能超过 {novels_api.MAX_CHAPTERS} 个章节。"
+    )
+    assert db_session.query(Novel).count() == 0
+
+
+def test_reject_filename_longer_than_database_limit(
+    db_session: Session,
+) -> None:
+    filename = f"{'长' * 252}.txt"
+
+    status_code, result = send_request(b"content", filename)
+
+    assert status_code == 400
+    assert result["detail"] == "TXT 文件名不能超过 255 个字符。"
+    assert db_session.query(Novel).count() == 0

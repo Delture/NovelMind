@@ -2,7 +2,15 @@
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from backend.app.core.database import Base
@@ -24,6 +32,7 @@ class Novel(Base):
         back_populates="novel",
         cascade="all, delete-orphan",
         order_by="Chapter.chapter_index",
+        passive_deletes=True,
     )
 
 
@@ -31,6 +40,13 @@ class Chapter(Base):
     """One parsed chapter that belongs to a novel."""
 
     __tablename__ = "chapters"
+    __table_args__ = (
+        UniqueConstraint(
+            "novel_id",
+            "chapter_index",
+            name="ux_chapters_novel_index",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     novel_id = Column(

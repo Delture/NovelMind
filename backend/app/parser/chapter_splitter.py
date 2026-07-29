@@ -14,10 +14,35 @@ class Chapter:
 
 
 _CHINESE_NUMBER = "0-9零〇一二三四五六七八九十百千万两"
-_CHAPTER_TITLE_PATTERN = re.compile(
-    rf"^\s*(?:第[{_CHINESE_NUMBER}]+章(?:\s+.*)?|chapter\s+\d+(?:\s+.*)?)\s*$",
+_MAX_CHAPTER_TITLE_CHARACTERS = 255
+_CHINESE_CHAPTER_PREFIX_PATTERN = re.compile(
+    rf"^第[{_CHINESE_NUMBER}]+章",
+)
+_ENGLISH_CHAPTER_TITLE_PATTERN = re.compile(
+    r"^chapter\s+\d+.*$",
     re.IGNORECASE,
 )
+
+
+def _is_chapter_title(line: str) -> bool:
+    """Return whether one reasonably sized line looks like a chapter title."""
+    title = line.strip()
+    if not title or len(title) > _MAX_CHAPTER_TITLE_CHARACTERS:
+        return False
+
+    chinese_match = _CHINESE_CHAPTER_PREFIX_PATTERN.match(title)
+    if chinese_match:
+        suffix = title[chinese_match.end():]
+        direct_suffix = (
+            suffix
+            and not suffix[0].isspace()
+            and suffix[0] not in "：:、.-—"
+        )
+        if direct_suffix and title.endswith(("。", "！", "？", "；")):
+            return False
+        return True
+
+    return bool(_ENGLISH_CHAPTER_TITLE_PATTERN.fullmatch(title))
 
 
 def split_chapters(raw_text: str) -> list[Chapter]:
@@ -30,7 +55,7 @@ def split_chapters(raw_text: str) -> list[Chapter]:
     title_positions = [
         index
         for index, line in enumerate(lines)
-        if _CHAPTER_TITLE_PATTERN.fullmatch(line)
+        if _is_chapter_title(line)
     ]
 
     if not title_positions:

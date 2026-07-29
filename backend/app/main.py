@@ -4,6 +4,8 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 
 from backend.app.api.novels import router as novels_router
+from backend.app.api.system import router as system_router
+from backend.app.core.config import settings
 from backend.app.core.database import init_db
 
 
@@ -14,8 +16,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="NovelMind", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(novels_router, prefix="/api")
+app.include_router(system_router, prefix="/api")
 
 
 @app.get("/health")
