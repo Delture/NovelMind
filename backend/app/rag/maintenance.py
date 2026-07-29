@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from backend.app.models.rag import RagIndex
-from backend.app.rag.vector_store import ChromaVectorStore
+from backend.app.rag.vector_store import LocalVectorStore
 
 
 logger = logging.getLogger(__name__)
@@ -16,12 +16,12 @@ _MANAGED_COLLECTION_PREFIX = "novelmind_n"
 
 def cleanup_orphan_rag_collections(
     session_factory: Callable[[], Session],
-    chroma_path: str,
+    vector_store_path: str,
 ) -> int:
     """Delete managed collections not referenced by current SQLite state."""
-    if not Path(chroma_path).expanduser().exists():
+    if not Path(vector_store_path).expanduser().exists():
         return 0
-    store = ChromaVectorStore(chroma_path)
+    store = LocalVectorStore(vector_store_path)
     with session_factory() as db:
         active = {
             name

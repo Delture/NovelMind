@@ -265,7 +265,7 @@ def _replace_current_snapshot(
     chunks: Sequence[RagChunk],
     provider: EmbeddingProvider,
 ) -> Optional[str]:
-    """Atomically switch SQLite provenance after Chroma is complete."""
+    """Atomically switch SQLite provenance after vectors are complete."""
     current = (
         db.query(RagIndex)
         .filter(RagIndex.novel_id == novel_id)

@@ -6,7 +6,7 @@
 
 NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统。
 
-当前已完成文本基础、摘要、人物分析和 RAG 问答，下一阶段是分析报告。
+当前 MVP 已完成文本基础、摘要、人物分析、RAG 问答和分析报告。
 
 ## 使用者背景
 
@@ -26,7 +26,7 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - 数据库：SQLite
 - ORM：SQLAlchemy
 - 外部 embedding：阿里云百炼北京区 `text-embedding-v4`，固定 1024 维
-- 向量库：Chroma，只保存外部生成的派生向量
+- 向量库：本地 SQLite + NumPy 精确余弦检索，只保存外部派生向量
 - 测试：pytest
 
 ## 当前项目结构
@@ -39,7 +39,7 @@ NovelMind/
       core/         # 配置、数据库连接等基础能力
       models/       # SQLAlchemy 数据模型
       parser/       # 小说章节解析逻辑
-      rag/          # 分块、百炼 embedding、Chroma、问答和清理
+      rag/          # 分块、百炼 embedding、本地向量、问答和清理
       analyzer/     # 摘要、角色抽取、结构分析等逻辑
       main.py       # FastAPI 应用入口
     tests/          # pytest 测试
@@ -181,10 +181,11 @@ test(parser): add chapter splitter tests
 5. 章节摘要（已完成）
 6. 角色抽取与统计（已完成）
 7. RAG 问答（已完成）
-8. 分析报告
+8. 分析报告（已完成）
 
-当前最推荐的下一步是实现外部 API 生成的分析报告。文本生成继续使用
-DeepSeek V4 Pro API；embedding 使用百炼北京区 `text-embedding-v4`。
+当前 MVP 已形成完整闭环。后续新增功能时仍须保持：文本生成使用
+DeepSeek V4 Pro API，embedding 使用百炼北京区 `text-embedding-v4`，
+本地不运行模型。
 
 ## TXT 小说上传接口
 
@@ -271,7 +272,7 @@ RAG 已实现的数据流：
 
 - 确定性 1200 字符分块、200 字符重叠，分块算法必须版本化。
 - embedding 端点只允许百炼北京区专属工作空间，模型固定 1024 维。
-- Chroma 不保存原文，也不运行 embedding function。
+- 本地向量库不保存原文，只存外部 API 生成的 float32 向量和定位元数据。
 - 新版本集合完整校验后才切换 SQLite 当前指针，失败保留旧索引。
 - 检索命中必须回查 SQLite 并校验原文范围与哈希。
 - DeepSeek 引用只能来自本次检索 ID，答案和引用只按纯文本展示。

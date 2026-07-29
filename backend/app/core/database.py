@@ -57,6 +57,7 @@ def init_db(db_engine: Engine = engine) -> None:
     from backend.app.models import character  # noqa: F401
     from backend.app.models import novel  # noqa: F401
     from backend.app.models import rag  # noqa: F401
+    from backend.app.models import report  # noqa: F401
     from backend.app.core.migrations import run_migrations
 
     Base.metadata.create_all(bind=db_engine)

@@ -55,7 +55,7 @@ def configured_settings() -> Settings:
             "https://ws-test.cn-beijing.maas.aliyuncs.com/"
             "compatible-mode/v1"
         ),
-        chroma_path="./test-vectors",
+        vector_store_path="./test-vectors",
     )
 
 

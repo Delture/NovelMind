@@ -59,6 +59,13 @@ class Novel(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    report = relationship(
+        "NovelReport",
+        back_populates="novel",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
 
 
 class Chapter(Base):
@@ -123,3 +130,4 @@ class Chapter(Base):
 from backend.app.models import analysis as _analysis  # noqa: E402,F401
 from backend.app.models import character as _character  # noqa: E402,F401
 from backend.app.models import rag as _rag  # noqa: E402,F401
+from backend.app.models import report as _report  # noqa: E402,F401

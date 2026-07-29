@@ -202,7 +202,7 @@ def test_novel_detail_routes_to_rag_mode(
 
     module.render_novel_detail(7, backend_online=True)
 
-    assert fake.radio_options[-1] == "RAG 问答"
+    assert "RAG 问答" in fake.radio_options
     rag_workspace.assert_called_once()
 
 

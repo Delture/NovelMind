@@ -31,7 +31,7 @@ class Settings:
     embedding_dimensions: int
     embedding_timeout_seconds: int
     embedding_max_attempts: int
-    chroma_path: str
+    vector_store_path: str
 
     @property
     def deepseek_configured(self) -> bool:
@@ -232,10 +232,10 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
             "EMBEDDING_MAX_ATTEMPTS",
             3,
         ),
-        chroma_path=_required_value(
+        vector_store_path=_required_value(
             environ,
-            "CHROMA_PATH",
-            "./chroma_db",
+            "VECTOR_STORE_PATH",
+            environ.get("CHROMA_PATH", "./vector_store"),
         ),
     )
 

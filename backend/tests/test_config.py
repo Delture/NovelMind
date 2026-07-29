@@ -22,7 +22,7 @@ def test_load_settings_uses_safe_local_defaults() -> None:
     assert settings.embedding_dimensions == 1_024
     assert settings.embedding_timeout_seconds == 120
     assert settings.embedding_max_attempts == 3
-    assert settings.chroma_path == "./chroma_db"
+    assert settings.vector_store_path == "./vector_store"
     assert settings.deepseek_configured is False
     assert settings.embedding_configured is False
 
@@ -47,7 +47,7 @@ def test_load_settings_normalizes_explicit_values() -> None:
             "EMBEDDING_DIMENSIONS": "1024",
             "EMBEDDING_TIMEOUT_SECONDS": "180",
             "EMBEDDING_MAX_ATTEMPTS": "4",
-            "CHROMA_PATH": "./data/vectors",
+            "VECTOR_STORE_PATH": "./data/vectors",
         }
     )
 
@@ -68,9 +68,15 @@ def test_load_settings_normalizes_explicit_values() -> None:
     assert settings.embedding_dimensions == 1_024
     assert settings.embedding_timeout_seconds == 180
     assert settings.embedding_max_attempts == 4
-    assert settings.chroma_path == "./data/vectors"
+    assert settings.vector_store_path == "./data/vectors"
     assert settings.deepseek_configured is True
     assert settings.embedding_configured is True
+
+
+def test_legacy_chroma_path_remains_a_read_only_configuration_alias() -> None:
+    settings = load_settings({"CHROMA_PATH": "./legacy-vectors"})
+
+    assert settings.vector_store_path == "./legacy-vectors"
 
 
 @pytest.mark.parametrize(
@@ -102,7 +108,7 @@ def test_load_settings_rejects_invalid_positive_integers(
         "DATABASE_URL",
         "DEEPSEEK_BASE_URL",
         "DEEPSEEK_MODEL",
-        "CHROMA_PATH",
+        "VECTOR_STORE_PATH",
     ],
 )
 def test_load_settings_rejects_blank_required_values(name: str) -> None:

@@ -724,3 +724,69 @@ def get_rag_question(
             "无法连接后端服务，请确认 FastAPI 已启动。"
         ) from error
     return _parse_response(response, "读取 RAG 问答结果失败，请稍后重试。")
+
+
+def get_report_estimate(
+    novel_id: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return report prerequisites and external-processing bounds."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/report/estimate",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取分析报告估算失败，请稍后重试。")
+
+
+def start_report(
+    novel_id: int,
+    confirm_external_processing: bool,
+    confirm_content_rights: bool,
+    force: bool = False,
+    confirm_force_refresh: bool = False,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Start one external whole-novel report job."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.post(
+            f"{base_url}/api/novels/{novel_id}/report",
+            json={
+                "confirm_external_processing": (
+                    confirm_external_processing
+                ),
+                "confirm_content_rights": confirm_content_rights,
+                "force": force,
+                "confirm_force_refresh": confirm_force_refresh,
+            },
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "启动分析报告任务失败，请稍后重试。")
+
+
+def get_report(
+    novel_id: int,
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return the current saved whole-novel report snapshot."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/novels/{novel_id}/report",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取分析报告失败，请稍后重试。")

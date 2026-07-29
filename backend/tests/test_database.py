@@ -142,8 +142,9 @@ def test_init_db_builds_and_versions_fresh_schema_idempotently() -> None:
             "character_relationships",
             "rag_indices",
             "rag_chunks",
-            "rag_questions",
-            "schema_migrations",
+                "rag_questions",
+                "novel_reports",
+                "schema_migrations",
     } <= set(table_names)
     assert any(
         item.get("name") == "ux_chapters_novel_index"
@@ -156,8 +157,9 @@ def test_init_db_builds_and_versions_fresh_schema_idempotently() -> None:
         (4, "add analysis force scope"),
         (5, "add character analysis snapshots"),
         (6, "add rag index snapshots"),
-        (7, "add rag question history"),
-    ]
+            (7, "add rag question history"),
+            (8, "add novel report snapshots"),
+        ]
 
 
 def test_migration_adds_unique_index_to_legacy_database() -> None:
@@ -213,7 +215,7 @@ def test_migration_adds_unique_index_to_legacy_database() -> None:
         and index["unique"]
         for index in indexes
     )
-    assert version_count == 7
+    assert version_count == 8
 
 
 def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
@@ -281,7 +283,7 @@ def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
     assert job_indexes[
         "ix_analysis_jobs_novel_type_created"
     ]["column_names"] == ["novel_id", "job_type", "created_at"]
-    assert versions == [1, 2, 3, 4, 5, 6, 7]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
@@ -397,7 +399,7 @@ def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
     assert indexes["ux_analysis_jobs_active_novel_type"]["unique"]
     assert columns["force_refresh"]["nullable"] is False
     assert str(columns["force_refresh"]["default"]).strip("()'") == "0"
-    assert versions == [1, 2, 3, 4, 5, 6, 7]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_active_job_migration_rejects_duplicate_active_jobs() -> None:
@@ -1174,8 +1176,8 @@ def test_v5_upgrades_v4_with_strict_character_snapshot_schema() -> None:
         False,
     )
     assert (5, "add character analysis snapshots") in versions
-    assert versions[-1] == (7, "add rag question history")
-    assert len(versions) == 7
+    assert versions[-1] == (8, "add novel report snapshots")
+    assert len(versions) == 8
     assert legacy_rows == {
         "novels": 1,
         "chapters": 1,

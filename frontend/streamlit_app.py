@@ -15,6 +15,8 @@ from api_client import (
     get_chapter,
     get_chapter_summary,
     get_novel,
+    get_report,
+    get_report_estimate,
     get_rag_estimate,
     get_rag_index_status,
     get_rag_question,
@@ -34,6 +36,7 @@ from api_client import (
     start_summaries,
     start_rag_index,
     start_rag_question,
+    start_report,
     upload_novel,
 )
 from ui_styles import APP_CSS
@@ -711,7 +714,13 @@ def render_novel_detail(novel_id: int, backend_online: bool) -> None:
     render_novel_metrics(novel)
     mode = st.radio(
         "小说工作区",
-        options=["章节摘要", "正文阅读", "人物统计", "RAG 问答"],
+        options=[
+            "章节摘要",
+            "正文阅读",
+            "人物统计",
+            "RAG 问答",
+            "分析报告",
+        ],
         horizontal=True,
         key=f"novel_mode_{novel_id}",
     )
@@ -721,8 +730,10 @@ def render_novel_detail(novel_id: int, backend_online: bool) -> None:
         render_reader_workspace(novel)
     elif mode == "人物统计":
         render_character_workspace(novel)
-    else:
+    elif mode == "RAG 问答":
         render_rag_workspace(novel)
+    else:
+        render_report_workspace(novel)
 
 
 def _summary_start_error(error: NovelApiError) -> None:
@@ -2944,6 +2955,548 @@ def render_rag_workspace(novel: Dict[str, Any]) -> None:
         history,
     )
     _render_rag_history(novel_id, history, total)
+
+
+def _validate_report_section(
+    value: Any,
+    context: str,
+    *,
+    maximum_chapter_index: int,
+) -> Dict[str, Any]:
+    """Validate one model-generated report section and its evidence."""
+    section = _require_object(value, context)
+    _require_text(section, "title", context)
+    _require_text(section, "analysis", context)
+    evidence = _require_int_list(
+        section,
+        "evidence_chapter_indices",
+        context,
+        minimum=1,
+    )
+    if not evidence:
+        raise UiPayloadError(
+            f"{context}.evidence_chapter_indices 不能为空"
+        )
+    if evidence != sorted(evidence) or len(evidence) != len(set(evidence)):
+        raise UiPayloadError(
+            f"{context}.evidence_chapter_indices 必须升序且不重复"
+        )
+    if any(index > maximum_chapter_index for index in evidence):
+        raise UiPayloadError(
+            f"{context}.evidence_chapter_indices 超出章节范围"
+        )
+    return section
+
+
+def _validate_report_response(
+    value: Any,
+    *,
+    novel_id: int,
+) -> Dict[str, Any]:
+    """Validate the complete report response before rendering model text."""
+    payload = _require_object(value, "分析报告")
+    if _require_int(
+        payload,
+        "novel_id",
+        "分析报告",
+        minimum=1,
+    ) != novel_id:
+        raise UiPayloadError("分析报告.novel_id 与当前小说不符")
+    summary_count = _require_int(
+        payload,
+        "summary_count",
+        "分析报告",
+        minimum=1,
+    )
+    _require_int(payload, "character_count", "分析报告")
+    _require_int(
+        payload,
+        "generation_steps",
+        "分析报告",
+        minimum=1,
+    )
+    _require_bool(
+        payload,
+        "includes_character_analysis",
+        "分析报告",
+    )
+    _require_bool(payload, "up_to_date", "分析报告")
+    _require_text(payload, "model", "分析报告")
+    _require_text(payload, "prompt_version", "分析报告")
+    _require_text(payload, "created_at", "分析报告")
+    _require_text(payload, "updated_at", "分析报告")
+    report = _require_object(payload.get("report"), "分析报告.report")
+    _require_text(report, "title", "分析报告.report")
+    for key in (
+        "executive_summary",
+        "plot_structure",
+        "character_dynamics",
+        "pacing",
+    ):
+        _validate_report_section(
+            report.get(key),
+            f"分析报告.report.{key}",
+            maximum_chapter_index=summary_count,
+        )
+    for key in ("themes", "strengths", "risks", "recommendations"):
+        items = _require_list(report, key, "分析报告.report")
+        if not items:
+            raise UiPayloadError(f"分析报告.report.{key} 不能为空")
+        for index, item in enumerate(items):
+            _validate_report_section(
+                item,
+                f"分析报告.report.{key}[{index}]",
+                maximum_chapter_index=summary_count,
+            )
+    return payload
+
+
+def _load_report_context(
+    novel_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Load provider status, report estimate, and recent report jobs."""
+    try:
+        system_status = get_system_status()
+        jobs = list_analysis_jobs(
+            novel_id,
+            job_type="report",
+            limit=10,
+        )
+    except NovelApiError as error:
+        st.error(f"无法读取分析报告状态：{error}")
+        return None
+    try:
+        system_status = _require_object(system_status, "系统状态")
+        generation = _require_object(
+            system_status.get("generation"),
+            "系统状态.generation",
+        )
+        generation_configured = _require_bool(
+            generation,
+            "configured",
+            "系统状态.generation",
+        )
+        jobs = _require_object(jobs, "分析报告任务列表")
+        job_items = _require_list(jobs, "items", "分析报告任务列表")
+        _require_int(jobs, "total", "分析报告任务列表")
+        latest_job: Optional[Dict[str, Any]] = None
+        if job_items:
+            latest_job = _require_object(
+                job_items[0],
+                "分析报告任务列表.items[0]",
+            )
+            _require_text(
+                latest_job,
+                "id",
+                "分析报告任务列表.items[0]",
+            )
+            if _require_text(
+                latest_job,
+                "job_type",
+                "分析报告任务列表.items[0]",
+            ) != "report":
+                raise UiPayloadError("分析报告任务.job_type 无效")
+            job_status = _require_text(
+                latest_job,
+                "status",
+                "分析报告任务列表.items[0]",
+            )
+            if job_status not in {
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+            }:
+                raise UiPayloadError("分析报告任务.status 无效")
+            current = _require_int(
+                latest_job,
+                "progress_current",
+                "分析报告任务列表.items[0]",
+            )
+            total = _require_int(
+                latest_job,
+                "progress_total",
+                "分析报告任务列表.items[0]",
+            )
+            if current > total:
+                raise UiPayloadError("分析报告任务进度无效")
+    except UiPayloadError as error:
+        _show_payload_error("无法读取分析报告状态", error)
+        return None
+
+    estimate: Optional[Dict[str, Any]]
+    try:
+        estimate_value = get_report_estimate(novel_id)
+    except NovelApiError as error:
+        estimate = None
+        if error.status_code == 409:
+            st.warning(str(error))
+        else:
+            st.error(f"无法读取分析报告估算：{error}")
+    else:
+        try:
+            estimate = _require_object(
+                estimate_value,
+                "分析报告估算",
+            )
+            if _require_int(
+                estimate,
+                "novel_id",
+                "分析报告估算",
+                minimum=1,
+            ) != novel_id:
+                raise UiPayloadError(
+                    "分析报告估算.novel_id 与当前小说不符"
+                )
+            chapter_count = _require_int(
+                estimate,
+                "chapter_count",
+                "分析报告估算",
+                minimum=1,
+            )
+            summary_count = _require_int(
+                estimate,
+                "summary_count",
+                "分析报告估算",
+                minimum=1,
+            )
+            character_count = _require_int(
+                estimate,
+                "character_count",
+                "分析报告估算",
+            )
+            generation_steps = _require_int(
+                estimate,
+                "estimated_generation_steps",
+                "分析报告估算",
+            )
+            maximum_attempts = _require_int(
+                estimate,
+                "maximum_request_attempts",
+                "分析报告估算",
+            )
+            force_steps = _require_int(
+                estimate,
+                "estimated_force_generation_steps",
+                "分析报告估算",
+                minimum=1,
+            )
+            force_attempts = _require_int(
+                estimate,
+                "maximum_force_request_attempts",
+                "分析报告估算",
+                minimum=1,
+            )
+            includes_characters = _require_bool(
+                estimate,
+                "includes_character_analysis",
+                "分析报告估算",
+            )
+            up_to_date = _require_bool(
+                estimate,
+                "up_to_date",
+                "分析报告估算",
+            )
+            if _require_text(
+                estimate,
+                "provider",
+                "分析报告估算",
+            ) != "deepseek":
+                raise UiPayloadError("分析报告估算.provider 无效")
+            model = _require_text(
+                estimate,
+                "model",
+                "分析报告估算",
+            )
+            if _require_bool(
+                estimate,
+                "sends_original_text",
+                "分析报告估算",
+            ):
+                raise UiPayloadError(
+                    "报告阶段不应声明发送小说正文"
+                )
+            if not _require_bool(
+                estimate,
+                "sends_chapter_titles",
+                "分析报告估算",
+            ):
+                raise UiPayloadError("报告必须披露章节标题传输")
+            if not _require_bool(
+                estimate,
+                "sends_derived_summaries",
+                "分析报告估算",
+            ):
+                raise UiPayloadError("报告必须披露摘要传输")
+            sends_character_data = _require_bool(
+                estimate,
+                "sends_derived_character_data",
+                "分析报告估算",
+            )
+            if sends_character_data != includes_characters:
+                raise UiPayloadError("报告人物数据披露不一致")
+            notice = _require_text(
+                estimate,
+                "data_handling_notice",
+                "分析报告估算",
+            )
+            terms_url = _require_policy_url(
+                estimate,
+                "terms_url",
+                "分析报告估算",
+                allowed_hostname="cdn.deepseek.com",
+            )
+            privacy_url = _require_policy_url(
+                estimate,
+                "privacy_url",
+                "分析报告估算",
+                allowed_hostname="cdn.deepseek.com",
+            )
+        except UiPayloadError as error:
+            _show_payload_error("无法读取分析报告估算", error)
+            estimate = None
+        else:
+            columns = st.columns(4)
+            columns[0].metric("章节摘要", f"{summary_count:,}")
+            columns[1].metric("章节总数", f"{chapter_count:,}")
+            columns[2].metric("人物档案", f"{character_count:,}")
+            columns[3].metric(
+                "API 生成步骤",
+                f"{generation_steps:,}",
+            )
+            st.caption(
+                f"DeepSeek · {model} · 最多请求尝试 "
+                f"{maximum_attempts:,} 次"
+            )
+            st.caption(
+                f"强制刷新预计 {force_steps:,} 个生成步骤，"
+                f"最多请求尝试 {force_attempts:,} 次。"
+            )
+            st.warning(notice)
+            st.markdown(
+                f"[DeepSeek 服务条款]({terms_url}) · "
+                f"[DeepSeek 隐私政策]({privacy_url})"
+            )
+            if includes_characters:
+                st.info("将同时使用当前的人物档案与人物关系派生数据。")
+            else:
+                st.info(
+                    "当前没有有效的人物分析；报告将仅依据章节摘要，"
+                    "人物部分会标明这一局限。"
+                )
+            if up_to_date:
+                st.success("当前保存的报告与全部输入一致。")
+
+    if not generation_configured:
+        st.error(
+            "DeepSeek 尚未配置。请在本地 .env 中设置 "
+            "DEEPSEEK_API_KEY，并重启后端。"
+        )
+    if latest_job is not None:
+        job_status = str(latest_job["status"])
+        current = int(latest_job["progress_current"])
+        total = int(latest_job["progress_total"])
+        st.subheader("最近报告任务")
+        st.write(f"状态：{job_status} · 进度：{current:,}/{total:,}")
+        if job_status == "failed":
+            error_message = latest_job.get("error_message")
+            _render_plain_text(
+                str(error_message or "分析报告任务失败，请重试。")
+            )
+    return {
+        "generation_configured": generation_configured,
+        "estimate_available": estimate is not None,
+        "latest_job": latest_job,
+    }
+
+
+def _render_report_actions(
+    novel_id: int,
+    context: Dict[str, Any],
+) -> None:
+    """Render explicit derived-data and force-refresh consent gates."""
+    st.subheader("生成报告")
+    external_consent = st.checkbox(
+        (
+            "我同意将章节标题、派生摘要及可选人物分析数据发送至 "
+            "DeepSeek API"
+        ),
+        key=f"report_external_consent_{novel_id}",
+    )
+    content_rights = st.checkbox(
+        "我确认有权将这些小说派生数据交给 DeepSeek 处理",
+        key=f"report_content_rights_{novel_id}",
+    )
+    force = st.checkbox(
+        "强制重新生成报告",
+        key=f"report_force_{novel_id}",
+    )
+    force_confirmed = False
+    if force:
+        st.warning("强制刷新会重复产生外部 API 调用和费用。")
+        force_confirmed = st.checkbox(
+            "我确认重复调用 DeepSeek 生成整份报告",
+            key=f"report_force_confirm_{novel_id}",
+        )
+    latest_job = context.get("latest_job")
+    active = (
+        isinstance(latest_job, dict)
+        and str(latest_job.get("status")) in ACTIVE_JOB_STATUSES
+    )
+    clicked = st.button(
+        "生成或更新分析报告" if not force else "强制重新生成分析报告",
+        key=f"start_report_{novel_id}",
+        disabled=(
+            not bool(context["generation_configured"])
+            or not bool(context["estimate_available"])
+            or not external_consent
+            or not content_rights
+            or active
+            or (force and not force_confirmed)
+        ),
+    )
+    if not clicked:
+        return
+    try:
+        job = start_report(
+            novel_id,
+            confirm_external_processing=external_consent,
+            confirm_content_rights=content_rights,
+            force=force,
+            confirm_force_refresh=force_confirmed,
+        )
+        job = _require_object(job, "分析报告任务")
+        job_id = _require_text(job, "id", "分析报告任务")
+        if _require_text(
+            job,
+            "job_type",
+            "分析报告任务",
+        ) != "report":
+            raise UiPayloadError("分析报告任务.job_type 无效")
+    except NovelApiError as error:
+        if error.status_code in {409}:
+            st.warning(str(error))
+        else:
+            st.error(str(error))
+        return
+    except UiPayloadError as error:
+        _show_payload_error("无法确认分析报告任务", error)
+        return
+    st.success(f"分析报告任务已创建：{job_id}")
+    st.rerun()
+
+
+def _render_report_section(
+    label: str,
+    section: Dict[str, Any],
+) -> None:
+    """Render model output as plain text with deterministic citations."""
+    st.subheader(label)
+    _render_plain_text(str(section["title"]))
+    _render_plain_text(str(section["analysis"]))
+    citations = ", ".join(
+        f"第 {int(index)} 章"
+        for index in section["evidence_chapter_indices"]
+    )
+    st.caption(f"章节依据：{citations}")
+
+
+def _render_saved_report(novel_id: int) -> None:
+    """Render the current report snapshot, including stale snapshots."""
+    st.markdown("---")
+    st.subheader("已保存的分析报告")
+    try:
+        raw_report = get_report(novel_id)
+    except NovelApiError as error:
+        if error.status_code == 404:
+            st.info("尚未生成分析报告。")
+        else:
+            st.error(f"无法读取分析报告：{error}")
+        return
+    try:
+        payload = _validate_report_response(
+            raw_report,
+            novel_id=novel_id,
+        )
+    except UiPayloadError as error:
+        _show_payload_error("无法读取分析报告", error)
+        return
+
+    if not bool(payload["up_to_date"]):
+        st.warning(
+            "这份报告的章节摘要、人物分析、模型或提示版本已变化；"
+            "旧报告仍保留，请重新生成后再用于判断。"
+        )
+    report = _require_object(payload["report"], "分析报告.report")
+    st.caption("报告标题")
+    _render_plain_text(str(report["title"]))
+    st.caption(
+        f"模型：{payload['model']} · 摘要 {payload['summary_count']} 章 · "
+        f"人物 {payload['character_count']} 名 · "
+        f"外部生成步骤 {payload['generation_steps']} · "
+        f"更新时间 {payload['updated_at']}"
+    )
+    if not bool(payload["includes_character_analysis"]):
+        st.info("此快照生成时未包含有效人物分析数据。")
+    _render_report_section(
+        "执行摘要",
+        _require_object(report["executive_summary"], "执行摘要"),
+    )
+    _render_report_section(
+        "情节结构",
+        _require_object(report["plot_structure"], "情节结构"),
+    )
+    _render_report_section(
+        "人物动态",
+        _require_object(report["character_dynamics"], "人物动态"),
+    )
+    _render_report_section(
+        "节奏分析",
+        _require_object(report["pacing"], "节奏分析"),
+    )
+    for key, label in (
+        ("themes", "主题"),
+        ("strengths", "优点"),
+        ("risks", "风险"),
+        ("recommendations", "建议"),
+    ):
+        st.subheader(label)
+        for item in _require_list(report, key, "分析报告.report"):
+            item = _require_object(item, f"分析报告.report.{key}")
+            _render_plain_text(str(item["title"]))
+            _render_plain_text(str(item["analysis"]))
+            citations = ", ".join(
+                f"第 {int(index)} 章"
+                for index in item["evidence_chapter_indices"]
+            )
+            st.caption(f"章节依据：{citations}")
+    if st.button(
+        "刷新分析报告状态",
+        key=f"refresh_report_{novel_id}",
+    ):
+        st.rerun()
+
+
+def render_report_workspace(novel: Dict[str, Any]) -> None:
+    """Render report disclosure, generation controls, and saved output."""
+    try:
+        novel = _require_object(novel, "小说信息")
+        novel_id = _require_int(
+            novel,
+            "id",
+            "小说信息",
+            minimum=1,
+        )
+    except UiPayloadError as error:
+        _show_payload_error("无法打开分析报告工作区", error)
+        return
+    st.markdown("---")
+    st.subheader("DeepSeek 小说分析报告")
+    context = _load_report_context(novel_id)
+    if context is None:
+        return
+    _render_report_actions(novel_id, context)
+    _render_saved_report(novel_id)
 
 
 def render_reader_workspace(novel: Dict[str, Any]) -> None:

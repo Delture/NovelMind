@@ -25,7 +25,7 @@ from backend.app.models.novel import Chapter as ChapterModel
 from backend.app.models.novel import Novel
 from backend.app.models.rag import RagIndex
 from backend.app.parser.chapter_splitter import split_chapters
-from backend.app.rag.vector_store import ChromaVectorStore
+from backend.app.rag.vector_store import LocalVectorStore
 
 
 router = APIRouter(prefix="/novels", tags=["novels"])
@@ -420,7 +420,9 @@ def delete_novel(
         ) from error
     if collection_name:
         try:
-            ChromaVectorStore(settings.chroma_path).delete_collection(
+            LocalVectorStore(
+                settings.vector_store_path
+            ).delete_collection(
                 str(collection_name)
             )
         except Exception:

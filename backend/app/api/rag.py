@@ -61,7 +61,7 @@ from backend.app.rag.indexer import (
     VectorStore,
     run_rag_index_job,
 )
-from backend.app.rag.vector_store import ChromaVectorStore
+from backend.app.rag.vector_store import LocalVectorStore
 
 
 router = APIRouter(tags=["rag"])
@@ -234,8 +234,8 @@ def get_generation_factory(
 def get_vector_store_factory(
     settings: Settings = Depends(get_settings),
 ) -> VectorStoreFactory:
-    """Defer local Chroma initialization until a RAG operation needs it."""
-    return lambda: ChromaVectorStore(settings.chroma_path)
+    """Defer local vector-store initialization until RAG needs it."""
+    return lambda: LocalVectorStore(settings.vector_store_path)
 
 
 def _get_novel(db: Session, novel_id: int) -> Novel:
@@ -708,7 +708,9 @@ def start_rag_index(
         _close_unused(embedding_provider, "embedding provider")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="本地 Chroma 向量库初始化失败，请检查 CHROMA_PATH。",
+            detail=(
+                "本地向量库初始化失败，请检查 VECTOR_STORE_PATH。"
+            ),
         ) from error
     return _schedule_index(
         novel_id=novel_id,
@@ -836,7 +838,9 @@ def start_rag_question(
         _close_unused(llm_provider, "DeepSeek provider")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="本地 Chroma 向量库初始化失败，请检查 CHROMA_PATH。",
+            detail=(
+                "本地向量库初始化失败，请检查 VECTOR_STORE_PATH。"
+            ),
         ) from error
 
     transferred = False

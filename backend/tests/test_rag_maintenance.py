@@ -1,4 +1,4 @@
-"""Tests for cleanup of derived Chroma collections."""
+"""Tests for cleanup of derived local vector collections."""
 
 from dataclasses import replace
 
@@ -12,7 +12,7 @@ from backend.app.models.novel import Chapter, Novel
 from backend.app.models.rag import RagIndex
 from backend.app.rag.chunking import CHUNK_FORMAT_VERSION
 from backend.app.rag.maintenance import cleanup_orphan_rag_collections
-from backend.app.rag.vector_store import ChromaVectorStore
+from backend.app.rag.vector_store import LocalVectorStore
 
 
 def make_database():
@@ -58,7 +58,7 @@ def test_startup_cleanup_removes_only_unreferenced_managed_collections(
 ) -> None:
     engine, factory = make_database()
     path = tmp_path / "vectors"
-    store = ChromaVectorStore(str(path))
+    store = LocalVectorStore(str(path))
     active = "novelmind_n1_active_123456789012"
     orphan = "novelmind_n2_orphan_123456789012"
     unrelated = "third_party_collection"
@@ -94,11 +94,11 @@ def test_delete_novel_removes_current_collection(
     engine, factory = make_database()
     path = tmp_path / "vectors"
     collection_name = "novelmind_n1_delete_123456789012"
-    store = ChromaVectorStore(str(path))
+    store = LocalVectorStore(str(path))
     store.create_collection(collection_name)
     settings = replace(
         load_settings({}),
-        chroma_path=str(path),
+        vector_store_path=str(path),
     )
     try:
         with factory() as db:

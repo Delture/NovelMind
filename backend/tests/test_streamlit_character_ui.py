@@ -399,6 +399,7 @@ def test_novel_detail_exposes_third_character_mode(
         "正文阅读",
         "人物统计",
         "RAG 问答",
+        "分析报告",
     ]
     character_workspace.assert_called_once()
     summary_workspace.assert_not_called()

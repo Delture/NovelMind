@@ -105,7 +105,7 @@ def test_source_hash_changes_with_source_or_embedding_contract() -> None:
         dimensions=1_024,
     )
 
-    assert CHUNK_FORMAT_VERSION in {"rag-chunk-v1"}
+    assert CHUNK_FORMAT_VERSION == "rag-chunk-v2-local-sqlite"
     assert original != rag_source_hash(
         changed_chunks,
         embedding_model="text-embedding-v4",

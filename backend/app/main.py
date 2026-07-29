@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from backend.app.api.characters import router as characters_router
 from backend.app.api.novels import router as novels_router
 from backend.app.api.rag import router as rag_router
+from backend.app.api.reports import router as reports_router
 from backend.app.api.summaries import router as summaries_router
 from backend.app.api.system import router as system_router
 from backend.app.analyzer.summaries import fail_interrupted_jobs
@@ -21,7 +22,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     init_db()
     fail_interrupted_jobs(SessionLocal)
     fail_interrupted_rag_questions(SessionLocal)
-    cleanup_orphan_rag_collections(SessionLocal, settings.chroma_path)
+    cleanup_orphan_rag_collections(
+        SessionLocal,
+        settings.vector_store_path,
+    )
     yield
 
 
@@ -29,6 +33,7 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.include_router(characters_router, prefix="/api")
 app.include_router(novels_router, prefix="/api")
 app.include_router(rag_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
 app.include_router(summaries_router, prefix="/api")
 app.include_router(system_router, prefix="/api")
 

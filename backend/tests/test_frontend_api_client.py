@@ -898,3 +898,91 @@ def test_rag_clients_handle_connection_errors(
     ):
         with pytest.raises(NovelApiError, match="无法连接后端服务"):
             getattr(api_client, function_name)(*arguments)
+
+
+@patch("frontend.api_client.requests.get")
+def test_report_estimate_and_result_use_expected_endpoints(
+    mock_get: Mock,
+) -> None:
+    estimate_response = Mock()
+    estimate_response.status_code = 200
+    estimate_response.json.return_value = {"summary_count": 3}
+    report_response = Mock()
+    report_response.status_code = 200
+    report_response.json.return_value = {
+        "novel_id": 7,
+        "report": {"title": "报告"},
+    }
+    mock_get.side_effect = [estimate_response, report_response]
+
+    assert api_client.get_report_estimate(
+        7,
+        backend_url="http://testserver/",
+    )["summary_count"] == 3
+    assert api_client.get_report(
+        7,
+        backend_url="http://testserver/",
+    )["report"]["title"] == "报告"
+    assert [call.args[0] for call in mock_get.call_args_list] == [
+        "http://testserver/api/novels/7/report/estimate",
+        "http://testserver/api/novels/7/report",
+    ]
+    assert all(
+        call.kwargs["timeout"] == 10
+        for call in mock_get.call_args_list
+    )
+
+
+@patch("frontend.api_client.requests.post")
+def test_start_report_sends_all_confirmations(
+    mock_post: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 202
+    response.json.return_value = {
+        "id": "report-job",
+        "status": "queued",
+    }
+    mock_post.return_value = response
+
+    result = api_client.start_report(
+        7,
+        confirm_external_processing=True,
+        confirm_content_rights=True,
+        force=True,
+        confirm_force_refresh=True,
+        backend_url="http://testserver/",
+    )
+
+    assert result["id"] == "report-job"
+    mock_post.assert_called_once_with(
+        "http://testserver/api/novels/7/report",
+        json={
+            "confirm_external_processing": True,
+            "confirm_content_rights": True,
+            "force": True,
+            "confirm_force_refresh": True,
+        },
+        timeout=30,
+    )
+
+
+@pytest.mark.parametrize(
+    ("function_name", "arguments", "request_method"),
+    [
+        ("get_report_estimate", (7,), "get"),
+        ("get_report", (7,), "get"),
+        ("start_report", (7, True, True), "post"),
+    ],
+)
+def test_report_clients_handle_connection_errors(
+    function_name: str,
+    arguments: tuple,
+    request_method: str,
+) -> None:
+    with patch(
+        f"frontend.api_client.requests.{request_method}",
+        side_effect=requests.ConnectionError,
+    ):
+        with pytest.raises(NovelApiError, match="无法连接后端服务"):
+            getattr(api_client, function_name)(*arguments)

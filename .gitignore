@@ -6,6 +6,7 @@ venv/
 *.db
 *.sqlite3
 chroma_db/
+vector_store/
 data/uploads/
 data/raw_novels/
 logs/
