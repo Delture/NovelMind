@@ -3040,8 +3040,6 @@ def _validate_report_response(
         )
     for key in ("themes", "strengths", "risks", "recommendations"):
         items = _require_list(report, key, "分析报告.report")
-        if not items:
-            raise UiPayloadError(f"分析报告.report.{key} 不能为空")
         for index, item in enumerate(items):
             _validate_report_section(
                 item,

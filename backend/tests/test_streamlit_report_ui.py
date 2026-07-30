@@ -237,6 +237,25 @@ def test_report_model_output_is_rendered_only_as_plain_text(
     assert all(malicious not in body for body in markdown_messages)
 
 
+def test_report_accepts_empty_optional_evidence_sections(
+    streamlit_module: tuple[ModuleType, FakeStreamlit],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, fake = streamlit_module
+    report = saved_report()
+    for key in ("themes", "strengths", "risks", "recommendations"):
+        report["report"][key] = []
+    configure_report_dependencies(
+        module,
+        monkeypatch,
+        report=report,
+    )
+
+    module.render_report_workspace({"id": 7})
+
+    assert not any(kind == "error" for kind, _ in fake.messages)
+
+
 def test_report_rejects_out_of_range_evidence_before_rendering(
     streamlit_module: tuple[ModuleType, FakeStreamlit],
     monkeypatch: pytest.MonkeyPatch,

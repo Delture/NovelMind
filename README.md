@@ -6,6 +6,11 @@ NovelMind 是一个面向本地单用户的网络小说结构分析与写作辅�
 能力通过外部 API 完成。目前已接入 DeepSeek V4 Pro 章节摘要、人物分析、
 带引用的 RAG 问答和全书分析报告。
 
+第一次安装或需要配置 API 时，请直接阅读
+[完整使用说明](docs/user_guide.md)。其中包含 DeepSeek、阿里云百炼北京区
+`text-embedding-v4`（1024 维）的填写方法、全部界面功能、HTTP API、备份与
+常见故障处理。
+
 ## 技术栈
 
 - 后端：Python + FastAPI
