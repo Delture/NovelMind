@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.api import reports as reports_api
 from backend.app.analyzer.llm import (
     JsonGenerationResult,
     LLMProviderError,
@@ -456,7 +457,7 @@ def test_report_estimate_discloses_derived_data_and_cache(
             db=db,
         )
         assert estimate.estimated_generation_steps == 2
-        assert estimate.maximum_request_attempts == 18
+        assert estimate.maximum_request_attempts == 30
         assert estimate.sends_original_text is False
         assert estimate.sends_derived_summaries is True
         assert estimate.sends_derived_character_data is False
@@ -553,6 +554,40 @@ def test_report_start_schedules_one_background_job(
         assert db.query(AnalysisJob).count() == 1
     assert len(tasks.tasks) == 1
     assert provider.closed is False
+
+
+def test_report_response_failure_terminalizes_job_and_closes_provider(
+    session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FakeReportProvider()
+    monkeypatch.setattr(
+        reports_api,
+        "_job_response",
+        Mock(side_effect=RuntimeError("response validation failed")),
+    )
+
+    with session_factory() as db:
+        novel = add_novel_with_summaries(db)
+        with pytest.raises(RuntimeError, match="response validation failed"):
+            start_report(
+                request=StartReportRequest(
+                    confirm_external_processing=True,
+                    confirm_content_rights=True,
+                ),
+                background_tasks=BackgroundTasks(),
+                novel_id=novel.id,
+                settings=configured_settings(),
+                db=db,
+                provider_factory=lambda: provider,
+                session_factory=session_factory,
+            )
+
+        job = db.query(AnalysisJob).one()
+        assert job.status == "failed"
+        assert job.completed_at is not None
+        assert "后台队列" in str(job.error_message)
+    assert provider.closed is True
 
 
 def test_get_report_returns_stale_snapshot_without_destroying_it(

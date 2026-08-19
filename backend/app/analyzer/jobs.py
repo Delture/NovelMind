@@ -1,4 +1,9 @@
-"""Shared persistence helpers for background analysis jobs."""
+"""后台分析任务共享的失败落盘与 SQLite 锁重试工具。
+
+任务真正失败后，最重要的是把状态可靠写成终态，否则界面会永远转圈。SQLite
+同一时刻只允许有限写并发，恰逢其他事务时可能短暂报 locked；这里用新的短会话
+和有界退避重试。重试必须有上限，避免永久阻塞，也只针对确认为锁冲突的错误。
+"""
 
 import logging
 import time
@@ -18,7 +23,7 @@ ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS = 0.05
 
 
 def is_sqlite_lock_error(error: OperationalError) -> bool:
-    """Return whether an operational error is SQLite lock contention."""
+    """只识别可短暂重试的 SQLite 写锁错误，不掩盖其他数据库故障。"""
     message = str(getattr(error, "orig", error)).lower()
     return (
         "database is locked" in message
@@ -27,6 +32,7 @@ def is_sqlite_lock_error(error: OperationalError) -> bool:
 
 
 def _sleep_before_sqlite_retry(failed_attempt: int) -> None:
+    """按失败次数短暂退避；只在已确认 SQLite 写锁冲突后调用。"""
     time.sleep(
         ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
         * (2 ** (failed_attempt - 1))
@@ -34,6 +40,8 @@ def _sleep_before_sqlite_retry(failed_attempt: int) -> None:
 
 
 def mark_analysis_job_failed_with_sqlite_lock_retry(
+    # 调用者传 expected_status，UPDATE 同时检查旧状态，形成轻量比较并交换：
+    # 已被其他线程完成的任务不会被迟到的异常覆盖成 failed。
     session_factory: Callable[[], Session],
     job_id: str,
     job_type: str,

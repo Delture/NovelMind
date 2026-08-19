@@ -63,13 +63,13 @@ def test_chunks_preserve_exact_slices_and_are_stable() -> None:
     first = build_rag_chunks(
         novel_id=7,
         chapters=chapters,
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=1_024,
     )
     second = build_rag_chunks(
         novel_id=7,
         chapters=reversed(chapters),
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=1_024,
     )
 
@@ -90,30 +90,30 @@ def test_source_hash_changes_with_source_or_embedding_contract() -> None:
     chunks = build_rag_chunks(
         novel_id=1,
         chapters=[chapter],
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=1_024,
     )
     original = rag_source_hash(
         chunks,
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=1_024,
     )
     changed_chunks = build_rag_chunks(
         novel_id=1,
         chapters=[FakeChapter(1, 1, "第一章", "正文变更")],
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=1_024,
     )
 
     assert CHUNK_FORMAT_VERSION == "rag-chunk-v2-local-sqlite"
     assert original != rag_source_hash(
         changed_chunks,
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=1_024,
     )
     assert original != rag_source_hash(
         chunks,
-        embedding_model="text-embedding-v4",
+        embedding_model="Qwen/Qwen3-Embedding-4B",
         dimensions=768,
     )
 

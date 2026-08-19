@@ -54,28 +54,27 @@ def rag_estimate(**overrides: object) -> dict[str, object]:
         "index_current": True,
         "embedding_configured": True,
         "generation_configured": True,
-        "embedding_provider": "aliyun_model_studio",
-        "embedding_model": "text-embedding-v4",
+        "embedding_provider": "siliconflow",
+        "embedding_model": "Qwen/Qwen3-Embedding-4B",
         "embedding_dimensions": 1_024,
-        "embedding_region": "cn-beijing",
+        "embedding_region": "global",
         "generation_provider": "deepseek",
         "generation_model": "deepseek-v4-pro",
-        "sends_chapter_titles_and_original_chunks_to_bailian": True,
-        "sends_question_to_bailian": True,
-        "sends_question_and_retrieved_chunks_to_deepseek": True,
+        "sends_chapter_titles_and_original_chunks_to_embedding_provider": True,
+        "sends_question_to_embedding_provider": True,
+        "sends_question_and_retrieved_chunks_to_generation_provider": True,
         "data_handling_notice": "原文会发送至两个已披露的外部服务。",
-        "bailian_terms_url": (
-            "https://help.aliyun.com/en/model-studio/"
-            "bailian-service-notes"
+        "embedding_terms_url": (
+            "https://docs.siliconflow.cn/cn/legals/terms-of-service"
         ),
-        "bailian_privacy_url": (
-            "https://help.aliyun.com/en/model-studio/privacy-notice"
+        "embedding_privacy_url": (
+            "https://docs.siliconflow.cn/cn/legals/privacy-policy"
         ),
-        "deepseek_terms_url": (
+        "generation_terms_url": (
             "https://cdn.deepseek.com/policies/en-US/"
             "deepseek-open-platform-terms-of-service.html"
         ),
-        "deepseek_privacy_url": (
+        "generation_privacy_url": (
             "https://cdn.deepseek.com/policies/en-US/"
             "deepseek-privacy-policy.html"
         ),
@@ -133,8 +132,8 @@ def configure_rag_dependencies(
                 "current": True,
                 "chunk_count": 12,
                 "source_hash": "a" * 64,
-                "embedding_provider": "aliyun_model_studio",
-                "embedding_model": "text-embedding-v4",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "Qwen/Qwen3-Embedding-4B",
                 "embedding_dimensions": 1_024,
                 "chunk_version": "rag-chunk-v1",
                 "updated_at": "2026-07-29T10:00:00",
@@ -260,6 +259,29 @@ def test_question_requires_three_independent_confirmations(
     clients["start_rag_question"].assert_not_called()
 
 
+def test_rag_history_translates_internal_job_status(
+    streamlit_module: tuple[ModuleType, FakeStreamlit],
+) -> None:
+    module, fake = streamlit_module
+
+    module._render_rag_history(
+        7,
+        [
+            question_item(
+                status="queued",
+                answer=None,
+                citations=[],
+                retrieved_evidence_count=0,
+                insufficient_evidence=None,
+            )
+        ],
+        1,
+    )
+
+    assert ("write", "状态：等待执行") in fake.messages
+    assert ("write", "状态：queued") not in fake.messages
+
+
 def test_answer_and_citations_are_rendered_only_as_plain_text(
     streamlit_module: tuple[ModuleType, FakeStreamlit],
     monkeypatch: pytest.MonkeyPatch,
@@ -313,18 +335,51 @@ def test_untrusted_policy_host_is_rejected_before_link_rendering(
         module,
         monkeypatch,
         estimate=rag_estimate(
-            bailian_privacy_url="https://evil.example/privacy"
+            embedding_privacy_url="https://evil.example/privacy"
         ),
     )
 
     module.render_rag_workspace({"id": 7})
 
     assert any(
-        kind == "error" and "help.aliyun.com" in body
+        kind == "error" and "docs.siliconflow.cn" in body
         for kind, body in fake.messages
     )
     assert all(
         "evil.example" not in body
         for kind, body in fake.messages
         if kind == "markdown"
+    )
+
+
+def test_custom_compatible_providers_are_rendered_without_fixed_vendor_checks(
+    streamlit_module: tuple[ModuleType, FakeStreamlit],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, fake = streamlit_module
+    configure_rag_dependencies(
+        module,
+        monkeypatch,
+        estimate=rag_estimate(
+            embedding_provider="openai_compatible",
+            embedding_model="custom-embedding",
+            embedding_dimensions=1_536,
+            embedding_region="custom",
+            generation_provider="openai_compatible",
+            generation_model="custom-chat",
+            embedding_terms_url="https://embeddings.example.com/v1",
+            embedding_privacy_url="https://embeddings.example.com/v1",
+            generation_terms_url="https://models.example.com/v1",
+            generation_privacy_url="https://models.example.com/v1",
+        ),
+    )
+
+    module.render_rag_workspace({"id": 7})
+
+    assert not any(kind == "error" for kind, _ in fake.messages)
+    assert any(
+        kind == "caption"
+        and "custom-embedding" in body
+        and "custom-chat" in body
+        for kind, body in fake.messages
     )

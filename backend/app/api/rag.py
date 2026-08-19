@@ -1,4 +1,9 @@
-"""RAG index, consent, question, and evidence-history endpoints."""
+"""RAG 索引、提问、估算、状态与证据历史接口。
+
+建索引把章节分块发送给 embedding 服务并保存本地向量；提问先向量化问题、
+本地检索，再把少量证据交给生成模型。两条路径分别披露外发数据并校验授权。
+索引可用性不仅检查 SQLite 指针，还要验证向量集合真实存在且数量匹配。
+"""
 
 import logging
 import math
@@ -36,7 +41,12 @@ from backend.app.analyzer.jobs import (
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
 from backend.app.analyzer.llm import LLMProvider
-from backend.app.core.config import Settings, get_settings
+from backend.app.core.config import (
+    EMBEDDING_PROVIDERS,
+    GENERATION_PROVIDERS,
+    Settings,
+    get_settings,
+)
 from backend.app.core.database import SessionLocal, get_db
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob
@@ -45,6 +55,7 @@ from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
 from backend.app.rag.answering import (
     RAG_ANSWER_PROMPT_VERSION,
     RagEvidence,
+    mark_rag_question_failed_with_sqlite_lock_retry,
     run_rag_answer_job,
 )
 from backend.app.rag.chunking import (
@@ -53,9 +64,9 @@ from backend.app.rag.chunking import (
     rag_source_hash,
 )
 from backend.app.rag.embedding import (
-    BailianEmbeddingProvider,
     EmbeddingProvider,
     MAX_EMBEDDING_BATCH_SIZE,
+    OpenAIEmbeddingProvider,
 )
 from backend.app.rag.indexer import (
     VectorStore,
@@ -71,11 +82,11 @@ EmbeddingFactory = Callable[[], EmbeddingProvider]
 LLMFactory = Callable[[], LLMProvider]
 VectorStoreFactory = Callable[[], VectorStore]
 
-BAILIAN_TERMS_URL = (
-    "https://help.aliyun.com/en/model-studio/bailian-service-notes"
+SILICONFLOW_TERMS_URL = (
+    "https://docs.siliconflow.cn/cn/legals/terms-of-service"
 )
-BAILIAN_PRIVACY_URL = (
-    "https://help.aliyun.com/en/model-studio/privacy-notice"
+SILICONFLOW_PRIVACY_URL = (
+    "https://docs.siliconflow.cn/cn/legals/privacy-policy"
 )
 DEEPSEEK_TERMS_URL = (
     "https://cdn.deepseek.com/policies/en-US/"
@@ -84,8 +95,9 @@ DEEPSEEK_TERMS_URL = (
 DEEPSEEK_PRIVACY_URL = "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
 
 
+# 建索引与提问的授权范围、force 语义和参数不同，因此使用不同请求模型。
 class StartRagIndexRequest(BaseModel):
-    """Consent and refresh controls for sending source chunks to Bailian."""
+    """Consent and refresh controls for external source embedding."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -109,6 +121,7 @@ class StartRagQuestionRequest(BaseModel):
     @field_validator("question")
     @classmethod
     def question_cannot_be_whitespace(cls, value: str) -> str:
+        """去除问题首尾空白；清理后为空则拒绝，否则返回规范文本。"""
         stripped = value.strip()
         if not stripped:
             raise ValueError("question cannot be blank")
@@ -151,14 +164,14 @@ class RagEstimateResponse(BaseModel):
     embedding_region: str
     generation_provider: str
     generation_model: str
-    sends_chapter_titles_and_original_chunks_to_bailian: bool
-    sends_question_to_bailian: bool
-    sends_question_and_retrieved_chunks_to_deepseek: bool
+    sends_chapter_titles_and_original_chunks_to_embedding_provider: bool
+    sends_question_to_embedding_provider: bool
+    sends_question_and_retrieved_chunks_to_generation_provider: bool
     data_handling_notice: str
-    bailian_terms_url: str
-    bailian_privacy_url: str
-    deepseek_terms_url: str
-    deepseek_privacy_url: str
+    embedding_terms_url: str
+    embedding_privacy_url: str
+    generation_terms_url: str
+    generation_privacy_url: str
 
 
 class RagIndexStatusResponse(BaseModel):
@@ -207,6 +220,7 @@ class RagQuestionResponse(BaseModel):
 
 
 class RagQuestionListResponse(BaseModel):
+    """问答历史分页响应，包含当前页 items、总数、offset 与 limit。"""
     items: list[RagQuestionResponse]
     total: int
     offset: int
@@ -214,6 +228,7 @@ class RagQuestionListResponse(BaseModel):
 
 
 def get_session_factory() -> Callable[[], Session]:
+    """返回后台 RAG worker 创建独立数据库会话所用的全局工厂。"""
     return SessionLocal
 
 
@@ -221,7 +236,7 @@ def get_embedding_factory(
     settings: Settings = Depends(get_settings),
 ) -> EmbeddingFactory:
     """Defer embedding-client construction until consent succeeds."""
-    return lambda: BailianEmbeddingProvider(settings)
+    return lambda: OpenAIEmbeddingProvider(settings)
 
 
 def get_generation_factory(
@@ -239,6 +254,7 @@ def get_vector_store_factory(
 
 
 def _get_novel(db: Session, novel_id: int) -> Novel:
+    """按主键读取小说；不存在统一抛 HTTP 404。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(
@@ -249,6 +265,7 @@ def _get_novel(db: Session, novel_id: int) -> Novel:
 
 
 def _rag_job_response(job: AnalysisJob) -> RagJobResponse:
+    """把内部索引 AnalysisJob 映射为 RAG 专用公开响应。"""
     return RagJobResponse(
         id=job.id,
         novel_id=job.novel_id,
@@ -267,6 +284,7 @@ def _active_index_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
+    """返回某小说当前 queued/running 的索引任务；没有则返回 None。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -283,6 +301,7 @@ def _active_question(
     db: Session,
     novel_id: int,
 ) -> Optional[RagQuestion]:
+    """返回某小说当前活动问答，用于阻止同小说并行问答争用资源。"""
     return (
         db.query(RagQuestion)
         .filter(
@@ -299,6 +318,11 @@ def _source_state(
     novel_id: int,
     settings: Settings,
 ):
+    """读取有序章节，返回章节、确定性分块及当前来源哈希。
+
+    ``settings`` 提供影响哈希的模型/维度；估算、状态和启动接口共享本函数，避免
+    三条路径采用不同的数据范围。
+    """
     chapters = (
         db.query(Chapter)
         .filter(Chapter.novel_id == novel_id)
@@ -319,13 +343,45 @@ def _source_state(
     return chapters, chunks, source_hash
 
 
+# 数据库元数据只是一份声明；磁盘集合的存在与实际向量数才是可用性的证据。
+def _vector_collection_is_complete(
+    current: Optional[RagIndex],
+    vector_store_factory: object,
+) -> bool:
+    """Treat persisted RAG metadata as ready only when vectors still exist."""
+    if current is None:
+        return False
+    # Direct unit-level calls may omit FastAPI dependency resolution. The
+    # production route always receives a callable factory.
+    if not callable(vector_store_factory):
+        return True
+    try:
+        vector_store = vector_store_factory()
+        return (
+            vector_store.collection_count(current.collection_name)
+            == current.chunk_count
+        )
+    except Exception:
+        logger.warning(
+            "RAG vector collection %s is missing or unreadable.",
+            current.collection_name,
+        )
+        return False
+
+
 def _build_estimate(
     db: Session,
     *,
     novel_id: int,
     force: bool,
     settings: Settings,
+    vector_store_factory: Optional[VectorStoreFactory] = None,
 ) -> RagEstimateResponse:
+    """纯本地估算总块、可复用块、外发字符和最大 embedding 请求数。
+
+    ``force`` 决定是否必须刷新；可选工厂便于测试注入临时向量库。本函数不构造
+    embedding provider，因此不会产生外部调用。
+    """
     _get_novel(db, novel_id)
     chapters, chunks, source_hash = _source_state(
         db,
@@ -339,12 +395,17 @@ def _build_estimate(
     )
     current_compatible = (
         current is not None
+        and current.embedding_provider == settings.embedding_provider
         and current.embedding_model == settings.embedding_model
         and current.embedding_dimensions == settings.embedding_dimensions
         and current.chunk_version == CHUNK_FORMAT_VERSION
     )
+    vector_collection_valid = _vector_collection_is_complete(
+        current,
+        vector_store_factory,
+    )
     reusable = 0
-    if not force and current_compatible:
+    if not force and current_compatible and vector_collection_valid:
         new_ids = {chunk.chunk_id for chunk in chunks}
         reusable = (
             db.query(func.count(RagChunkRecord.id))
@@ -359,11 +420,15 @@ def _build_estimate(
     maximum_batches = math.ceil(
         len(chunks) / MAX_EMBEDDING_BATCH_SIZE
     )
+    embedding_protocol_attempts = (
+        2 if settings.embedding_provider == "openai_compatible" else 1
+    )
     index_current = bool(
         not force
         and current_compatible
         and current.source_hash == source_hash
         and current.chunk_count == len(chunks)
+        and vector_collection_valid
     )
     return RagEstimateResponse(
         novel_id=novel_id,
@@ -376,10 +441,12 @@ def _build_estimate(
         reusable_chunk_count=int(reusable),
         estimated_new_embedding_count=estimated_new,
         maximum_index_embedding_attempts=(
-            maximum_batches * settings.embedding_max_attempts
+            maximum_batches
+            * settings.embedding_max_attempts
+            * embedding_protocol_attempts
         ),
         maximum_question_embedding_attempts=(
-            settings.embedding_max_attempts
+            settings.embedding_max_attempts * embedding_protocol_attempts
         ),
         maximum_answer_generation_attempts=(
             settings.deepseek_max_attempts
@@ -388,29 +455,51 @@ def _build_estimate(
         index_current=index_current,
         embedding_configured=settings.embedding_configured,
         generation_configured=settings.deepseek_configured,
-        embedding_provider="aliyun_model_studio",
+        embedding_provider=settings.embedding_provider,
         embedding_model=settings.embedding_model,
         embedding_dimensions=settings.embedding_dimensions,
-        embedding_region="cn-beijing",
-        generation_provider="deepseek",
-        generation_model=settings.deepseek_model,
-        sends_chapter_titles_and_original_chunks_to_bailian=True,
-        sends_question_to_bailian=True,
-        sends_question_and_retrieved_chunks_to_deepseek=True,
-        data_handling_notice=(
-            "建立索引时，章节标题和原文片段会发送至阿里云百炼北京区"
-            "工作空间生成向量；提问时，问题会发送至百炼，随后问题与"
-            "本地检索到的原文片段会发送至 DeepSeek 生成答案。"
-            "请在每次操作前核对官方条款与隐私政策。"
+        embedding_region=(
+            "global"
+            if settings.embedding_provider == "siliconflow"
+            else "custom"
         ),
-        bailian_terms_url=BAILIAN_TERMS_URL,
-        bailian_privacy_url=BAILIAN_PRIVACY_URL,
-        deepseek_terms_url=DEEPSEEK_TERMS_URL,
-        deepseek_privacy_url=DEEPSEEK_PRIVACY_URL,
+        generation_provider=settings.generation_provider,
+        generation_model=settings.deepseek_model,
+        sends_chapter_titles_and_original_chunks_to_embedding_provider=True,
+        sends_question_to_embedding_provider=True,
+        sends_question_and_retrieved_chunks_to_generation_provider=True,
+        data_handling_notice=(
+            "建立索引和提问时，原文片段或问题会发送至 "
+            f"{EMBEDDING_PROVIDERS[settings.embedding_provider]}；"
+            "生成答案时，问题与检索片段会发送至 "
+            f"{GENERATION_PROVIDERS[settings.generation_provider]}。"
+            "请在操作前核对所选供应商的条款。"
+        ),
+        embedding_terms_url=(
+            SILICONFLOW_TERMS_URL
+            if settings.embedding_provider == "siliconflow"
+            else (settings.embedding_base_url or "")
+        ),
+        embedding_privacy_url=(
+            SILICONFLOW_PRIVACY_URL
+            if settings.embedding_provider == "siliconflow"
+            else (settings.embedding_base_url or "")
+        ),
+        generation_terms_url=(
+            DEEPSEEK_TERMS_URL
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
+        ),
+        generation_privacy_url=(
+            DEEPSEEK_PRIVACY_URL
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
+        ),
     )
 
 
 def _close_unused(provider: object, description: str) -> None:
+    """关闭尚未移交的可选 provider；description 仅用于安全日志。"""
     close = getattr(provider, "close", None)
     if callable(close):
         try:
@@ -424,9 +513,16 @@ def _mark_undispatched_index_failed(
     job_id: str,
     db: Session,
     session_factory: Callable[[], Session],
-) -> None:
-    db.rollback()
-    mark_analysis_job_failed_with_sqlite_lock_retry(
+) -> bool:
+    """派发失败后将索引任务补偿为 failed，返回是否已离开 queued。"""
+    try:
+        db.rollback()
+    except Exception:
+        logger.exception(
+            "Could not reset request session for RAG index job %s.",
+            job_id,
+        )
+    return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
         "rag_index",
@@ -436,6 +532,7 @@ def _mark_undispatched_index_failed(
     )
 
 
+# 新集合在后台构建；提交后的派发失败会被显式终结，便于界面恢复和排障。
 def _schedule_index(
     *,
     novel_id: int,
@@ -447,6 +544,10 @@ def _schedule_index(
     vector_store: VectorStore,
     session_factory: Callable[[], Session],
 ) -> RagJobResponse:
+    """持久化索引任务并移交 provider/vector store 给后台 worker。
+
+    成功后 worker 负责资源；移交前失败则本函数关闭资源并补偿任务。
+    """
     transferred = False
     try:
         active = _active_index_job(db, novel_id)
@@ -490,8 +591,21 @@ def _schedule_index(
                     detail="该小说已有不同刷新模式的 RAG 索引任务正在运行。",
                 ) from error
             return _rag_job_response(active)
-        db.refresh(job)
-        response = _rag_job_response(job)
+        try:
+            db.refresh(job)
+            response = _rag_job_response(job)
+        except Exception:
+            if not _mark_undispatched_index_failed(
+                job_id=job_id,
+                db=db,
+                session_factory=session_factory,
+            ):
+                logger.error(
+                    "Committed RAG index job %s remained queued after "
+                    "response preparation failed.",
+                    job_id,
+                )
+            raise
         try:
             background_tasks.add_task(
                 run_rag_index_job,
@@ -501,11 +615,16 @@ def _schedule_index(
                 session_factory,
             )
         except Exception:
-            _mark_undispatched_index_failed(
+            if not _mark_undispatched_index_failed(
                 job_id=job_id,
                 db=db,
                 session_factory=session_factory,
-            )
+            ):
+                logger.error(
+                    "RAG index job %s remained queued after dispatch "
+                    "failed.",
+                    job_id,
+                )
             raise
         transferred = True
         return response
@@ -515,6 +634,12 @@ def _schedule_index(
 
 
 def _question_response(row: RagQuestion) -> RagQuestionResponse:
+    """把 RagQuestion ORM 行转换成公开问答响应。
+
+    ``row`` 中 evidence/citation_ids 是可变 JSON，函数先用 Pydantic 逐项验证，
+    再复制状态、答案、错误和时间字段。旧数据库若含畸形 JSON 会返回安全协议错误，
+    而不是让 Streamlit 在深层字段访问时崩溃。
+    """
     try:
         evidence = [
             RagEvidence.model_validate(item)
@@ -576,6 +701,9 @@ def get_rag_estimate(
     force: bool = Query(False),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    vector_store_factory: VectorStoreFactory = Depends(
+        get_vector_store_factory
+    ),
 ) -> RagEstimateResponse:
     """Estimate local chunks and worst-case paid attempts."""
     return _build_estimate(
@@ -583,6 +711,7 @@ def get_rag_estimate(
         novel_id=novel_id,
         force=force,
         settings=settings,
+        vector_store_factory=vector_store_factory,
     )
 
 
@@ -594,7 +723,16 @@ def get_rag_index_status(
     novel_id: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
+    vector_store_factory: VectorStoreFactory = Depends(
+        get_vector_store_factory
+    ),
 ) -> RagIndexStatusResponse:
+    """读取一部小说的完整 RAG 索引状态。
+
+    ``novel_id`` 来自路径，``db/settings/vector_store_factory`` 由 Depends 注入。
+    函数比较来源哈希、供应商、模型、维度、分块版本，并实际打开向量库核对集合
+    存在和数量；返回 ready/current/rebuild 提示，不调用外部 embedding。
+    """
     _get_novel(db, novel_id)
     _, chunks, source_hash = _source_state(db, novel_id, settings)
     current = (
@@ -602,24 +740,30 @@ def get_rag_index_status(
         .filter(RagIndex.novel_id == novel_id)
         .one_or_none()
     )
+    vector_collection_valid = _vector_collection_is_complete(
+        current,
+        vector_store_factory,
+    )
     is_current = bool(
         current is not None
         and current.source_hash == source_hash
+        and current.embedding_provider == settings.embedding_provider
         and current.embedding_model == settings.embedding_model
         and current.embedding_dimensions == settings.embedding_dimensions
         and current.chunk_version == CHUNK_FORMAT_VERSION
         and current.chunk_count == len(chunks)
+        and vector_collection_valid
     )
     return RagIndexStatusResponse(
         novel_id=novel_id,
-        ready=current is not None,
+        ready=current is not None and vector_collection_valid,
         current=is_current,
         chunk_count=current.chunk_count if current else 0,
         source_hash=current.source_hash if current else None,
         embedding_provider=(
             current.embedding_provider
             if current
-            else "aliyun_model_studio"
+            else settings.embedding_provider
         ),
         embedding_model=(
             current.embedding_model
@@ -660,9 +804,13 @@ def start_rag_index(
     """Start external embedding only after every required confirmation."""
     _get_novel(db, novel_id)
     if not request.confirm_external_processing:
+        embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="必须明确同意将章节标题和原文片段发送至阿里云百炼。",
+            detail=(
+                "必须明确同意将章节标题和原文片段发送至"
+                f"{embedding_label}。"
+            ),
         )
     if not request.confirm_content_rights:
         raise HTTPException(
@@ -683,10 +831,11 @@ def start_rag_index(
             )
         return _rag_job_response(active)
     if not settings.embedding_configured:
+        embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "尚未配置阿里云百炼北京区 embedding API，请设置 "
+                f"尚未配置 {embedding_label} embedding API，请设置 "
                 "EMBEDDING_API_KEY 和工作空间 EMBEDDING_BASE_URL。"
             ),
         )
@@ -733,6 +882,7 @@ def list_rag_index_jobs(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ) -> list[RagJobResponse]:
+    """按时间倒序返回最多 ``limit`` 条索引任务历史。"""
     _get_novel(db, novel_id)
     jobs = (
         db.query(AnalysisJob)
@@ -755,6 +905,7 @@ def list_rag_index_jobs(
     response_model=RagQuestionResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+# 提问也持久化为任务，以便刷新页面或短暂断线后继续读取状态与最终证据。
 def start_rag_question(
     request: StartRagQuestionRequest,
     background_tasks: BackgroundTasks,
@@ -771,14 +922,22 @@ def start_rag_question(
     """Create a recoverable RAG answer task after three confirmations."""
     _get_novel(db, novel_id)
     if not request.confirm_embedding_processing:
+        embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="必须明确同意将问题发送至阿里云百炼生成查询向量。",
+            detail=(
+                f"必须明确同意将问题发送至 {embedding_label}"
+                "生成查询向量。"
+            ),
         )
     if not request.confirm_generation_processing:
+        generation_label = GENERATION_PROVIDERS[settings.generation_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="必须明确同意将问题和检索片段发送至 DeepSeek。",
+            detail=(
+                "必须明确同意将问题和检索片段发送至"
+                f"{generation_label}。"
+            ),
         )
     if not request.confirm_content_rights:
         raise HTTPException(
@@ -797,14 +956,16 @@ def start_rag_question(
             )
         return _question_response(active)
     if not settings.embedding_configured:
+        embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="尚未配置阿里云百炼北京区 embedding API。",
+            detail=f"尚未配置 {embedding_label} embedding API。",
         )
     if not settings.deepseek_configured:
+        generation_label = GENERATION_PROVIDERS[settings.generation_provider]
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="尚未配置 DeepSeek API 密钥。",
+            detail=f"尚未配置 {generation_label} API 密钥。",
         )
     _, chunks, expected_hash = _source_state(db, novel_id, settings)
     index = (
@@ -812,6 +973,7 @@ def start_rag_question(
         .filter(
             RagIndex.novel_id == novel_id,
             RagIndex.source_hash == expected_hash,
+            RagIndex.embedding_provider == settings.embedding_provider,
             RagIndex.embedding_model == settings.embedding_model,
             RagIndex.embedding_dimensions == settings.embedding_dimensions,
             RagIndex.chunk_version == CHUNK_FORMAT_VERSION,
@@ -835,13 +997,24 @@ def start_rag_question(
         vector_store = vector_store_factory()
     except Exception as error:
         _close_unused(embedding_provider, "embedding provider")
-        _close_unused(llm_provider, "DeepSeek provider")
+        _close_unused(llm_provider, "generation provider")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
                 "本地向量库初始化失败，请检查 VECTOR_STORE_PATH。"
             ),
         ) from error
+    try:
+        vector_count = vector_store.collection_count(index.collection_name)
+    except Exception:
+        vector_count = -1
+    if isinstance(vector_count, int) and vector_count != index.chunk_count:
+        _close_unused(embedding_provider, "embedding provider")
+        _close_unused(llm_provider, "generation provider")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="本地向量索引缺失或不完整，请先重建 RAG 索引。",
+        )
 
     transferred = False
     try:
@@ -874,8 +1047,25 @@ def start_rag_question(
                     detail="该小说已有另一个 RAG 问答任务正在运行。",
                 ) from error
             return _question_response(active)
-        db.refresh(row)
-        response = _question_response(row)
+        try:
+            db.refresh(row)
+            response = _question_response(row)
+        except Exception:
+            db.rollback()
+            if not mark_rag_question_failed_with_sqlite_lock_retry(
+                session_factory,
+                question_id=row.id,
+                expected_status="queued",
+                error_message=(
+                    "RAG 问答任务未能准备后台响应，请重试。"
+                ),
+            ):
+                logger.error(
+                    "Committed RAG question %s remained queued after "
+                    "response preparation failed.",
+                    row.id,
+                )
+            raise
         try:
             background_tasks.add_task(
                 run_rag_answer_job,
@@ -887,22 +1077,26 @@ def start_rag_question(
             )
         except Exception:
             db.rollback()
-            with session_factory() as failure_db:
-                queued = failure_db.get(RagQuestion, row.id)
-                if queued is not None and queued.status == "queued":
-                    queued.status = "failed"
-                    queued.error_message = (
-                        "RAG 问答任务未能加入后台队列，请重试。"
-                    )
-                    queued.completed_at = utc_now()
-                    failure_db.commit()
+            if not mark_rag_question_failed_with_sqlite_lock_retry(
+                session_factory,
+                question_id=row.id,
+                expected_status="queued",
+                error_message=(
+                    "RAG 问答任务未能加入后台队列，请重试。"
+                ),
+            ):
+                logger.error(
+                    "RAG question %s remained queued after dispatch "
+                    "failed.",
+                    row.id,
+                )
             raise
         transferred = True
         return response
     finally:
         if not transferred:
             _close_unused(embedding_provider, "embedding provider")
-            _close_unused(llm_provider, "DeepSeek provider")
+            _close_unused(llm_provider, "generation provider")
 
 
 @router.get(
@@ -915,6 +1109,7 @@ def list_rag_questions(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> RagQuestionListResponse:
+    """按 offset/limit 分页读取问答历史，并逐项验证响应。"""
     _get_novel(db, novel_id)
     query = db.query(RagQuestion).filter(
         RagQuestion.novel_id == novel_id
@@ -950,6 +1145,7 @@ def get_rag_question(
     ),
     db: Session = Depends(get_db),
 ) -> RagQuestionResponse:
+    """读取指定问题并确认归属；不存在或小说不匹配均返回 404。"""
     _get_novel(db, novel_id)
     row = (
         db.query(RagQuestion)

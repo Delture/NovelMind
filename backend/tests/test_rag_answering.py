@@ -35,7 +35,7 @@ class FakeEmbeddingProvider:
 
     @property
     def model(self) -> str:
-        return "text-embedding-v4"
+        return "Qwen/Qwen3-Embedding-4B"
 
     @property
     def dimensions(self) -> int:
@@ -123,20 +123,20 @@ def seed_question(factory) -> tuple[int, str, str, dict[str, object]]:
         chunks = build_rag_chunks(
             novel_id=novel.id,
             chapters=novel.chapters,
-            embedding_model="text-embedding-v4",
+            embedding_model="Qwen/Qwen3-Embedding-4B",
             dimensions=1_024,
         )
         source_hash = rag_source_hash(
             chunks,
-            embedding_model="text-embedding-v4",
+            embedding_model="Qwen/Qwen3-Embedding-4B",
             dimensions=1_024,
         )
         index = RagIndex(
             novel_id=novel.id,
             source_hash=source_hash,
             collection_name="novelmind_answer_test",
-            embedding_provider="aliyun_model_studio",
-            embedding_model="text-embedding-v4",
+            embedding_provider="siliconflow",
+            embedding_model="Qwen/Qwen3-Embedding-4B",
             embedding_dimensions=1_024,
             chunk_version=CHUNK_FORMAT_VERSION,
             chunk_count=1,

@@ -17,7 +17,7 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - 小说资料库、分页章节列表、按需正文阅读和本地删除。
 - DeepSeek V4 Pro API 结构化章节摘要、缓存和持久化任务。
 - DeepSeek V4 Pro API 人物抽取、跨章节归并、关系推理和本地统计。
-- 阿里云百炼北京区外部 embedding、本地精确向量检索和 DeepSeek 带引用问答。
+- 硅基流动 `Qwen/Qwen3-Embedding-4B` 外部 embedding、本地精确向量检索和 DeepSeek 带引用问答。
 - DeepSeek 基于派生摘要和可选人物快照生成带章节依据的全书分析报告。
 - Streamlit 上传、资料库、正文阅读、章节摘要、人物统计、RAG 和报告工作区。
 

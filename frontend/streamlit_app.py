@@ -1,4 +1,13 @@
-"""Streamlit workspace for importing, reading, and analyzing novels."""
+"""NovelMind 的 Streamlit 单页工作台与前端状态编排。
+
+Streamlit 每次交互都会从上到下重新执行脚本，因此界面不能依赖普通局部变量保存
+跨次状态，必须使用 ``st.session_state``。本文件按“通用验证/组件 -> 配置与资料库
+-> 摘要 -> 人物 -> RAG -> 报告 -> 阅读器 -> main”排列。业务数据始终由 FastAPI
+和 SQLite 持有；session_state 只保存当前页面、选择项、分页和短期展示状态。
+
+来自 API 和模型的字符串按不可信文本处理：结构字段先严格校验，正文用
+``st.text`` 或 HTML 转义后展示，绝不直接执行模型可能返回的 Markdown/HTML。
+"""
 
 from html import escape
 from typing import Any, Dict, Optional
@@ -15,6 +24,7 @@ from api_client import (
     get_chapter,
     get_chapter_summary,
     get_novel,
+    get_model_settings,
     get_report,
     get_report_estimate,
     get_rag_estimate,
@@ -31,12 +41,14 @@ from api_client import (
     list_rag_index_jobs,
     list_rag_questions,
     list_summaries,
+    reset_model_settings,
     start_character_analysis,
     start_chapter_summary,
     start_summaries,
     start_rag_index,
     start_rag_question,
     start_report,
+    update_model_settings,
     upload_novel,
 )
 from ui_styles import APP_CSS
@@ -50,14 +62,27 @@ CHARACTER_PAGE_SIZE = 20
 CHARACTER_DETAIL_PAGE_SIZE = 50
 RAG_HISTORY_PAGE_SIZE = 10
 ACTIVE_JOB_STATUSES = {"queued", "running"}
+JOB_STATUS_LABELS = {
+    "queued": "等待执行",
+    "running": "正在执行",
+    "succeeded": "已完成",
+    "failed": "执行失败",
+}
+PROVIDER_LABELS = {
+    "deepseek": "DeepSeek",
+    "siliconflow": "硅基流动",
+    "openai_compatible": "OpenAI 兼容服务",
+}
 
 
+# 这些 ``_require_*`` 函数相当于前端运行时 schema。后端升级、代理故障或损坏
+# 数据造成响应形状变化时，页面显示明确错误，而不是深处 KeyError 崩溃。
 class UiPayloadError(ValueError):
     """An unexpected backend response that should be explained in the UI."""
 
 
 def _render_plain_text(value: str) -> None:
-    """Render untrusted API/model output without Markdown or HTML parsing."""
+    """把模型/API 文本按纯文本渲染，不解释其中 Markdown 或 HTML。"""
     st.text(value)
 
 
@@ -265,6 +290,99 @@ def _require_policy_url(
     return value
 
 
+def _require_service_url(
+    payload: Dict[str, Any],
+    key: str,
+    context: str,
+) -> str:
+    """Return a safe configured service link without credentials."""
+    value = _require_text(payload, key, context)
+    try:
+        parsed = urlparse(value)
+        hostname = (parsed.hostname or "").lower()
+    except ValueError as error:
+        raise UiPayloadError(
+            f"{context}.{key} 不是有效链接"
+        ) from error
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or (
+            parsed.scheme == "http"
+            and hostname not in {"localhost", "127.0.0.1", "::1"}
+        )
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or any(character.isspace() for character in value)
+        or any(character in value for character in "()")
+    ):
+        raise UiPayloadError(f"{context}.{key} 不是安全的服务链接")
+    return value
+
+
+def _provider_label(provider: str) -> str:
+    """Return a concise user-facing provider label."""
+    return PROVIDER_LABELS.get(provider, provider)
+
+
+def _validate_job_progress(
+    payload: Dict[str, Any],
+    context: str,
+) -> tuple[str, int, int]:
+    """Validate the common persisted-job status and progress contract."""
+    status_value = _require_text(payload, "status", context)
+    if status_value not in JOB_STATUS_LABELS:
+        raise UiPayloadError(f"{context}.status 不是受支持的任务状态")
+    current = _require_int(payload, "progress_current", context)
+    total = _require_int(payload, "progress_total", context)
+    if current > total:
+        raise UiPayloadError(f"{context}进度超出总量")
+    _optional_text(payload, "error_message", context)
+    return status_value, current, total
+
+
+def _render_job_progress(
+    status_value: str,
+    current: int,
+    total: int,
+    *,
+    total_unit: str,
+    empty_label: str,
+    scope: Optional[str] = None,
+) -> None:
+    """Render one consistent task line without exposing internal states."""
+    prefix = f"{scope} · " if scope else ""
+    percent = (
+        0
+        if total == 0
+        else max(0, min(100, (current * 100 + total // 2) // total))
+    )
+    if status_value == "failed":
+        detail = (
+            f"已完成 {current:,} / {total:,} {total_unit}"
+            if current > 0
+            else f"尚未完成{empty_label}"
+        )
+        st.write(f"{prefix}执行失败 · {detail}")
+        if current > 0 and total > 0:
+            st.progress(percent)
+        return
+    if status_value == "queued":
+        st.write(f"{prefix}等待执行 · 预计 {total:,} {total_unit}")
+        st.progress(0)
+        return
+    if status_value == "running":
+        st.write(
+            f"{prefix}正在执行 · {current:,} / {total:,} {total_unit}"
+        )
+        st.progress(percent)
+        return
+    st.write(f"{prefix}已完成 · 共 {current:,} {total_unit}")
+    st.progress(100)
+
+
 def _show_payload_error(context: str, error: UiPayloadError) -> None:
     """Explain a response-contract problem without exposing a traceback."""
     st.error(
@@ -300,7 +418,7 @@ def _validate_chapter_metadata(
 
 
 def initialize_session_state() -> None:
-    """Create stable application state without overwriting user choices."""
+    """为首次运行补齐 UI 状态默认值，同时保留后续 rerun 已有选择。"""
     defaults = {
         "view": "library",
         "library_page": 0,
@@ -336,20 +454,45 @@ def last_page_index(total: int, page_size: int) -> int:
     return (total - 1) // page_size
 
 
+def render_chapter_range_jump(
+    *,
+    total: int,
+    page: int,
+    page_size: int,
+    state_key: str,
+    widget_key: str,
+) -> bool:
+    """Offer direct range navigation for novels with many chapters."""
+    final_page = last_page_index(total, page_size)
+    if final_page <= 0:
+        return False
+    selected_page = int(
+        st.selectbox(
+            "章节范围",
+            options=list(range(final_page + 1)),
+            index=page,
+            format_func=lambda value: (
+                f"第 {value * page_size + 1:,}–"
+                f"{min(total, (value + 1) * page_size):,} 章"
+            ),
+            key=widget_key,
+        )
+    )
+    if selected_page == page:
+        return False
+    st.session_state[state_key] = selected_page
+    st.rerun()
+    return True
+
+
 def render_topbar(backend_online: bool) -> None:
-    """Render the common product header and backend state."""
+    """Render a quiet utility strip above the current workspace."""
     status_class = "" if backend_online else " is-offline"
     status_text = "后端已连接" if backend_online else "后端未连接"
     st.markdown(
         f"""
         <div class="nm-topbar">
-            <div class="nm-brand">
-                <div class="nm-brand-mark">N</div>
-                <div>
-                    <div class="nm-brand-name">NovelMind</div>
-                    <div class="nm-brand-area">小说结构工作台</div>
-                </div>
-            </div>
+            <div class="nm-context">私人小说工作台</div>
             <div class="nm-status{status_class}">
                 <span class="nm-status-dot"></span>
                 <span>{status_text}</span>
@@ -373,6 +516,65 @@ def render_page_heading(title: str, description: str) -> None:
     )
 
 
+def render_workspace_heading(
+    title: str,
+    description: str,
+    eyebrow: str = "当前作品",
+) -> None:
+    """Render a compact heading inside one novel workspace."""
+    st.markdown(
+        (
+            '<div class="nm-workspace-heading">'
+            f'<div class="nm-eyebrow">{escape(eyebrow)}</div>'
+            f"<h2>{escape(title)}</h2>"
+            f"<p>{escape(description)}</p>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_metric_grid(
+    items: list[tuple[str, object]],
+    *,
+    columns_per_row: int = 2,
+) -> None:
+    """Render readable metrics without squeezing long values into narrow panes."""
+    if columns_per_row < 1:
+        raise ValueError("columns_per_row must be positive")
+    for start in range(0, len(items), columns_per_row):
+        columns = st.columns(columns_per_row)
+        for column, (label, value) in zip(
+            columns,
+            items[start : start + columns_per_row],
+        ):
+            column.metric(label, value)
+
+
+def render_data_disclosure(
+    notice: str,
+    links: list[tuple[str, str]],
+) -> None:
+    """Keep validated policy details available without dominating the page."""
+    link_markup = " · ".join(
+        (
+            f'<a href="{escape(url)}" target="_blank" '
+            f'rel="noopener noreferrer">{escape(label)}</a>'
+        )
+        for label, url in links
+    )
+    st.markdown(
+        (
+            '<details class="nm-disclosure">'
+            "<summary>数据处理说明</summary>"
+            f"<p>{escape(notice)}</p>"
+            f'<div class="nm-disclosure-links">{link_markup}</div>'
+            "</details>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def select_novel(novel_id: int) -> None:
     """Open one novel and reset reader-specific state."""
     st.session_state["selected_novel_id"] = novel_id
@@ -391,8 +593,25 @@ def return_to_library() -> None:
 
 
 def render_navigation() -> None:
-    """Render navigation compatible with Streamlit 1.12."""
-    st.sidebar.markdown("### 工作区")
+    """渲染侧边栏品牌、页面按钮和当前页面状态。
+
+    本函数无参数；按钮只修改 ``st.session_state['view']`` 并触发 rerun，不访问
+    数据库或调用模型。导航项集中定义可保证各页面显示一致，并避免工作区函数互相
+    直接调用形成循环。
+    """
+    st.sidebar.markdown(
+        """
+        <div class="nm-sidebar-brand">
+            <div class="nm-brand-mark">N</div>
+            <div>
+                <div class="nm-brand-name">NovelMind</div>
+                <div class="nm-brand-area">阅读与分析</div>
+            </div>
+        </div>
+        <div class="nm-nav-label">书架</div>
+        """,
+        unsafe_allow_html=True,
+    )
     if st.sidebar.button(
         "资料库",
         key="nav_library",
@@ -400,6 +619,7 @@ def render_navigation() -> None:
     ):
         st.session_state["view"] = "library"
         st.session_state.pop("delete_candidate_id", None)
+        st.rerun()
     if st.sidebar.button(
         "导入小说",
         key="nav_upload",
@@ -407,13 +627,435 @@ def render_navigation() -> None:
     ):
         st.session_state["view"] = "upload"
         st.session_state.pop("delete_candidate_id", None)
+        st.rerun()
+    st.sidebar.markdown(
+        '<div class="nm-nav-label nm-nav-label-secondary">设置</div>',
+        unsafe_allow_html=True,
+    )
+    if st.sidebar.button(
+        "模型与密钥",
+        key="nav_model_settings",
+        disabled=st.session_state["view"] == "model_settings",
+    ):
+        st.session_state["view"] = "model_settings"
+        st.session_state.pop("delete_candidate_id", None)
+        st.rerun()
+    selected_novel_id = st.session_state.get("selected_novel_id")
+    if selected_novel_id is not None:
+        st.sidebar.markdown(
+            """
+            <div class="nm-sidebar-book">
+                <strong>已打开一本小说</strong>
+                阅读、摘要、人物、问答与报告都在同一作品中。
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _provider_options(
+    payload: Dict[str, Any],
+    key: str,
+) -> tuple[list[str], dict[str, str]]:
+    """Validate provider options returned by the backend."""
+    raw_options = _require_list(payload, key, "模型配置")
+    ids: list[str] = []
+    labels: dict[str, str] = {}
+    for index, raw_option in enumerate(raw_options):
+        option = _require_object(
+            raw_option,
+            f"模型配置.{key}[{index}]",
+        )
+        provider_id = _require_text(option, "id", f"供应商选项 {index}")
+        label = _require_text(option, "label", f"供应商选项 {index}")
+        if provider_id in labels:
+            raise UiPayloadError("模型配置包含重复供应商")
+        ids.append(provider_id)
+        labels[provider_id] = label
+    if not ids:
+        raise UiPayloadError("模型配置没有可用供应商")
+    return ids, labels
+
+
+def _provider_status_markup(
+    *,
+    label: str,
+    model: str,
+    configured: bool,
+) -> str:
+    """把供应商标签、模型和密钥状态转义为状态卡 HTML 字符串。
+
+    三个参数都来自已验证本地配置响应；返回值稍后以 unsafe HTML 渲染，因此这里
+    必须先 ``escape`` 所有动态文本。
+    """
+    state_class = " is-ready" if configured else ""
+    state_text = "密钥已设置" if configured else "尚未设置密钥"
+    return (
+        '<div class="nm-provider-summary">'
+        "<div>"
+        f"<strong>{escape(label)}</strong>"
+        f"<span>{escape(model)}</span>"
+        "</div>"
+        f'<div class="nm-provider-state{state_class}">{state_text}</div>'
+        "</div>"
+    )
+
+
+# 每个 ``render_*_page/workspace`` 都是一个页面级组件；main 根据当前状态只调用
+# 其中一个，避免不同工作区的按钮和 session key 相互干扰。
+def render_model_settings_page(backend_online: bool) -> None:
+    """Render local provider, model, endpoint, and secret management."""
+    render_page_heading(
+        "模型与密钥",
+        "为生成与检索分别选择服务；保存后，后续任务立即使用新配置。",
+    )
+    if not backend_online:
+        st.error("后端未连接，暂时无法读取或保存模型配置。")
+        return
+    try:
+        payload = _require_object(get_model_settings(), "模型配置")
+        generation = _require_object(
+            payload.get("generation"),
+            "模型配置.generation",
+        )
+        embedding = _require_object(
+            payload.get("embedding"),
+            "模型配置.embedding",
+        )
+        generation_ids, generation_labels = _provider_options(
+            payload,
+            "generation_provider_options",
+        )
+        embedding_ids, embedding_labels = _provider_options(
+            payload,
+            "embedding_provider_options",
+        )
+        generation_provider = _require_text(
+            generation,
+            "provider",
+            "生成模型",
+        )
+        embedding_provider = _require_text(
+            embedding,
+            "provider",
+            "向量模型",
+        )
+        if generation_provider not in generation_labels:
+            raise UiPayloadError("生成模型供应商不在可用列表中")
+        if embedding_provider not in embedding_labels:
+            raise UiPayloadError("向量模型供应商不在可用列表中")
+        generation_model = _require_text(
+            generation,
+            "model",
+            "生成模型",
+        )
+        generation_base_url = _require_text(
+            generation,
+            "base_url",
+            "生成模型",
+        )
+        generation_key_set = _require_bool(
+            generation,
+            "api_key_set",
+            "生成模型",
+        )
+        summary_concurrency_mode = _require_text(
+            generation,
+            "summary_concurrency_mode",
+            "生成模型",
+        )
+        if summary_concurrency_mode not in {"auto", "manual"}:
+            raise UiPayloadError("生成模型.summary_concurrency_mode 无效")
+        summary_initial_concurrency = _require_int(
+            generation,
+            "summary_initial_concurrency",
+            "生成模型",
+            minimum=1,
+        )
+        summary_max_concurrency = _require_int(
+            generation,
+            "summary_max_concurrency",
+            "生成模型",
+            minimum=1,
+        )
+        summary_provider_concurrency_limit = _require_int(
+            generation,
+            "summary_provider_concurrency_limit",
+            "生成模型",
+            minimum=1,
+        )
+        embedding_model = _require_text(
+            embedding,
+            "model",
+            "向量模型",
+        )
+        embedding_base_url = _require_text(
+            embedding,
+            "base_url",
+            "向量模型",
+            allow_empty=True,
+        )
+        embedding_key_set = _require_bool(
+            embedding,
+            "api_key_set",
+            "向量模型",
+        )
+        dimensions = _require_int(
+            embedding,
+            "dimensions",
+            "向量模型",
+            minimum=1,
+        )
+        local_override = _require_bool(
+            payload,
+            "local_override",
+            "模型配置",
+        )
+    except (NovelApiError, UiPayloadError) as error:
+        st.error(f"无法读取模型配置：{error}")
+        return
+
+    st.caption(
+        "API Key 只写入本机配置文件，读取接口和页面不会回显；"
+        "正在运行的任务不受中途切换影响。"
+    )
+    with st.form("model_settings_form"):
+        generation_column, embedding_column = st.columns(2)
+        with generation_column:
+            generation_container = st.container(
+                border=True,
+                key="settings_generation_card",
+            )
+        with generation_container:
+            st.subheader("生成模型")
+            st.caption("用于章节摘要、人物分析、RAG 回答与分析报告。")
+            st.markdown(
+                _provider_status_markup(
+                    label=generation_labels[generation_provider],
+                    model=generation_model,
+                    configured=generation_key_set,
+                ),
+                unsafe_allow_html=True,
+            )
+            gen_provider_value = st.selectbox(
+                "供应商",
+                generation_ids,
+                index=generation_ids.index(generation_provider),
+                format_func=lambda value: generation_labels[value],
+                key="settings_generation_provider",
+            )
+            gen_model_value = st.text_input(
+                "模型",
+                value=generation_model,
+                max_chars=100,
+                key="settings_generation_model",
+            )
+            gen_base_url_value = st.text_input(
+                "API 地址",
+                value=generation_base_url,
+                max_chars=500,
+                help=(
+                    "DeepSeek 使用官方地址；其他服务填写其 "
+                    "OpenAI 兼容 API 根地址。"
+                ),
+                key="settings_generation_base_url",
+            )
+            st.markdown("#### 摘要并发")
+            st.caption(
+                f"当前从 {summary_initial_concurrency:,} 个请求启动；"
+                f"识别到的模型上限为 "
+                f"{summary_provider_concurrency_limit:,}。"
+            )
+            concurrency_labels = {
+                "auto": "自动调节",
+                "manual": "固定并发",
+            }
+            concurrency_mode_value = st.selectbox(
+                "调度模式",
+                ["auto", "manual"],
+                index=["auto", "manual"].index(
+                    summary_concurrency_mode
+                ),
+                format_func=lambda value: concurrency_labels[value],
+                help=(
+                    "自动模式会在连续成功后逐步提高并发，并在限流或"
+                    "临时服务错误时降低并发；固定并发始终使用设置值。"
+                ),
+                key="settings_summary_concurrency_mode",
+            )
+            summary_max_concurrency_value = st.number_input(
+                "最大并发请求数",
+                min_value=1,
+                max_value=2_500,
+                value=summary_max_concurrency,
+                step=1,
+                help=(
+                    "实际并发不会超过待处理章节数和识别到的模型上限。"
+                ),
+                key="settings_summary_max_concurrency",
+            )
+            gen_clear_key = st.checkbox(
+                "清除现有生成模型密钥",
+                value=False,
+                disabled=not generation_key_set,
+                key="settings_generation_clear_key",
+            )
+            gen_key_value = st.text_input(
+                "新 API Key",
+                value="",
+                type="password",
+                max_chars=4_096,
+                placeholder=(
+                    "留空，保留现有密钥"
+                    if generation_key_set
+                    else "输入 API Key"
+                ),
+                disabled=gen_clear_key,
+                key="settings_generation_key",
+            )
+
+        with embedding_column:
+            embedding_container = st.container(
+                border=True,
+                key="settings_embedding_card",
+            )
+        with embedding_container:
+            st.subheader("向量模型")
+            st.caption("用于建立 RAG 索引与问题检索；更换后需重建索引。")
+            st.markdown(
+                _provider_status_markup(
+                    label=embedding_labels[embedding_provider],
+                    model=embedding_model,
+                    configured=embedding_key_set,
+                ),
+                unsafe_allow_html=True,
+            )
+            embed_provider_value = st.selectbox(
+                "供应商",
+                embedding_ids,
+                index=embedding_ids.index(embedding_provider),
+                format_func=lambda value: embedding_labels[value],
+                key="settings_embedding_provider",
+            )
+            embed_model_value = st.text_input(
+                "模型",
+                value=embedding_model,
+                max_chars=100,
+                key="settings_embedding_model",
+            )
+            embed_base_url_value = st.text_input(
+                "API 地址",
+                value=embedding_base_url,
+                max_chars=500,
+                help=(
+                    "硅基流动使用官方 API 根地址；其他服务填写其 "
+                    "OpenAI 兼容 API 根地址。"
+                ),
+                key="settings_embedding_base_url",
+            )
+            dimensions_value = st.number_input(
+                "向量维度",
+                min_value=1,
+                max_value=8_192,
+                value=dimensions,
+                step=1,
+                key="settings_embedding_dimensions",
+            )
+            embed_clear_key = st.checkbox(
+                "清除现有向量模型密钥",
+                value=False,
+                disabled=not embedding_key_set,
+                key="settings_embedding_clear_key",
+            )
+            embed_key_value = st.text_input(
+                "新 API Key",
+                value="",
+                type="password",
+                max_chars=4_096,
+                placeholder=(
+                    "留空，保留现有密钥"
+                    if embedding_key_set
+                    else "输入 API Key"
+                ),
+                disabled=embed_clear_key,
+                key="settings_embedding_key",
+            )
+        submitted = st.form_submit_button(
+            "保存配置",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        try:
+            update_model_settings(
+                {
+                    "generation": {
+                        "provider": gen_provider_value,
+                        "model": gen_model_value.strip(),
+                        "base_url": gen_base_url_value.strip(),
+                        "api_key": gen_key_value.strip() or None,
+                        "clear_api_key": gen_clear_key,
+                        "summary_concurrency_mode": (
+                            concurrency_mode_value
+                        ),
+                        "summary_max_concurrency": int(
+                            summary_max_concurrency_value
+                        ),
+                    },
+                    "embedding": {
+                        "provider": embed_provider_value,
+                        "model": embed_model_value.strip(),
+                        "base_url": embed_base_url_value.strip(),
+                        "dimensions": int(dimensions_value),
+                        "api_key": embed_key_value.strip() or None,
+                        "clear_api_key": embed_clear_key,
+                    },
+                }
+            )
+        except NovelApiError as error:
+            st.error(str(error))
+        else:
+            for key in (
+                "settings_generation_key",
+                "settings_embedding_key",
+                "settings_generation_clear_key",
+                "settings_embedding_clear_key",
+            ):
+                st.session_state.pop(key, None)
+            st.session_state["flash_message"] = "模型配置已保存并立即生效。"
+            st.rerun()
+
+    with st.expander("恢复环境变量配置", expanded=False):
+        if local_override:
+            st.caption("移除页面保存的覆盖值，重新使用本机 `.env`。")
+            confirmed = st.checkbox(
+                "确认恢复 `.env` 中的供应商、模型和密钥",
+                key="settings_confirm_reset",
+            )
+            if st.button(
+                "恢复 .env 配置",
+                disabled=not confirmed,
+                key="settings_reset",
+            ):
+                try:
+                    reset_model_settings()
+                except NovelApiError as error:
+                    st.error(str(error))
+                else:
+                    st.session_state["flash_message"] = (
+                        "已恢复 .env 中的模型配置。"
+                    )
+                    st.rerun()
+        else:
+            st.caption("当前没有页面覆盖值，正在使用 `.env` 配置。")
 
 
 def render_upload_page(backend_online: bool) -> None:
     """Render TXT upload and move successful imports into the library."""
     render_page_heading(
         "导入小说",
-        "TXT · UTF-8 / GB18030 · 最大 20 MB",
+        "选择一本 TXT，NovelMind 会自动识别章节并加入书架。",
     )
     if not backend_online:
         st.error("后端未连接。请先启动 FastAPI 服务，再上传小说。")
@@ -433,11 +1075,13 @@ def render_upload_page(backend_online: bool) -> None:
             "解析并保存",
             key="submit_upload",
             disabled=uploaded_file is None or not backend_online,
+            type="primary",
+            use_container_width=True,
         )
 
     with note_column:
         if uploaded_file is None:
-            note = "尚未选择文件"
+            note = "请选择一个 TXT 文件"
         else:
             note = (
                 f"{escape(uploaded_file.name)} · "
@@ -509,14 +1153,14 @@ def render_library_card(
     filename = _require_text(novel, "filename", "资料库小说")
     st.markdown(
         (
-            '<div class="nm-table-wrap" style="padding: 1rem;">'
-            f"<strong>{escape(filename)}</strong><br>"
-            '<span style="color: #5f6368; font-size: 13px;">'
+            '<div class="nm-library-card">'
+            f"<strong>{escape(filename.rsplit('.', 1)[0])}</strong>"
+            '<div class="nm-library-meta">'
             f"{novel['chapter_count']:,} 章 · "
             f"{novel['character_count']:,} 字符 · "
             f"{escape(novel['encoding'].upper())} · "
             f"{escape(novel['created_at'].replace('T', ' ')[:16])}"
-            "</span></div>"
+            "</div></div>"
         ),
         unsafe_allow_html=True,
     )
@@ -526,6 +1170,7 @@ def render_library_card(
         if st.button(
             "打开小说",
             key=f"open_novel_{novel_id}",
+            type="primary",
         ):
             select_novel(novel_id)
             st.rerun()
@@ -599,7 +1244,7 @@ def render_library_page(backend_online: bool) -> None:
         render_novel_detail(int(selected_novel_id), backend_online)
         return
 
-    render_page_heading("资料库", "从本地 SQLite 重新打开已导入的小说")
+    render_page_heading("我的书架", "继续阅读，或打开一本小说开始分析。")
     if not backend_online:
         st.error("后端未连接，暂时无法读取资料库。")
         return
@@ -674,14 +1319,13 @@ def render_library_page(backend_online: bool) -> None:
 
 def render_novel_metrics(novel: Dict[str, Any]) -> None:
     """Render aggregate metadata for one selected novel."""
-    columns = st.columns(4)
-    columns[0].metric("小说 ID", novel["id"])
-    columns[1].metric("章节数", f"{int(novel['chapter_count']):,}")
-    columns[2].metric("文本编码", str(novel["encoding"]).upper())
-    columns[3].metric(
+    columns = st.columns(3)
+    columns[0].metric("章节", f"{int(novel['chapter_count']):,}")
+    columns[1].metric(
         "正文字符",
         f"{int(novel['character_count']):,}",
     )
+    columns[2].metric("编码", str(novel["encoding"]).upper())
 
 
 def render_novel_detail(novel_id: int, backend_online: bool) -> None:
@@ -708,8 +1352,8 @@ def render_novel_detail(novel_id: int, backend_online: bool) -> None:
         return
 
     render_page_heading(
-        novel["filename"],
-        "章节阅读、DeepSeek 分析与 RAG 原文问答",
+        str(novel["filename"]).rsplit(".", 1)[0],
+        "阅读原文，并在需要时使用结构分析工具。",
     )
     render_novel_metrics(novel)
     mode = st.radio(
@@ -722,6 +1366,7 @@ def render_novel_detail(novel_id: int, backend_online: bool) -> None:
             "分析报告",
         ],
         horizontal=True,
+        index=1,
         key=f"novel_mode_{novel_id}",
     )
     if mode == "章节摘要":
@@ -744,10 +1389,7 @@ def _summary_start_error(error: NovelApiError) -> None:
             "请等待该摘要任务完成后再试。"
         )
     elif error.status_code == 503:
-        st.error(
-            "DeepSeek 尚未配置。请在本地 .env 中设置 "
-            "DEEPSEEK_API_KEY，并重启后端。"
-        )
+        st.error("生成模型尚未配置。请前往“模型与密钥”设置。")
     else:
         st.error(str(error))
 
@@ -769,11 +1411,12 @@ def _render_generation_status(
             "configured",
             "系统状态.generation",
         )
-        provider = _require_text(
+        provider_id = _require_text(
             generation,
             "provider",
             "系统状态.generation",
-        ).title()
+        )
+        provider = _provider_label(provider_id)
         model = _require_text(
             generation,
             "model",
@@ -784,12 +1427,12 @@ def _render_generation_status(
         else:
             st.warning(
                 f"{provider} 未配置 · {model}。"
-                "请先在本地 .env 中设置 DEEPSEEK_API_KEY。"
+                "请前往“模型与密钥”设置。"
             )
     except NovelApiError as error:
-        st.warning(f"暂时无法读取 DeepSeek 配置状态：{error}")
+        st.warning(f"暂时无法读取生成模型配置状态：{error}")
     except UiPayloadError as error:
-        _show_payload_error("无法读取 DeepSeek 配置状态", error)
+        _show_payload_error("无法读取生成模型配置状态", error)
 
     latest_job: Optional[Dict[str, Any]] = None
     jobs_available = True
@@ -812,19 +1455,8 @@ def _render_generation_status(
                 "id",
                 "摘要任务列表.items[0]",
             )
-            _require_text(
+            _validate_job_progress(
                 latest_job,
-                "status",
-                "摘要任务列表.items[0]",
-            )
-            _require_int(
-                latest_job,
-                "progress_current",
-                "摘要任务列表.items[0]",
-            )
-            _require_int(
-                latest_job,
-                "progress_total",
                 "摘要任务列表.items[0]",
             )
             _optional_int(
@@ -832,11 +1464,6 @@ def _render_generation_status(
                 "target_chapter_index",
                 "摘要任务列表.items[0]",
                 minimum=1,
-            )
-            _optional_text(
-                latest_job,
-                "error_message",
-                "摘要任务列表.items[0]",
             )
     except NovelApiError as error:
         st.warning(f"暂时无法恢复最近摘要任务：{error}")
@@ -848,12 +1475,6 @@ def _render_generation_status(
 
     if latest_job is not None:
         status_value = latest_job["status"]
-        status_labels = {
-            "queued": "等待执行",
-            "running": "正在执行",
-            "succeeded": "已完成",
-            "failed": "执行失败",
-        }
         current = latest_job["progress_current"]
         total = latest_job["progress_total"]
         target_chapter_index = latest_job.get("target_chapter_index")
@@ -862,18 +1483,15 @@ def _render_generation_status(
             if target_chapter_index is None
             else f"第 {target_chapter_index} 章"
         )
-        percent = (
-            0
-            if total == 0
-            else (current * 100 + total // 2) // total
-        )
-        percent = max(0, min(100, percent))
         st.subheader("最近摘要任务")
-        st.write(
-            f"{scope} · {status_labels.get(status_value, status_value)} · "
-            f"{current:,} / {total:,} 章"
+        _render_job_progress(
+            status_value,
+            current,
+            total,
+            total_unit="章",
+            empty_label="章节",
+            scope=scope,
         )
-        st.progress(percent)
         if status_value == "failed":
             st.error(
                 str(
@@ -881,8 +1499,12 @@ def _render_generation_status(
                     or "摘要任务失败，请重新启动任务。"
                 )
             )
-    if st.button("刷新任务状态", key=f"refresh_summary_job_{novel_id}"):
-        st.rerun()
+    if latest_job is not None:
+        if st.button(
+            "刷新任务状态",
+            key=f"refresh_summary_job_{novel_id}",
+        ):
+            st.rerun()
 
     return generation_configured and jobs_available, latest_job
 
@@ -916,13 +1538,60 @@ def _render_summary_estimate(novel_id: int) -> bool:
             "maximum_request_attempts",
             "摘要估算",
         )
+        cached_chapter_count = estimate.get("cached_chapter_count", 0)
+        pending_chapter_count = estimate.get(
+            "pending_chapter_count", chapter_count
+        )
+        force_generation_steps = estimate.get(
+            "estimated_force_generation_steps", generation_steps
+        )
+        force_maximum_attempts = estimate.get(
+            "maximum_force_request_attempts", maximum_attempts
+        )
+        if not all(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 0
+            for value in (
+                cached_chapter_count,
+                pending_chapter_count,
+                force_generation_steps,
+                force_maximum_attempts,
+            )
+        ):
+            raise UiPayloadError("摘要估算缓存统计无效")
+        concurrency_mode = _require_text(
+            estimate,
+            "concurrency_mode",
+            "摘要估算",
+        )
+        if concurrency_mode not in {"auto", "manual"}:
+            raise UiPayloadError("摘要估算.concurrency_mode 无效")
+        initial_concurrency = _require_int(
+            estimate,
+            "initial_concurrency",
+            "摘要估算",
+            minimum=1,
+        )
+        maximum_concurrency = _require_int(
+            estimate,
+            "maximum_concurrency",
+            "摘要估算",
+            minimum=1,
+        )
+        effective_concurrency = _require_int(
+            estimate,
+            "effective_concurrency",
+            "摘要估算",
+            minimum=0,
+        )
         provider = _require_text(
             estimate,
             "provider",
             "摘要估算",
         )
-        if provider.lower() != "deepseek":
-            raise UiPayloadError("摘要估算.provider 应为 deepseek")
+        if provider not in {"deepseek", "openai_compatible"}:
+            raise UiPayloadError("摘要估算.provider 无效")
         model = _require_text(
             estimate,
             "model",
@@ -943,12 +1612,13 @@ def _render_summary_estimate(novel_id: int) -> bool:
             "data_handling_notice",
             "摘要估算",
         )
-        terms_url = _require_deepseek_url(
-            estimate,
-            "terms_url",
-            "摘要估算",
+        url_validator = (
+            _require_deepseek_url
+            if provider == "deepseek"
+            else _require_service_url
         )
-        privacy_url = _require_deepseek_url(
+        terms_url = url_validator(estimate, "terms_url", "摘要估算")
+        privacy_url = url_validator(
             estimate,
             "privacy_url",
             "摘要估算",
@@ -958,32 +1628,55 @@ def _render_summary_estimate(novel_id: int) -> bool:
         return False
 
     st.subheader("全书摘要估算")
-    columns = st.columns(4)
-    columns[0].metric("章节", chapter_count)
-    columns[1].metric(
-        "正文字符",
-        f"{character_count:,}",
+    render_metric_grid(
+        [
+            ("章节", chapter_count),
+            ("正文字符", f"{character_count:,}"),
+            ("生成步骤", generation_steps),
+            ("最多请求尝试", maximum_attempts),
+            ("启动并发", effective_concurrency),
+            ("并发上限", maximum_concurrency),
+        ]
     )
-    columns[2].metric(
-        "生成步骤",
-        generation_steps,
+    provider_label = _provider_label(provider)
+    st.session_state[f"summary_provider_label_{novel_id}"] = provider_label
+    mode_label = "自动调节" if concurrency_mode == "auto" else "固定并发"
+    st.caption(
+        f"目标 API：{provider_label} · {model} · {mode_label}"
+        f"（初始 {initial_concurrency:,}）"
     )
-    columns[3].metric(
-        "最多请求尝试",
-        maximum_attempts,
+    st.caption(
+        f"普通生成：待处理 {pending_chapter_count:,} 章，可复用 "
+        f"{cached_chapter_count:,} 章。强制刷新将执行 "
+        f"{force_generation_steps:,} 个生成步骤，最多 "
+        f"{force_maximum_attempts:,} 次请求尝试。"
     )
-    st.caption(f"目标 API：DeepSeek · {model}")
+    st.caption(
+        "这里的生成步骤用于估算外部 API 工作量；任务进度条按已完成章节数显示。"
+    )
     sent_content = []
     if sends_chapter_titles:
         sent_content.append("章节标题")
     if sends_original_text:
         sent_content.append("章节正文")
     if sent_content:
-        st.caption(f"将发送至 DeepSeek：{'、'.join(sent_content)}")
-    st.warning(data_handling_notice)
-    st.markdown(
-        f"[DeepSeek 开放平台服务条款]({terms_url}) · "
-        f"[DeepSeek 隐私政策]({privacy_url})"
+        st.caption(f"将发送至 {provider_label}：{'、'.join(sent_content)}")
+    render_data_disclosure(
+        data_handling_notice,
+        [
+            (
+                "DeepSeek 开放平台服务条款"
+                if provider == "deepseek"
+                else f"{provider_label} 服务信息",
+                terms_url,
+            ),
+            (
+                "DeepSeek 隐私政策"
+                if provider == "deepseek"
+                else f"{provider_label} 隐私信息",
+                privacy_url,
+            ),
+        ],
     )
     return True
 
@@ -1027,6 +1720,15 @@ def _load_summary_chapter(
 
     if not chapters:
         st.info("这部小说没有可分析的章节。")
+        return None
+
+    if render_chapter_range_jump(
+        total=total,
+        page=page,
+        page_size=CHAPTER_PAGE_SIZE,
+        state_key=page_key,
+        widget_key=f"summary_chapter_range_{novel_id}",
+    ):
         return None
 
     options = [chapter["index"] for chapter in chapters]
@@ -1143,21 +1845,34 @@ def _render_summary_actions(
     estimate_available: bool,
 ) -> None:
     """Render consent-gated full-book and single-chapter task actions."""
-    st.subheader("生成摘要")
+    st.subheader("生成范围")
+    st.caption(
+        "批量任务会处理全书，并自动复用未变化的已有摘要；"
+        "中途失败时，已完成章节仍会保留。"
+    )
+    provider_label = str(
+        st.session_state.get(
+            f"summary_provider_label_{novel_id}",
+            "DeepSeek",
+        )
+    )
     consent = st.checkbox(
-        "我明确同意将小说章节标题与正文发送至 DeepSeek API",
+        f"我明确同意将小说章节标题与正文发送至 {provider_label} API",
         key=f"summary_consent_{novel_id}",
     )
     content_rights_confirmed = st.checkbox(
         (
-            "我确认有权将该小说（含标题与正文）提交给外部服务，"
-            "并理解 DeepSeek 可能依据其条款缓存、留存或用于服务改进，"
-            "且数据可能在中国境内处理和存储"
+            "我确认有权提交该小说内容，"
+            + (
+                "并接受数据在中国境内处理"
+                if provider_label == "DeepSeek"
+                else "并接受所选供应商按其条款处理"
+            )
         ),
         key=f"summary_content_rights_{novel_id}",
     )
     force = st.checkbox(
-        "强制重新生成已有摘要（force）",
+        "重新生成已有摘要",
         key=f"summary_force_{novel_id}",
     )
     force_confirmed = False
@@ -1186,9 +1901,11 @@ def _render_summary_actions(
     full_column, chapter_column = st.columns(2)
     with full_column:
         start_all = st.button(
-            "生成全书缺失摘要" if not force else "重新生成全书摘要",
+            "批量生成缺失摘要" if not force else "重新生成全书摘要",
             key=f"start_all_summaries_{novel_id}",
             disabled=actions_disabled,
+            type="primary",
+            help="一次处理整本小说；已有且未变化的摘要会直接复用。",
         )
     with chapter_column:
         chapter_index = (
@@ -1343,7 +2060,7 @@ def _render_saved_summaries(novel_id: int) -> None:
 
 
 def render_summary_workspace(novel: Dict[str, Any]) -> None:
-    """Render disclosure, actions, progress, and saved summaries."""
+    """组合摘要估算、授权、任务进度与分页结果；生成逻辑仍在后端。"""
     try:
         novel = _require_object(novel, "小说信息")
         novel_id = _require_int(
@@ -1355,22 +2072,29 @@ def render_summary_workspace(novel: Dict[str, Any]) -> None:
     except UiPayloadError as error:
         _show_payload_error("无法打开摘要工作区", error)
         return
-    st.markdown("---")
-    st.subheader("DeepSeek 章节摘要")
-    generation_configured, latest_job = _render_generation_status(
-        novel_id
+    render_workspace_heading(
+        "章节摘要",
+        "逐章查看关键事件、剧情推进与悬念。",
     )
-    estimate_available = _render_summary_estimate(novel_id)
-    chapter = _load_summary_chapter(novel_id)
-    if chapter is not None:
-        _render_selected_chapter_summary(novel_id, chapter)
-    _render_summary_actions(
-        novel_id,
-        chapter,
-        generation_configured,
-        latest_job,
-        estimate_available,
-    )
+    with st.container(key="nm_two_pane_summary"):
+        content_column, support_column = st.columns([1.55, 1])
+        with content_column:
+            chapter = _load_summary_chapter(novel_id)
+            if chapter is not None:
+                _render_selected_chapter_summary(novel_id, chapter)
+        with support_column:
+            generation_configured, latest_job = _render_generation_status(
+                novel_id
+            )
+            with st.expander("批量生成摘要", expanded=True):
+                estimate_available = _render_summary_estimate(novel_id)
+                _render_summary_actions(
+                    novel_id,
+                    chapter,
+                    generation_configured,
+                    latest_job,
+                    estimate_available,
+                )
     _render_saved_summaries(novel_id)
 
 
@@ -1381,10 +2105,7 @@ def _character_start_error(error: NovelApiError) -> None:
             "已有分析任务正在运行，请等待该任务完成后再启动人物统计。"
         )
     elif error.status_code == 503:
-        st.error(
-            "DeepSeek 尚未配置。请在本地 .env 中设置 "
-            "DEEPSEEK_API_KEY，并重启后端。"
-        )
+        st.error("生成模型尚未配置。请前往“模型与密钥”设置。")
     else:
         st.error(str(error))
 
@@ -1416,23 +2137,19 @@ def _render_character_generation_status(
             "model",
             "系统状态.generation",
         )
-        if provider.lower() != "deepseek":
-            raise UiPayloadError(
-                "系统状态.generation.provider 应为 deepseek"
-            )
+        provider_label = _provider_label(provider)
         if generation_configured:
-            st.success("DeepSeek 人物分析已配置")
+            st.success(f"{provider_label} 人物分析已配置")
             st.caption("当前生成模型")
             _render_plain_text(model)
         else:
             st.warning(
-                "DeepSeek 未配置。请先在本地 .env 中设置 "
-                "DEEPSEEK_API_KEY。"
+                f"{provider_label} 未配置。请前往“模型与密钥”设置。"
             )
     except NovelApiError as error:
-        st.warning(f"暂时无法读取 DeepSeek 配置状态：{error}")
+        st.warning(f"暂时无法读取生成模型配置状态：{error}")
     except UiPayloadError as error:
-        _show_payload_error("无法读取 DeepSeek 配置状态", error)
+        _show_payload_error("无法读取生成模型配置状态", error)
 
     latest_job: Optional[Dict[str, Any]] = None
     jobs_available = True
@@ -1453,36 +2170,12 @@ def _render_character_generation_status(
             context = "人物统计任务列表.items[0]"
             latest_job = _require_object(items[0], context)
             _require_text(latest_job, "id", context)
-            status = _require_text(latest_job, "status", context)
-            if status not in {
-                "queued",
-                "running",
-                "succeeded",
-                "failed",
-            }:
-                raise UiPayloadError(
-                    f"{context}.status 不是受支持的任务状态"
-                )
-            _require_int(
-                latest_job,
-                "progress_current",
-                context,
-            )
-            _require_int(
-                latest_job,
-                "progress_total",
-                context,
-            )
+            _validate_job_progress(latest_job, context)
             _optional_int(
                 latest_job,
                 "target_chapter_index",
                 context,
                 minimum=1,
-            )
-            _optional_text(
-                latest_job,
-                "error_message",
-                context,
             )
     except NovelApiError as error:
         st.warning(f"暂时无法恢复最近人物统计任务：{error}")
@@ -1494,26 +2187,16 @@ def _render_character_generation_status(
 
     if latest_job is not None:
         status_value = latest_job["status"]
-        status_labels = {
-            "queued": "等待执行",
-            "running": "正在执行",
-            "succeeded": "已完成",
-            "failed": "执行失败",
-        }
         current = latest_job["progress_current"]
         total = latest_job["progress_total"]
-        percent = (
-            0
-            if total == 0
-            else (current * 100 + total // 2) // total
+        st.subheader("最近人物分析任务")
+        _render_job_progress(
+            status_value,
+            current,
+            total,
+            total_unit="个生成步骤",
+            empty_label="生成步骤",
         )
-        percent = max(0, min(100, percent))
-        st.subheader("最近人物统计任务")
-        st.write(
-            f"{status_labels[status_value]} · "
-            f"{current:,} / {total:,} 步"
-        )
-        st.progress(percent)
         if status_value == "failed":
             st.error(
                 str(
@@ -1522,24 +2205,25 @@ def _render_character_generation_status(
                 )
             )
 
-    if st.button(
-        "刷新人物任务状态",
-        key=f"refresh_character_job_{novel_id}",
-    ):
-        st.rerun()
+    if latest_job is not None:
+        if st.button(
+            "刷新人物任务状态",
+            key=f"refresh_character_job_{novel_id}",
+        ):
+            st.rerun()
 
     return generation_configured and jobs_available, latest_job
 
 
 def _render_character_estimate(
     novel_id: int,
-) -> tuple[bool, Optional[int], Optional[int]]:
+) -> tuple[bool, Optional[int], Optional[int], int]:
     """Render the complete character-analysis processing disclosure."""
     try:
         estimate = get_character_estimate(novel_id)
     except NovelApiError as error:
         st.error(f"无法读取人物统计估算：{error}")
-        return False, None, None
+        return False, None, None, 0
 
     try:
         estimate = _require_object(estimate, "人物统计估算")
@@ -1611,10 +2295,8 @@ def _render_character_estimate(
             "provider",
             "人物统计估算",
         )
-        if provider.lower() != "deepseek":
-            raise UiPayloadError(
-                "人物统计估算.provider 应为 deepseek"
-            )
+        if provider not in {"deepseek", "openai_compatible"}:
+            raise UiPayloadError("人物统计估算.provider 无效")
         model = _require_text(
             estimate,
             "model",
@@ -1640,12 +2322,17 @@ def _render_character_estimate(
             "data_handling_notice",
             "人物统计估算",
         )
-        terms_url = _require_deepseek_url(
+        url_validator = (
+            _require_deepseek_url
+            if provider == "deepseek"
+            else _require_service_url
+        )
+        terms_url = url_validator(
             estimate,
             "terms_url",
             "人物统计估算",
         )
-        privacy_url = _require_deepseek_url(
+        privacy_url = url_validator(
             estimate,
             "privacy_url",
             "人物统计估算",
@@ -1657,23 +2344,36 @@ def _render_character_estimate(
         )
     except UiPayloadError as error:
         _show_payload_error("无法读取人物统计估算", error)
-        return False, None, None
+        return False, None, None, 0
 
     st.subheader("全书人物统计估算")
-    columns = st.columns(4)
-    columns[0].metric("章节", chapter_count)
-    columns[1].metric("正文字符", f"{character_count:,}")
-    columns[2].metric("已缓存章节", cached_chapters)
-    columns[3].metric("待分析章节", pending_chapters)
-    step_columns = st.columns(4)
-    step_columns[0].metric("抽取步骤", extraction_steps)
-    step_columns[1].metric("合并步骤", merge_steps)
-    step_columns[2].metric("关系步骤", relationship_steps)
-    step_columns[3].metric("生成步骤", generation_steps)
-    st.caption("最多请求尝试")
-    st.write(f"{maximum_attempts:,}")
+    render_metric_grid(
+        [
+            ("章节", chapter_count),
+            ("正文字符", f"{character_count:,}"),
+            ("已缓存章节", cached_chapters),
+            ("待分析章节", pending_chapters),
+            ("基础抽取分片", extraction_steps),
+            ("基础合并阶段", merge_steps),
+            ("基础关系阶段", relationship_steps),
+            ("基础预计步骤", generation_steps),
+        ]
+    )
+    if maximum_attempts >= 1_000_000:
+        st.caption(
+            "极端分页与重试的理论上限超过 100 万；"
+            f"正常预计为 {generation_steps:,} 个生成步骤。"
+        )
+    else:
+        st.caption(f"最多请求尝试 {maximum_attempts:,}")
+    st.caption(
+        "基础预计不等于最终 API 调用数：抽取分页、人物消歧与关系分批会按"
+        "实际人物数量动态增加步骤；请求量评估请同时参考上方请求尝试上限。"
+    )
     st.caption("目标模型")
     _render_plain_text(model)
+    provider_label = _provider_label(provider)
+    st.session_state[f"character_provider_label_{novel_id}"] = provider_label
     sent_content = []
     if sends_chapter_titles:
         sent_content.append("章节标题")
@@ -1681,21 +2381,33 @@ def _render_character_estimate(
         sent_content.append("章节原文")
     if sends_derived_data:
         sent_content.append("派生人物观察与人物档案")
-    st.warning(
-        "人物统计会把章节原文以及分析过程中产生的派生人物观察、"
-        "人物档案发送至 DeepSeek。派生内容可能在人物合并和"
-        "关系分析步骤中再次发送。"
-    )
     if sent_content:
-        st.caption(f"将发送至 DeepSeek：{'、'.join(sent_content)}")
-    st.warning(data_handling_notice)
-    st.markdown(
-        f"[DeepSeek 开放平台服务条款]({terms_url}) · "
-        f"[DeepSeek 隐私政策]({privacy_url})"
+        st.caption(f"将发送至 {provider_label}：{'、'.join(sent_content)}")
+    render_data_disclosure(
+        data_handling_notice,
+        [
+            (
+                "DeepSeek 开放平台服务条款"
+                if provider == "deepseek"
+                else f"{provider_label} 服务信息",
+                terms_url,
+            ),
+            (
+                "DeepSeek 隐私政策"
+                if provider == "deepseek"
+                else f"{provider_label} 隐私信息",
+                privacy_url,
+            ),
+        ],
     )
     if up_to_date:
         st.info("当前人物统计已覆盖最新章节；可按需强制重新分析。")
-    return True, force_generation_steps, force_maximum_attempts
+    return (
+        True,
+        force_generation_steps,
+        force_maximum_attempts,
+        cached_chapters,
+    )
 
 
 def _render_character_actions(
@@ -1705,26 +2417,32 @@ def _render_character_actions(
     estimate_available: bool,
     force_generation_steps: Optional[int],
     force_maximum_attempts: Optional[int],
+    cached_chapters: int,
 ) -> None:
     """Render dual-consent and force-confirmation task controls."""
-    st.subheader("生成人物统计")
+    st.subheader("分析范围")
+    st.caption(
+        "人物分析会处理整本小说，并自动复用未变化章节的抽取结果。"
+    )
+    provider_label = str(
+        st.session_state.get(
+            f"character_provider_label_{novel_id}",
+            "DeepSeek",
+        )
+    )
     external_consent = st.checkbox(
         (
             "我明确同意将小说原文和派生人物观察、人物档案"
-            "发送至 DeepSeek API"
+            f"发送至 {provider_label} API"
         ),
         key=f"character_external_consent_{novel_id}",
     )
     content_rights = st.checkbox(
-        (
-            "我确认有权将该小说原文及相关派生内容提交给外部服务，"
-            "并理解 DeepSeek 可能依据其条款缓存、留存或用于服务改进，"
-            "且数据可能在中国境内处理和存储"
-        ),
+        "我确认有权提交该小说内容，并接受所选服务的数据处理条款",
         key=f"character_content_rights_{novel_id}",
     )
     force = st.checkbox(
-        "强制重新生成人物统计（force）",
+        "重新分析全部章节",
         key=f"character_force_{novel_id}",
     )
     force_confirmed = False
@@ -1759,10 +2477,31 @@ def _render_character_actions(
         or active_job
         or (force and not force_confirmed)
     )
+    resumable_failure = bool(
+        latest_job is not None
+        and latest_job.get("status") == "failed"
+        and int(latest_job.get("progress_current") or 0) > 0
+        and cached_chapters > 0
+    )
+    if resumable_failure:
+        st.caption(
+            f"已有 {cached_chapters:,} 章提取结果可复用；继续分析不会"
+            "重复发送这些章节，无需选择“重新分析全部章节”。"
+        )
+    start_label = (
+        "重新分析全书人物"
+        if force
+        else (
+            "继续未完成分析"
+            if resumable_failure
+            else "分析缺失章节"
+        )
+    )
     start_clicked = st.button(
-        "分析缺失章节" if not force else "重新分析全书人物",
+        start_label,
         key=f"start_character_analysis_{novel_id}",
         disabled=disabled,
+        type="primary",
     )
     if not start_clicked:
         return
@@ -2349,7 +3088,12 @@ def _render_character_results(novel_id: int) -> None:
 
 
 def render_character_workspace(novel: Dict[str, Any]) -> None:
-    """Render character disclosure, task controls, results, and detail."""
+    """渲染某部小说的人物分析完整工作区。
+
+    ``novel`` 是后端返回并已再次验证的元数据字典。函数组合外发披露、授权开关、
+    任务估算/启动/轮询、人物分页、搜索、详情、出场和关系；语义分析始终由后端
+    执行，session_state 只保存 UI 选择。
+    """
     try:
         novel = _require_object(novel, "小说信息")
         novel_id = _require_int(
@@ -2362,25 +3106,34 @@ def render_character_workspace(novel: Dict[str, Any]) -> None:
         _show_payload_error("无法打开人物统计工作区", error)
         return
 
-    st.markdown("---")
-    st.subheader("DeepSeek 人物统计")
-    generation_configured, latest_job = (
-        _render_character_generation_status(novel_id)
+    render_workspace_heading(
+        "人物",
+        "浏览人物档案、出场记录与关系证据。",
     )
-    (
-        estimate_available,
-        force_generation_steps,
-        force_maximum_attempts,
-    ) = _render_character_estimate(novel_id)
-    _render_character_actions(
-        novel_id,
-        generation_configured,
-        latest_job,
-        estimate_available,
-        force_generation_steps,
-        force_maximum_attempts,
-    )
-    _render_character_results(novel_id)
+    with st.container(key="nm_two_pane_characters"):
+        results_column, support_column = st.columns([1.55, 1])
+        with results_column:
+            _render_character_results(novel_id)
+        with support_column:
+            generation_configured, latest_job = (
+                _render_character_generation_status(novel_id)
+            )
+            with st.expander("全书人物分析", expanded=True):
+                (
+                    estimate_available,
+                    force_generation_steps,
+                    force_maximum_attempts,
+                    cached_chapters,
+                ) = _render_character_estimate(novel_id)
+                _render_character_actions(
+                    novel_id,
+                    generation_configured,
+                    latest_job,
+                    estimate_available,
+                    force_generation_steps,
+                    force_maximum_attempts,
+                    cached_chapters,
+                )
 
 
 def _load_rag_context(novel_id: int) -> Optional[Dict[str, Any]]:
@@ -2484,17 +3237,31 @@ def _load_rag_context(novel_id: int) -> Optional[Dict[str, Any]]:
             "generation_model",
             "RAG 估算",
         )
-        if (
-            embedding_provider != "aliyun_model_studio"
-            or embedding_model != "text-embedding-v4"
+        generation_provider = _require_text(
+            estimate,
+            "generation_provider",
+            "RAG 估算",
+        )
+        if embedding_provider not in {
+            "siliconflow",
+            "openai_compatible",
+        }:
+            raise UiPayloadError("RAG 估算.embedding_provider 无效")
+        if generation_provider not in {
+            "deepseek",
+            "openai_compatible",
+        }:
+            raise UiPayloadError("RAG 估算.generation_provider 无效")
+        if embedding_provider == "siliconflow" and (
+            embedding_model != "Qwen/Qwen3-Embedding-4B"
             or dimensions != 1_024
-            or region != "cn-beijing"
+            or region != "global"
         ):
-            raise UiPayloadError("RAG embedding 配置不是已选定的北京区方案")
+            raise UiPayloadError("硅基流动 embedding 配置不一致")
         for key in (
-            "sends_chapter_titles_and_original_chunks_to_bailian",
-            "sends_question_to_bailian",
-            "sends_question_and_retrieved_chunks_to_deepseek",
+            "sends_chapter_titles_and_original_chunks_to_embedding_provider",
+            "sends_question_to_embedding_provider",
+            "sends_question_and_retrieved_chunks_to_generation_provider",
         ):
             if not _require_bool(estimate, key, "RAG 估算"):
                 raise UiPayloadError(f"RAG 估算.{key} 应为 true")
@@ -2503,30 +3270,54 @@ def _load_rag_context(novel_id: int) -> Optional[Dict[str, Any]]:
             "data_handling_notice",
             "RAG 估算",
         )
-        bailian_terms = _require_policy_url(
-            estimate,
-            "bailian_terms_url",
-            "RAG 估算",
-            allowed_hostname="help.aliyun.com",
-        )
-        bailian_privacy = _require_policy_url(
-            estimate,
-            "bailian_privacy_url",
-            "RAG 估算",
-            allowed_hostname="help.aliyun.com",
-        )
-        deepseek_terms = _require_policy_url(
-            estimate,
-            "deepseek_terms_url",
-            "RAG 估算",
-            allowed_hostname="cdn.deepseek.com",
-        )
-        deepseek_privacy = _require_policy_url(
-            estimate,
-            "deepseek_privacy_url",
-            "RAG 估算",
-            allowed_hostname="cdn.deepseek.com",
-        )
+        if embedding_provider == "siliconflow":
+            embedding_terms = _require_policy_url(
+                estimate,
+                "embedding_terms_url",
+                "RAG 估算",
+                allowed_hostname="docs.siliconflow.cn",
+            )
+            embedding_privacy = _require_policy_url(
+                estimate,
+                "embedding_privacy_url",
+                "RAG 估算",
+                allowed_hostname="docs.siliconflow.cn",
+            )
+        else:
+            embedding_terms = _require_service_url(
+                estimate,
+                "embedding_terms_url",
+                "RAG 估算",
+            )
+            embedding_privacy = _require_service_url(
+                estimate,
+                "embedding_privacy_url",
+                "RAG 估算",
+            )
+        if generation_provider == "deepseek":
+            generation_terms = _require_policy_url(
+                estimate,
+                "generation_terms_url",
+                "RAG 估算",
+                allowed_hostname="cdn.deepseek.com",
+            )
+            generation_privacy = _require_policy_url(
+                estimate,
+                "generation_privacy_url",
+                "RAG 估算",
+                allowed_hostname="cdn.deepseek.com",
+            )
+        else:
+            generation_terms = _require_service_url(
+                estimate,
+                "generation_terms_url",
+                "RAG 估算",
+            )
+            generation_privacy = _require_service_url(
+                estimate,
+                "generation_privacy_url",
+                "RAG 估算",
+            )
         if _require_int(
             index_status,
             "novel_id",
@@ -2562,53 +3353,50 @@ def _load_rag_context(novel_id: int) -> Optional[Dict[str, Any]]:
                 "id",
                 "RAG 索引任务列表.items[0]",
             )
-            _require_text(
+            _validate_job_progress(
                 latest_job,
-                "status",
-                "RAG 索引任务列表.items[0]",
-            )
-            _require_int(
-                latest_job,
-                "progress_current",
-                "RAG 索引任务列表.items[0]",
-            )
-            _require_int(
-                latest_job,
-                "progress_total",
                 "RAG 索引任务列表.items[0]",
             )
     except UiPayloadError as error:
         _show_payload_error("无法读取 RAG 状态", error)
         return None
 
-    columns = st.columns(4)
-    columns[0].metric("章节", f"{chapter_count:,}")
-    columns[1].metric("正文字符", f"{character_count:,}")
-    columns[2].metric("索引片段", f"{chunk_count:,}")
-    columns[3].metric("可复用向量", f"{reusable_count:,}")
+    render_metric_grid(
+        [
+            ("章节", f"{chapter_count:,}"),
+            ("正文字符", f"{character_count:,}"),
+            ("索引片段", f"{chunk_count:,}"),
+            ("可复用向量", f"{reusable_count:,}"),
+        ]
+    )
+    embedding_label = _provider_label(embedding_provider)
+    generation_label = _provider_label(generation_provider)
     st.caption(
-        f"百炼北京区 · {embedding_model} · {dimensions} 维；"
-        f"DeepSeek · {generation_model}"
+        f"{embedding_label} · {embedding_model} · {dimensions} 维；"
+        f"{generation_label} · {generation_model}"
     )
     st.caption(
         f"预计新嵌入 {new_embedding_count:,} 段；索引最多请求尝试 "
-        f"{max_index_attempts:,} 次；每次提问最多百炼 "
-        f"{max_question_attempts:,} 次、DeepSeek "
+        f"{max_index_attempts:,} 次；每次提问最多 {embedding_label} "
+        f"{max_question_attempts:,} 次、{generation_label} "
         f"{max_answer_attempts:,} 次。"
     )
-    st.warning(notice)
-    st.markdown(
-        f"[阿里云百炼服务说明]({bailian_terms}) · "
-        f"[阿里云百炼隐私声明]({bailian_privacy}) · "
-        f"[DeepSeek 服务条款]({deepseek_terms}) · "
-        f"[DeepSeek 隐私政策]({deepseek_privacy})"
+    render_data_disclosure(
+        notice,
+        [
+            (f"{embedding_label} 服务信息", embedding_terms),
+            (f"{embedding_label} 隐私信息", embedding_privacy),
+            (f"{generation_label} 服务信息", generation_terms),
+            (f"{generation_label} 隐私信息", generation_privacy),
+        ],
     )
     if not embedding_configured:
         st.error(
-            "尚未配置阿里云百炼北京区 API Key 与专属工作空间端点。"
+            f"尚未完成 {embedding_label} 配置。"
+            "请前往“模型与密钥”检查 API Key 和端点。"
         )
     if not generation_configured:
-        st.error("尚未配置 DeepSeek API Key。")
+        st.error(f"尚未配置 {generation_label} API Key。")
     if status_current and index_current:
         st.success(f"RAG 索引已就绪，共 {stored_chunk_count:,} 个片段。")
     elif status_ready:
@@ -2621,15 +3409,24 @@ def _load_rag_context(novel_id: int) -> Optional[Dict[str, Any]]:
         current = int(latest_job["progress_current"])
         total = int(latest_job["progress_total"])
         st.subheader("最近索引任务")
-        st.write(f"状态：{latest_status} · 进度：{current:,}/{total:,}")
+        _render_job_progress(
+            latest_status,
+            current,
+            total,
+            total_unit="个索引片段",
+            empty_label="索引片段",
+        )
         error_message = latest_job.get("error_message")
         if latest_status == "failed" and isinstance(error_message, str):
-            _render_plain_text(error_message)
+            st.error(error_message)
     return {
         "embedding_configured": embedding_configured,
         "generation_configured": generation_configured,
         "index_current": bool(status_current and index_current),
         "latest_job": latest_job,
+        "embedding_label": embedding_label,
+        "embedding_model": embedding_model,
+        "generation_label": generation_label,
     }
 
 
@@ -2637,17 +3434,19 @@ def _render_rag_index_actions(
     novel_id: int,
     context: Dict[str, Any],
 ) -> None:
-    """Render explicit Bailian source-processing confirmation gates."""
+    """Render explicit source-processing confirmation gates."""
     st.subheader("建立检索索引")
+    embedding_label = str(context["embedding_label"])
+    embedding_model = str(context["embedding_model"])
     external_consent = st.checkbox(
         (
             "我明确同意将章节标题和小说原文片段发送至"
-            "阿里云百炼北京区 text-embedding-v4 API"
+            f"{embedding_label} {embedding_model} API"
         ),
         key=f"rag_index_external_consent_{novel_id}",
     )
     content_rights = st.checkbox(
-        "我确认有权将该小说内容交给阿里云百炼处理",
+        f"我确认有权将该小说内容交给 {embedding_label} 处理",
         key=f"rag_index_content_rights_{novel_id}",
     )
     force = st.checkbox(
@@ -2676,6 +3475,7 @@ def _render_rag_index_actions(
             or active
             or (force and not force_confirmed)
         ),
+        type="primary",
     )
     if not clicked:
         return
@@ -2706,6 +3506,12 @@ def _validate_rag_question_item(
     value: Any,
     context: str,
 ) -> Dict[str, Any]:
+    """验证一条 RAG 历史记录的完整前端合同。
+
+    ``value`` 是任意 JSON 值，``context`` 用于构造可定位的错误消息。函数要求 ID、
+    问题、状态、top_k、证据、引用和可选答案/错误均符合预期类型；成功返回同一
+    字典，失败抛 UiPayloadError，不渲染部分不可信数据。
+    """
     item = _require_object(value, context)
     _require_text(item, "id", context)
     _require_int(item, "novel_id", context, minimum=1)
@@ -2748,6 +3554,11 @@ def _validate_rag_question_item(
 def _load_rag_history(
     novel_id: int,
 ) -> tuple[list[Dict[str, Any]], int]:
+    """按 session_state 页码加载并验证一页 RAG 历史。
+
+    返回 ``(items, total)``；若删除/新增导致当前页越界，会修正页码并重新读取。
+    长期历史仍在后端，session_state 只保存当前页。
+    """
     pages = st.session_state.setdefault("rag_history_pages", {})
     page = int(pages.get(novel_id, 0))
     try:
@@ -2789,8 +3600,10 @@ def _render_rag_question_actions(
     context: Dict[str, Any],
     history: list[Dict[str, Any]],
 ) -> None:
-    """Render independent Bailian, DeepSeek, and rights confirmations."""
+    """Render independent provider and rights confirmations."""
     st.subheader("基于原文提问")
+    embedding_label = str(context["embedding_label"])
+    generation_label = str(context["generation_label"])
     question = st.text_area(
         "问题",
         key=f"rag_question_text_{novel_id}",
@@ -2804,11 +3617,11 @@ def _render_rag_question_actions(
         key=f"rag_top_k_{novel_id}",
     )
     embedding_consent = st.checkbox(
-        "我同意将问题发送至阿里云百炼北京区生成查询向量",
+        f"我同意将问题发送至 {embedding_label} 生成查询向量",
         key=f"rag_question_embedding_consent_{novel_id}",
     )
     generation_consent = st.checkbox(
-        "我同意将问题和检索到的原文片段发送至 DeepSeek 生成答案",
+        f"我同意将问题和检索到的原文片段发送至 {generation_label} 生成答案",
         key=f"rag_question_generation_consent_{novel_id}",
     )
     content_rights = st.checkbox(
@@ -2820,7 +3633,7 @@ def _render_rag_question_actions(
         for item in history
     )
     clicked = st.button(
-        "提交 RAG 问题",
+        "开始查找答案",
         key=f"start_rag_question_{novel_id}",
         disabled=(
             not bool(context["embedding_configured"])
@@ -2832,6 +3645,7 @@ def _render_rag_question_actions(
             or not content_rights
             or active
         ),
+        type="primary",
     )
     if not clicked:
         return
@@ -2872,7 +3686,7 @@ def _render_rag_history(
             st.caption("问题")
             _render_plain_text(str(item["question"]))
             status_value = str(item["status"])
-            st.write(f"状态：{status_value}")
+            st.write(f"状态：{JOB_STATUS_LABELS[status_value]}")
             if status_value in ACTIVE_JOB_STATUSES:
                 st.info("问答正在后台运行，可刷新状态。")
             elif status_value == "failed":
@@ -2888,7 +3702,7 @@ def _render_rag_history(
                 st.caption("答案")
                 _render_plain_text(answer)
                 if item.get("insufficient_evidence") is True:
-                    st.warning("DeepSeek 标记为证据不足。")
+                    st.warning("生成模型标记为证据不足。")
                 citations = list(item["citations"])
                 st.caption(f"引用来源 · {len(citations)}")
                 if not citations:
@@ -2930,7 +3744,7 @@ def _render_rag_history(
 
 
 def render_rag_workspace(novel: Dict[str, Any]) -> None:
-    """Render external embeddings, retrieval, answer, and citations."""
+    """组合索引状态、建索引授权、提问和带证据历史。"""
     try:
         novel = _require_object(novel, "小说信息")
         novel_id = _require_int(
@@ -2942,19 +3756,28 @@ def render_rag_workspace(novel: Dict[str, Any]) -> None:
     except UiPayloadError as error:
         _show_payload_error("无法打开 RAG 工作区", error)
         return
-    st.markdown("---")
-    st.subheader("RAG 原文问答")
-    context = _load_rag_context(novel_id)
+    render_workspace_heading(
+        "原文问答",
+        "用自然语言检索小说，并回到原文章节核对依据。",
+    )
+    with st.container(key="nm_two_pane_rag"):
+        question_column, support_column = st.columns([1.55, 1])
+        with support_column:
+            with st.expander("索引与服务状态", expanded=True):
+                context = _load_rag_context(novel_id)
+                if context is not None:
+                    _render_rag_index_actions(novel_id, context)
+        if context is not None:
+            with question_column:
+                history, total = _load_rag_history(novel_id)
+                _render_rag_question_actions(
+                    novel_id,
+                    context,
+                    history,
+                )
+                _render_rag_history(novel_id, history, total)
     if context is None:
         return
-    _render_rag_index_actions(novel_id, context)
-    history, total = _load_rag_history(novel_id)
-    _render_rag_question_actions(
-        novel_id,
-        context,
-        history,
-    )
-    _render_rag_history(novel_id, history, total)
 
 
 def _validate_report_section(
@@ -3094,30 +3917,10 @@ def _load_report_context(
                 "分析报告任务列表.items[0]",
             ) != "report":
                 raise UiPayloadError("分析报告任务.job_type 无效")
-            job_status = _require_text(
+            _validate_job_progress(
                 latest_job,
-                "status",
                 "分析报告任务列表.items[0]",
             )
-            if job_status not in {
-                "queued",
-                "running",
-                "succeeded",
-                "failed",
-            }:
-                raise UiPayloadError("分析报告任务.status 无效")
-            current = _require_int(
-                latest_job,
-                "progress_current",
-                "分析报告任务列表.items[0]",
-            )
-            total = _require_int(
-                latest_job,
-                "progress_total",
-                "分析报告任务列表.items[0]",
-            )
-            if current > total:
-                raise UiPayloadError("分析报告任务进度无效")
     except UiPayloadError as error:
         _show_payload_error("无法读取分析报告状态", error)
         return None
@@ -3195,11 +3998,12 @@ def _load_report_context(
                 "up_to_date",
                 "分析报告估算",
             )
-            if _require_text(
+            provider = _require_text(
                 estimate,
                 "provider",
                 "分析报告估算",
-            ) != "deepseek":
+            )
+            if provider not in {"deepseek", "openai_compatible"}:
                 raise UiPayloadError("分析报告估算.provider 无效")
             model = _require_text(
                 estimate,
@@ -3238,42 +4042,57 @@ def _load_report_context(
                 "data_handling_notice",
                 "分析报告估算",
             )
-            terms_url = _require_policy_url(
-                estimate,
-                "terms_url",
-                "分析报告估算",
-                allowed_hostname="cdn.deepseek.com",
-            )
-            privacy_url = _require_policy_url(
-                estimate,
-                "privacy_url",
-                "分析报告估算",
-                allowed_hostname="cdn.deepseek.com",
-            )
+            if provider == "deepseek":
+                terms_url = _require_policy_url(
+                    estimate,
+                    "terms_url",
+                    "分析报告估算",
+                    allowed_hostname="cdn.deepseek.com",
+                )
+                privacy_url = _require_policy_url(
+                    estimate,
+                    "privacy_url",
+                    "分析报告估算",
+                    allowed_hostname="cdn.deepseek.com",
+                )
+            else:
+                terms_url = _require_service_url(
+                    estimate,
+                    "terms_url",
+                    "分析报告估算",
+                )
+                privacy_url = _require_service_url(
+                    estimate,
+                    "privacy_url",
+                    "分析报告估算",
+                )
         except UiPayloadError as error:
             _show_payload_error("无法读取分析报告估算", error)
             estimate = None
         else:
-            columns = st.columns(4)
-            columns[0].metric("章节摘要", f"{summary_count:,}")
-            columns[1].metric("章节总数", f"{chapter_count:,}")
-            columns[2].metric("人物档案", f"{character_count:,}")
-            columns[3].metric(
-                "API 生成步骤",
-                f"{generation_steps:,}",
+            render_metric_grid(
+                [
+                    ("章节摘要", f"{summary_count:,}"),
+                    ("章节总数", f"{chapter_count:,}"),
+                    ("人物档案", f"{character_count:,}"),
+                    ("API 生成步骤", f"{generation_steps:,}"),
+                ]
             )
+            provider_label = _provider_label(provider)
             st.caption(
-                f"DeepSeek · {model} · 最多请求尝试 "
+                f"{provider_label} · {model} · 最多请求尝试 "
                 f"{maximum_attempts:,} 次"
             )
             st.caption(
                 f"强制刷新预计 {force_steps:,} 个生成步骤，"
                 f"最多请求尝试 {force_attempts:,} 次。"
             )
-            st.warning(notice)
-            st.markdown(
-                f"[DeepSeek 服务条款]({terms_url}) · "
-                f"[DeepSeek 隐私政策]({privacy_url})"
+            render_data_disclosure(
+                notice,
+                [
+                    (f"{provider_label} 服务信息", terms_url),
+                    (f"{provider_label} 隐私信息", privacy_url),
+                ],
             )
             if includes_characters:
                 st.info("将同时使用当前的人物档案与人物关系派生数据。")
@@ -3286,25 +4105,33 @@ def _load_report_context(
                 st.success("当前保存的报告与全部输入一致。")
 
     if not generation_configured:
-        st.error(
-            "DeepSeek 尚未配置。请在本地 .env 中设置 "
-            "DEEPSEEK_API_KEY，并重启后端。"
-        )
+        st.error("生成模型尚未配置。请前往“模型与密钥”设置。")
     if latest_job is not None:
         job_status = str(latest_job["status"])
         current = int(latest_job["progress_current"])
         total = int(latest_job["progress_total"])
         st.subheader("最近报告任务")
-        st.write(f"状态：{job_status} · 进度：{current:,}/{total:,}")
+        _render_job_progress(
+            job_status,
+            current,
+            total,
+            total_unit="个生成步骤",
+            empty_label="生成步骤",
+        )
         if job_status == "failed":
             error_message = latest_job.get("error_message")
-            _render_plain_text(
+            st.error(
                 str(error_message or "分析报告任务失败，请重试。")
             )
     return {
         "generation_configured": generation_configured,
         "estimate_available": estimate is not None,
         "latest_job": latest_job,
+        "generation_label": (
+            provider_label
+            if estimate is not None
+            else "生成模型服务"
+        ),
     }
 
 
@@ -3314,15 +4141,16 @@ def _render_report_actions(
 ) -> None:
     """Render explicit derived-data and force-refresh consent gates."""
     st.subheader("生成报告")
+    generation_label = str(context["generation_label"])
     external_consent = st.checkbox(
         (
             "我同意将章节标题、派生摘要及可选人物分析数据发送至 "
-            "DeepSeek API"
+            f"{generation_label} API"
         ),
         key=f"report_external_consent_{novel_id}",
     )
     content_rights = st.checkbox(
-        "我确认有权将这些小说派生数据交给 DeepSeek 处理",
+        f"我确认有权将这些小说派生数据交给 {generation_label} 处理",
         key=f"report_content_rights_{novel_id}",
     )
     force = st.checkbox(
@@ -3333,7 +4161,7 @@ def _render_report_actions(
     if force:
         st.warning("强制刷新会重复产生外部 API 调用和费用。")
         force_confirmed = st.checkbox(
-            "我确认重复调用 DeepSeek 生成整份报告",
+            f"我确认重复调用 {generation_label} 生成整份报告",
             key=f"report_force_confirm_{novel_id}",
         )
     latest_job = context.get("latest_job")
@@ -3352,6 +4180,7 @@ def _render_report_actions(
             or active
             or (force and not force_confirmed)
         ),
+        type="primary",
     )
     if not clicked:
         return
@@ -3476,7 +4305,7 @@ def _render_saved_report(novel_id: int) -> None:
 
 
 def render_report_workspace(novel: Dict[str, Any]) -> None:
-    """Render report disclosure, generation controls, and saved output."""
+    """组合报告输入披露、后台任务控制和当前原子快照展示。"""
     try:
         novel = _require_object(novel, "小说信息")
         novel_id = _require_int(
@@ -3488,13 +4317,22 @@ def render_report_workspace(novel: Dict[str, Any]) -> None:
     except UiPayloadError as error:
         _show_payload_error("无法打开分析报告工作区", error)
         return
-    st.markdown("---")
-    st.subheader("DeepSeek 小说分析报告")
-    context = _load_report_context(novel_id)
+    render_workspace_heading(
+        "全书报告",
+        "从已完成的章节摘要中整理结构、节奏与修改建议。",
+    )
+    with st.container(key="nm_two_pane_report"):
+        report_column, support_column = st.columns([1.55, 1])
+        with support_column:
+            with st.expander("生成设置与数据范围", expanded=True):
+                context = _load_report_context(novel_id)
+                if context is not None:
+                    _render_report_actions(novel_id, context)
+        if context is not None:
+            with report_column:
+                _render_saved_report(novel_id)
     if context is None:
         return
-    _render_report_actions(novel_id, context)
-    _render_saved_report(novel_id)
 
 
 def render_reader_workspace(novel: Dict[str, Any]) -> None:
@@ -3510,6 +4348,10 @@ def render_reader_workspace(novel: Dict[str, Any]) -> None:
     except UiPayloadError as error:
         _show_payload_error("无法打开正文阅读", error)
         return
+    render_workspace_heading(
+        "正文阅读",
+        "选择章节，安静地回到原文。",
+    )
     page = max(0, int(st.session_state.get("reader_chapter_page", 0)))
     try:
         payload = list_chapters(
@@ -3544,6 +4386,15 @@ def render_reader_workspace(novel: Dict[str, Any]) -> None:
 
     if not chapters:
         st.info("这部小说没有可阅读的章节。")
+        return
+
+    if render_chapter_range_jump(
+        total=total,
+        page=page,
+        page_size=CHAPTER_PAGE_SIZE,
+        state_key="reader_chapter_page",
+        widget_key=f"reader_chapter_range_{novel_id}",
+    ):
         return
 
     options = [chapter["index"] for chapter in chapters]
@@ -3617,7 +4468,7 @@ def render_reader_workspace(novel: Dict[str, Any]) -> None:
 
 
 def main() -> None:
-    """Run the NovelMind Streamlit application."""
+    """配置页面、初始化状态、探测后端，并路由到当前页面组件。"""
     st.set_page_config(
         page_title="NovelMind",
         page_icon="📘",
@@ -3639,6 +4490,8 @@ def main() -> None:
 
     if st.session_state["view"] == "upload":
         render_upload_page(backend_online)
+    elif st.session_state["view"] == "model_settings":
+        render_model_settings_page(backend_online)
     else:
         render_library_page(backend_online)
 

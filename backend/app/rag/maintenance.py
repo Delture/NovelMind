@@ -1,4 +1,8 @@
-"""Best-effort cleanup for local derived RAG vector collections."""
+"""启动时尽力清理不再被主数据库引用的本地向量集合。
+
+进程可能在新集合写完、主库指针切换前退出而留下孤儿集合。这里以主库的当前
+collection_name 为唯一保留依据。维护失败只记日志，不阻止后端启动。
+"""
 
 import logging
 from collections.abc import Callable
@@ -14,6 +18,7 @@ logger = logging.getLogger(__name__)
 _MANAGED_COLLECTION_PREFIX = "novelmind_n"
 
 
+# 主数据库是当前快照的唯一事实来源，不能按文件修改时间猜测。
 def cleanup_orphan_rag_collections(
     session_factory: Callable[[], Session],
     vector_store_path: str,

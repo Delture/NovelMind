@@ -1,7 +1,13 @@
-"""Atomic background construction of external-embedding RAG snapshots."""
+"""可复用旧向量并原子切换快照的 RAG 建索引任务。
+
+执行器 claim queued 任务后确定性分块，从旧索引按 content_hash 复用未变化向量，
+只发送缺失块。向量先写入新集合；数量验证成功后才在主 SQLite 事务中替换
+RagIndex/RagChunkRecord。失败会删除未启用集合并保留旧快照。
+"""
 
 import logging
 import math
+import time
 from collections.abc import Callable, Sequence
 from typing import Optional, Protocol
 
@@ -9,6 +15,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.analyzer.jobs import (
+    ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS,
+    ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS,
     is_sqlite_lock_error,
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
@@ -43,13 +51,19 @@ class _RagIndexJobCancelled(RuntimeError):
 
 
 class VectorStore(Protocol):
-    """Minimal vector operations used by the atomic index builder."""
+    """索引器需要的最小存储协议，便于测试替换具体实现。"""
 
-    def create_collection(self, name: str) -> None: ...
+    def create_collection(self, name: str) -> None:
+        """创建空的逻辑向量集合；同名已存在应由实现安全处理。"""
+        ...
 
-    def delete_collection(self, name: str) -> None: ...
+    def delete_collection(self, name: str) -> None:
+        """删除指定集合及其中向量；索引器只传尚未启用或已过期的名称。"""
+        ...
 
-    def collection_count(self, name: str) -> int: ...
+    def collection_count(self, name: str) -> int:
+        """返回集合向量数；集合不存在时实现应返回 0 或抛明确未找到错误。"""
+        ...
 
     def upsert(
         self,
@@ -58,14 +72,22 @@ class VectorStore(Protocol):
         ids: Sequence[str],
         embeddings: Sequence[Sequence[float]],
         metadatas: Sequence[dict[str, object]],
-    ) -> None: ...
+    ) -> None:
+        """按相同位置批量写入 ID、向量和元数据。
+
+        ``collection_name`` 定位集合；ids、embeddings、metadatas 三个序列必须等长，
+        同一位置描述同一分块。已有 ID 应更新而不是重复插入；方法无返回值。
+        """
+        ...
 
     def get_embeddings(
         self,
         *,
         collection_name: str,
         ids: Sequence[str],
-    ) -> dict[str, tuple[float, ...]]: ...
+    ) -> dict[str, tuple[float, ...]]:
+        """读取指定 ID 中实际存在的向量，返回 ID 到不可变向量元组的映射。"""
+        ...
 
     def query(
         self,
@@ -73,20 +95,24 @@ class VectorStore(Protocol):
         collection_name: str,
         embedding: Sequence[float],
         limit: int,
-    ) -> list[VectorSearchHit]: ...
+    ) -> list[VectorSearchHit]:
+        """以查询向量搜索集合，按相关性返回不超过 limit 个命中。"""
+        ...
 
 
 def _close_embedding_provider(provider: EmbeddingProvider) -> None:
+    """关闭索引任务持有的 embedding HTTP 客户端；异常只记录日志。"""
     try:
         provider.close()
     except Exception:
-        logger.exception("Could not close the Bailian embedding provider.")
+        logger.exception("Could not close the embedding provider.")
 
 
 def _safe_delete_collection(
     vector_store: VectorStore,
     collection_name: Optional[str],
 ) -> None:
+    """删除可选集合名；名称为空或存储删除失败时安全返回并记录。"""
     if not collection_name:
         return
     try:
@@ -104,6 +130,7 @@ def _job_is_running(
     job_id: str,
     novel_id: int,
 ) -> bool:
+    """检查任务仍在 running 且属于目标小说；每次外部批次前用于取消检测。"""
     with session_factory() as db:
         return (
             db.query(AnalysisJob.id)
@@ -125,6 +152,7 @@ def _ensure_job_running(
     job_id: str,
     novel_id: int,
 ) -> None:
+    """若任务不再可继续则抛内部取消异常，防止已删除小说或任务继续计费。"""
     if not _job_is_running(
         session_factory,
         job_id=job_id,
@@ -134,38 +162,61 @@ def _ensure_job_running(
 
 
 def _claim_job(db: Session, job_id: str) -> bool:
-    claimed = (
-        db.query(AnalysisJob)
-        .filter(
-            AnalysisJob.id == job_id,
-            AnalysisJob.job_type == "rag_index",
-            AnalysisJob.status == "queued",
-        )
-        .update(
-            {
-                AnalysisJob.status: "running",
-                AnalysisJob.progress_current: 0,
-                AnalysisJob.error_message: None,
-                AnalysisJob.started_at: utc_now(),
-                AnalysisJob.completed_at: None,
-            },
-            synchronize_session=False,
-        )
-    )
-    db.commit()
-    return claimed == 1
+    """有界锁重试地把索引任务从 queued 原子领取为 running。"""
+    for attempt in range(1, ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS + 1):
+        try:
+            claimed = (
+                db.query(AnalysisJob)
+                .filter(
+                    AnalysisJob.id == job_id,
+                    AnalysisJob.job_type == "rag_index",
+                    AnalysisJob.status == "queued",
+                )
+                .update(
+                    {
+                        AnalysisJob.status: "running",
+                        AnalysisJob.progress_current: 0,
+                        AnalysisJob.error_message: None,
+                        AnalysisJob.started_at: utc_now(),
+                        AnalysisJob.completed_at: None,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+            return claimed == 1
+        except OperationalError as error:
+            db.rollback()
+            if (
+                not is_sqlite_lock_error(error)
+                or attempt == ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS
+            ):
+                raise
+            time.sleep(
+                ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
+                * (2 ** (attempt - 1))
+            )
+    return False
 
 
+# 模型、维度、分块协议和内容哈希全部一致时，旧向量才可安全复用。
 def _valid_cached_vector(
     vector: Sequence[float],
     *,
     dimensions: int,
 ) -> bool:
+    """验证缓存向量长度等于 dimensions，且每个值可转为有限 float。"""
     return (
         len(vector) == dimensions
         and any(float(value) != 0.0 for value in vector)
         and all(math.isfinite(float(value)) for value in vector)
     )
+
+
+def _embedding_provider_id(provider: EmbeddingProvider) -> str:
+    """Return provider provenance, preserving compatibility with test fakes."""
+    value = getattr(provider, "provider_id", "openai_compatible")
+    return str(value)
 
 
 def _load_cached_vectors(
@@ -176,10 +227,15 @@ def _load_cached_vectors(
     provider: EmbeddingProvider,
     force_refresh: bool,
 ) -> dict[str, tuple[float, ...]]:
+    """在来源/模型/维度/分块版本一致时，从当前集合批量读取可复用向量。
+
+    ``force_refresh=True`` 或任一协议字段不匹配直接返回空字典，保证不会跨配置
+    误用向量。返回值只包含当前 chunks 中仍存在且维度有效的 ID。
+    """
     if (
         force_refresh
         or current is None
-        or current.embedding_provider != "aliyun_model_studio"
+        or current.embedding_provider != _embedding_provider_id(provider)
         or current.embedding_model != provider.model
         or current.embedding_dimensions != provider.dimensions
         or current.chunk_version != CHUNK_FORMAT_VERSION
@@ -223,24 +279,43 @@ def _persist_progress(
     current: int,
     total: int,
 ) -> None:
-    updated = (
-        db.query(AnalysisJob)
-        .filter(
-            AnalysisJob.id == job_id,
-            AnalysisJob.job_type == "rag_index",
-            AnalysisJob.status == "running",
-        )
-        .update(
-            {
-                AnalysisJob.progress_current: current,
-                AnalysisJob.progress_total: total,
-            },
-            synchronize_session=False,
-        )
-    )
-    db.commit()
-    if updated != 1:
-        raise _RagIndexJobCancelled()
+    """用短事务更新索引任务进度。
+
+    ``db`` 是当前会话，``job_id`` 定位任务，``current/total`` 是要写入的绝对值。
+    只更新 running 任务并验证边界；SQLite 写锁执行有界退避，失败继续抛出。
+    """
+    for attempt in range(1, ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS + 1):
+        try:
+            updated = (
+                db.query(AnalysisJob)
+                .filter(
+                    AnalysisJob.id == job_id,
+                    AnalysisJob.job_type == "rag_index",
+                    AnalysisJob.status == "running",
+                )
+                .update(
+                    {
+                        AnalysisJob.progress_current: current,
+                        AnalysisJob.progress_total: total,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            db.commit()
+            if updated != 1:
+                raise _RagIndexJobCancelled()
+            return
+        except OperationalError as error:
+            db.rollback()
+            if (
+                not is_sqlite_lock_error(error)
+                or attempt == ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS
+            ):
+                raise
+            time.sleep(
+                ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
+                * (2 ** (attempt - 1))
+            )
 
 
 def _collection_name(
@@ -249,12 +324,14 @@ def _collection_name(
     source_hash: str,
     job_id: str,
 ) -> str:
+    """用小说 ID、来源哈希前缀和任务 UUID 生成合法且不会冲突的集合名。"""
     return (
         f"novelmind_n{novel_id}_{source_hash[:12]}_"
         f"{job_id.replace('-', '')[:12]}"
     )
 
 
+# 主库指针和 chunk 定位在同一事务中切换，避免读到半套索引。
 def _replace_current_snapshot(
     db: Session,
     *,
@@ -278,7 +355,7 @@ def _replace_current_snapshot(
             novel_id=novel_id,
             source_hash=source_hash,
             collection_name=collection_name,
-            embedding_provider="aliyun_model_studio",
+            embedding_provider=_embedding_provider_id(provider),
             embedding_model=provider.model,
             embedding_dimensions=provider.dimensions,
             chunk_version=CHUNK_FORMAT_VERSION,
@@ -297,7 +374,7 @@ def _replace_current_snapshot(
 
     current.source_hash = source_hash
     current.collection_name = collection_name
-    current.embedding_provider = "aliyun_model_studio"
+    current.embedding_provider = _embedding_provider_id(provider)
     current.embedding_model = provider.model
     current.embedding_dimensions = provider.dimensions
     current.chunk_version = CHUNK_FORMAT_VERSION
@@ -347,6 +424,7 @@ def _mark_unchanged_succeeded(
     job_id: str,
     chunk_count: int,
 ) -> None:
+    """当现有索引完全当前时，不调用 embedding，直接把任务标记 succeeded。"""
     updated = (
         db.query(AnalysisJob)
         .filter(
@@ -369,6 +447,7 @@ def _mark_unchanged_succeeded(
         raise _RagIndexJobCancelled()
 
 
+# 重复派发也只有一个执行者能把 queued 原子 claim 为 running。
 def run_rag_index_job(
     job_id: str,
     provider: EmbeddingProvider,
@@ -441,6 +520,8 @@ def run_rag_index_job(
                 not force_refresh
                 and current is not None
                 and current.source_hash == source_hash
+                and current.embedding_provider
+                == _embedding_provider_id(provider)
                 and current.embedding_model == provider.model
                 and current.embedding_dimensions == provider.dimensions
                 and current.chunk_version == CHUNK_FORMAT_VERSION

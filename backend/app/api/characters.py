@@ -1,4 +1,8 @@
-"""API endpoints for external character analysis and local results."""
+"""人物分析估算/启动，以及当前人物快照的本地查询接口。
+
+写路径会调用外部模型，必须确认数据范围和内容权利；读路径只查询本地 SQLite。
+把昂贵生成与便宜读取分开，既便于测试，也避免每次打开人物页都产生 API 费用。
+"""
 
 import logging
 from datetime import datetime
@@ -39,10 +43,14 @@ from backend.app.api.summaries import (
     AnalysisJobResponse,
     ProviderFactory,
     _job_response,
-    get_llm_provider_factory,
+    get_sync_llm_provider_factory,
     get_session_factory,
 )
-from backend.app.core.config import Settings, get_settings
+from backend.app.core.config import (
+    GENERATION_PROVIDERS,
+    Settings,
+    get_settings,
+)
 from backend.app.core.database import get_db
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.character import (
@@ -68,6 +76,7 @@ DEEPSEEK_PRIVACY_URL = (
 )
 
 
+# Pydantic 负责无数据库参与的类型检查；跨表归属和活动任务冲突仍由业务层验证。
 class StartCharacterAnalysisRequest(BaseModel):
     """Explicit consent and refresh options for whole-novel analysis."""
 
@@ -181,6 +190,7 @@ class CharacterRelationshipListResponse(BaseModel):
 
 
 def _close_provider(provider: LLMProvider) -> None:
+    """调用可选 ``close`` 释放 HTTP 连接池；兼容没有 close 的测试假对象。"""
     close = getattr(provider, "close", None)
     if not callable(close):
         return
@@ -194,6 +204,7 @@ def _active_character_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
+    """查询该小说 queued/running 的人物任务；没有时返回 ``None``。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -212,6 +223,11 @@ def _mark_committed_character_job_failed(
     db: Session,
     session_factory: Callable[[], Session],
 ) -> bool:
+    """派发失败后用新会话把已提交任务补偿为 failed。
+
+    返回 True 表示任务已终结或已不在 queued，False 表示补偿本身失败。``db`` 是
+    原请求会话，只用于回滚；真正终结使用 ``session_factory`` 的短事务。
+    """
     try:
         db.rollback()
     except Exception:
@@ -230,6 +246,7 @@ def _mark_committed_character_job_failed(
     )
 
 
+# 保证“已经持久化”与“确实交给执行器”之间的窗口可被补偿，而非永久排队。
 def _schedule_character_job(
     *,
     novel_id: int,
@@ -240,6 +257,11 @@ def _schedule_character_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> AnalysisJobResponse:
+    """持久化并移交人物任务，返回供前端轮询的任务响应。
+
+    ``progress_total`` 来自本地估算，``request`` 带授权/force 选择，provider 在
+    成功移交后归 worker 所有；移交前异常会关闭它并补偿任务状态。
+    """
     provider_transferred = False
     try:
         active_job = _active_character_job(db, novel_id)
@@ -345,6 +367,12 @@ def _build_character_estimate(
     db: Session,
     settings: Settings,
 ) -> CharacterEstimateResponse:
+    """生成授权页所需的人物分析本地估算。
+
+    ``novel`` 确定范围，``db`` 读取章节与逐章缓存，``settings`` 提供当前模型和
+    提示限制。返回章节数、字符数、可复用章数、预计步骤及安全上限；函数不构造
+    provider，因而不会发送正文或产生 API 费用。
+    """
     rows = (
         db.query(Chapter, ChapterCharacterExtraction)
         .outerjoin(
@@ -472,19 +500,35 @@ def _build_character_estimate(
             maximum_force_generation_steps
             * request_attempt_multiplier
         ),
-        provider="deepseek",
+        provider=settings.generation_provider,
         model=settings.deepseek_model,
         sends_original_text=True,
         sends_chapter_titles=True,
         sends_derived_character_data=True,
         data_handling_notice=(
-            "章节标题、正文以及由正文生成的人物候选与档案将发送至 "
-            "DeepSeek，并可能在中国处理。根据 DeepSeek 当前条款，"
-            "输入可能被缓存、留存并用于服务改进或模型优化；请仅提交"
-            "你有权处理的内容。"
+            (
+                "章节标题、正文以及由正文生成的人物候选与档案将发送至 "
+                "DeepSeek，并可能在中国处理。根据 DeepSeek 当前条款，"
+                "输入可能被缓存、留存并用于服务改进或模型优化；请仅提交"
+                "你有权处理的内容。"
+            )
+            if settings.generation_provider == "deepseek"
+            else (
+                "章节标题、正文以及派生人物数据将发送至 "
+                f"{GENERATION_PROVIDERS[settings.generation_provider]}。"
+                "请仅提交你有权处理的内容，并以所选供应商条款为准。"
+            )
         ),
-        terms_url=DEEPSEEK_TERMS_URL,
-        privacy_url=DEEPSEEK_PRIVACY_URL,
+        terms_url=(
+            DEEPSEEK_TERMS_URL
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
+        ),
+        privacy_url=(
+            DEEPSEEK_PRIVACY_URL
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
+        ),
         up_to_date=up_to_date,
     )
 
@@ -517,13 +561,16 @@ def get_character_estimate(
     response_model=AnalysisJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+# 整书分析可能包含许多模型调用，本接口不能占住浏览器连接等待完成。
 def start_character_analysis(
     request: StartCharacterAnalysisRequest,
     background_tasks: BackgroundTasks,
     novel_id: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
-    provider_factory: ProviderFactory = Depends(get_llm_provider_factory),
+    provider_factory: ProviderFactory = Depends(
+        get_sync_llm_provider_factory
+    ),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
     """Start one whole-novel DeepSeek character-analysis job."""
@@ -534,18 +581,20 @@ def start_character_analysis(
             detail="未找到指定小说。",
         )
     if not request.confirm_external_processing:
+        provider_label = GENERATION_PROVIDERS[settings.generation_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "人物分析会把小说标题、正文和派生人物数据发送至 "
-                "DeepSeek API，请先明确确认。"
+                f"{provider_label} API，请先明确确认。"
             ),
         )
     if not request.confirm_content_rights:
+        provider_label = GENERATION_PROVIDERS[settings.generation_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "请确认你有权把该小说提交给 DeepSeek API，"
+                f"请确认你有权把该小说提交给 {provider_label} API，"
                 "并已了解其数据处理条款。"
             ),
         )
@@ -560,6 +609,20 @@ def start_character_analysis(
                 ),
             )
         return _job_response(active_job)
+    active_report = (
+        db.query(AnalysisJob.id)
+        .filter(
+            AnalysisJob.novel_id == novel_id,
+            AnalysisJob.job_type == "report",
+            AnalysisJob.status.in_(("queued", "running")),
+        )
+        .first()
+    )
+    if active_report is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="报告生成期间不能更新人物分析，请等待报告任务完成。",
+        )
     estimate = _build_character_estimate(
         novel,
         db=db,
@@ -587,6 +650,7 @@ def _get_character_for_novel(
     novel_id: int,
     character_id: int,
 ) -> tuple[CharacterAnalysis, Character]:
+    """按小说和人物 ID 联表查找，返回 ``(当前快照, 人物)``；不存在抛 404。"""
     row = (
         db.query(CharacterAnalysis, Character)
         .join(Character, Character.analysis_id == CharacterAnalysis.id)
@@ -614,6 +678,7 @@ def _relationship_counts(
     analysis_id: int,
     character_ids: list[int],
 ) -> dict[int, int]:
+    """批量返回 ``character_id -> 参与关系数``；无关系人物也保留值 0。"""
     counts = {character_id: 0 for character_id in character_ids}
     if not character_ids:
         return counts
@@ -651,6 +716,7 @@ def _character_item(
     *,
     relationship_count: int,
 ) -> CharacterListItemResponse:
+    """把人物 ORM 行和预计算关系数映射成稳定列表响应，不暴露内部关系对象。"""
     return CharacterListItemResponse(
         id=character.id,
         canonical_name=character.canonical_name,

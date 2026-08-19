@@ -25,7 +25,7 @@ NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统�
 - 前端展示：Streamlit
 - 数据库：SQLite
 - ORM：SQLAlchemy
-- 外部 embedding：阿里云百炼北京区 `text-embedding-v4`，固定 1024 维
+- 外部 embedding：硅基流动 `Qwen/Qwen3-Embedding-4B`，固定输出 1024 维
 - 向量库：本地 SQLite + NumPy 精确余弦检索，只保存外部派生向量
 - 测试：pytest
 
@@ -39,7 +39,7 @@ NovelMind/
       core/         # 配置、数据库连接等基础能力
       models/       # SQLAlchemy 数据模型
       parser/       # 小说章节解析逻辑
-      rag/          # 分块、百炼 embedding、本地向量、问答和清理
+      rag/          # 分块、外部 embedding、本地向量、问答和清理
       analyzer/     # 摘要、角色抽取、结构分析等逻辑
       main.py       # FastAPI 应用入口
     tests/          # pytest 测试
@@ -184,7 +184,7 @@ test(parser): add chapter splitter tests
 8. 分析报告（已完成）
 
 当前 MVP 已形成完整闭环。后续新增功能时仍须保持：文本生成使用
-DeepSeek V4 Pro API，embedding 使用百炼北京区 `text-embedding-v4`，
+DeepSeek V4 Pro API，embedding 使用硅基流动 `Qwen/Qwen3-Embedding-4B`，
 本地不运行模型。
 
 ## TXT 小说上传接口
@@ -271,7 +271,7 @@ RAG 已实现的数据流：
 实现约束：
 
 - 确定性 1200 字符分块、200 字符重叠，分块算法必须版本化。
-- embedding 端点只允许百炼北京区专属工作空间，模型固定 1024 维。
+- 硅基流动预设只允许官方 HTTPS API 根地址，模型固定输出 1024 维。
 - 本地向量库不保存原文，只存外部 API 生成的 float32 向量和定位元数据。
 - 新版本集合完整校验后才切换 SQLite 当前指针，失败保留旧索引。
 - 检索命中必须回查 SQLite 并校验原文范围与哈希。

@@ -131,6 +131,86 @@ def test_get_system_status_uses_public_status_endpoint(
 
 
 @patch("frontend.api_client.requests.get")
+def test_get_model_settings_uses_non_secret_endpoint(
+    mock_get: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "generation": {"api_key_set": True},
+        "embedding": {"api_key_set": False},
+    }
+    mock_get.return_value = response
+
+    result = api_client.get_model_settings(
+        backend_url="http://testserver/",
+    )
+
+    assert result["generation"]["api_key_set"] is True
+    mock_get.assert_called_once_with(
+        "http://testserver/api/system/model-settings",
+        timeout=10,
+    )
+
+
+@patch("frontend.api_client.requests.put")
+def test_update_model_settings_sends_complete_form(
+    mock_put: Mock,
+) -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"local_override": True}
+    mock_put.return_value = response
+    payload = {
+        "generation": {
+            "provider": "deepseek",
+            "model": "deepseek-v4-pro",
+            "base_url": "https://api.deepseek.com",
+            "api_key": None,
+            "clear_api_key": False,
+        },
+        "embedding": {
+            "provider": "siliconflow",
+            "model": "Qwen/Qwen3-Embedding-4B",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "dimensions": 1024,
+            "api_key": None,
+            "clear_api_key": False,
+        },
+    }
+
+    result = api_client.update_model_settings(
+        payload,
+        backend_url="http://testserver/",
+    )
+
+    assert result["local_override"] is True
+    mock_put.assert_called_once_with(
+        "http://testserver/api/system/model-settings",
+        json=payload,
+        timeout=30,
+    )
+
+
+@patch("frontend.api_client.requests.delete")
+def test_reset_model_settings_uses_delete(mock_delete: Mock) -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"local_override": False}
+    mock_delete.return_value = response
+
+    result = api_client.reset_model_settings(
+        backend_url="http://testserver/",
+    )
+
+    assert result["local_override"] is False
+    mock_delete.assert_called_once_with(
+        "http://testserver/api/system/model-settings",
+        timeout=30,
+    )
+
+
+@patch("frontend.api_client.requests.get")
 def test_list_novels_sends_pagination(mock_get: Mock) -> None:
     response = Mock()
     response.status_code = 200

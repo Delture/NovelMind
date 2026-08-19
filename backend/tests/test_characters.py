@@ -1494,6 +1494,52 @@ def test_run_character_job_completes_and_closes_provider(
     assert provider.close_calls == 1
 
 
+def test_character_job_expands_progress_for_runtime_reconciliation_calls(
+    session_factory: Callable[[], Session],
+) -> None:
+    provider = QueueProvider(
+        [
+            _extract(
+                _observation("林默"),
+                _observation("苏晴"),
+            ),
+            _merge_by_name,
+            _reconcile_separately,
+            _no_relationships,
+        ]
+    )
+    with session_factory() as session:
+        novel = _add_novel(
+            session,
+            contents=["林默遇见苏晴。"],
+        )
+        session.add(
+            AnalysisJob(
+                id="characters-dynamic-progress",
+                novel_id=novel.id,
+                job_type="characters",
+                status="queued",
+                progress_current=0,
+                progress_total=3,
+            )
+        )
+        session.commit()
+
+    run_character_job(
+        "characters-dynamic-progress",
+        provider,
+        session_factory,
+    )
+
+    with session_factory() as session:
+        job = session.get(AnalysisJob, "characters-dynamic-progress")
+        assert job is not None
+        assert job.status == "succeeded"
+        assert job.progress_current == 4
+        assert job.progress_total == 4
+    assert provider.close_calls == 1
+
+
 def test_run_character_job_plans_only_changed_chapter_and_global_steps(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -1547,6 +1593,86 @@ def test_run_character_job_plans_only_changed_chapter_and_global_steps(
     assert provider.close_calls == 1
 
 
+def test_failed_character_job_persists_completed_chapters_for_resume(
+    session_factory: Callable[[], Session],
+) -> None:
+    with session_factory() as session:
+        novel = _add_novel(session)
+        novel_id = novel.id
+        session.add(
+            AnalysisJob(
+                id="characters-resume-first",
+                novel_id=novel_id,
+                job_type="characters",
+                status="queued",
+                progress_current=0,
+                progress_total=4,
+            )
+        )
+        session.commit()
+
+    failed_provider = QueueProvider(
+        [
+            _extract(_observation("林默")),
+            ProviderResponseError(),
+        ]
+    )
+    run_character_job(
+        "characters-resume-first",
+        failed_provider,
+        session_factory,
+    )
+
+    with session_factory() as session:
+        failed_job = session.get(
+            AnalysisJob,
+            "characters-resume-first",
+        )
+        assert failed_job is not None
+        assert failed_job.status == "failed"
+        cached = session.query(ChapterCharacterExtraction).one()
+        assert cached.chapter.chapter_index == 1
+        session.add(
+            AnalysisJob(
+                id="characters-resume-second",
+                novel_id=novel_id,
+                job_type="characters",
+                status="queued",
+                progress_current=0,
+                progress_total=4,
+            )
+        )
+        session.commit()
+
+    resumed_provider = QueueProvider(
+        [
+            _extract(_observation("苏晴")),
+            _merge_by_name,
+            _reconcile_separately,
+            _no_relationships,
+        ]
+    )
+    run_character_job(
+        "characters-resume-second",
+        resumed_provider,
+        session_factory,
+    )
+
+    with session_factory() as session:
+        resumed_job = session.get(
+            AnalysisJob,
+            "characters-resume-second",
+        )
+        assert resumed_job is not None
+        assert resumed_job.status == "succeeded"
+        assert session.query(ChapterCharacterExtraction).count() == 2
+    first_request = _prompt_data(
+        str(resumed_provider.calls[0]["user_prompt"])
+    )
+    assert first_request["chapter_index"] == 2
+    assert len(resumed_provider.calls) == 4
+
+
 def test_run_character_job_records_safe_failure_and_preserves_snapshot(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -1591,7 +1717,7 @@ def test_run_character_job_records_safe_failure_and_preserves_snapshot(
         assert job is not None
         assert job.status == "failed"
         assert job.completed_at is not None
-        assert job.error_message == "DeepSeek 服务暂时不可用，请稍后重试。"
+        assert job.error_message == "生成模型服务暂时不可用，请稍后重试。"
         assert session.get(CharacterAnalysis, analysis_id) is not None
         assert session.query(Character).one().canonical_name == "林默"
     assert provider.close_calls == 1

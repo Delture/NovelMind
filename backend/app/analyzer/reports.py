@@ -1,4 +1,10 @@
-"""API-backed whole-novel reports with verified chapter evidence."""
+"""用已验证派生数据生成带章节依据的全书分析报告。
+
+报告流水线先逐章复核摘要的原文哈希，人物快照仅在当前时作为可选输入；随后将
+长篇摘要分批提炼为证据笔记、分层归并，最终生成固定结构报告。每一条引用都
+必须属于当前小说章节白名单。执行前后再次检查来源是否变化，成功后才原子替换
+旧报告，避免生成期间上传/数据变化导致“新报告引用旧材料”。
+"""
 
 import hashlib
 import json
@@ -72,7 +78,7 @@ REPORT_JOB_SQLITE_RETRY_BASE_SECONDS = 0.05
 
 
 class ReportSourceError(RuntimeError):
-    """A user-actionable report prerequisite failure."""
+    """表示本地派生输入缺失、过期或互相不一致，不应发起外部调用。"""
 
 
 class _ReportJobCancelled(RuntimeError):
@@ -80,6 +86,7 @@ class _ReportJobCancelled(RuntimeError):
 
 
 def _required_text(value: str) -> str:
+    """去除文本首尾空白并拒绝空结果，供多个验证器复用。"""
     normalized = value.strip()
     if not normalized:
         raise ValueError("text cannot be blank")
@@ -87,6 +94,7 @@ def _required_text(value: str) -> str:
 
 
 def _validated_chapter_indices(values: list[int]) -> list[int]:
+    """要求章节引用无重复且已升序排列，成功返回原列表。"""
     if len(values) != len(set(values)):
         raise ValueError("chapter evidence cannot contain duplicates")
     if values != sorted(values):
@@ -109,11 +117,13 @@ class ReportEvidenceNote(BaseModel):
     @field_validator("topic", "analysis")
     @classmethod
     def normalize_text(cls, value: str) -> str:
+        """清理证据笔记的 topic/analysis 文本并拒绝空白。"""
         return _required_text(value)
 
     @field_validator("evidence_chapter_indices")
     @classmethod
     def validate_evidence(cls, values: list[int]) -> list[int]:
+        """验证证据笔记章节序号不重复且排序稳定。"""
         return _validated_chapter_indices(values)
 
 
@@ -143,11 +153,13 @@ class ReportSectionPayload(BaseModel):
     @field_validator("title", "analysis")
     @classmethod
     def normalize_text(cls, value: str) -> str:
+        """清理报告分区标题/正文并拒绝空白。"""
         return _required_text(value)
 
     @field_validator("evidence_chapter_indices")
     @classmethod
     def validate_evidence(cls, values: list[int]) -> list[int]:
+        """验证报告分区章节序号不重复且排序稳定。"""
         return _validated_chapter_indices(values)
 
 
@@ -181,6 +193,7 @@ class NovelReportPayload(BaseModel):
     @field_validator("title")
     @classmethod
     def normalize_title(cls, value: str) -> str:
+        """清理最终报告标题并拒绝空标题。"""
         return _required_text(value)
 
     def sections(self) -> list[ReportSectionPayload]:
@@ -213,6 +226,7 @@ class PreparedReportSource:
 
 
 def _canonical_json(value: object) -> str:
+    """用稳定键序和紧凑分隔符序列化 JSON，供来源哈希使用。"""
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -234,6 +248,11 @@ def _current_character_source(
         int,
     ]
 ]:
+    """读取与当前小说、模型和来源一致的人物快照。
+
+    返回分析 ORM、人物派生字典元组、关系字典元组和人物数；不存在或任一完整性
+    条件不符时返回 None，报告便只使用章节摘要。
+    """
     analysis = (
         db.query(CharacterAnalysis)
         .filter(CharacterAnalysis.novel_id == novel.id)
@@ -366,6 +385,7 @@ def _current_character_source(
 
 
 def prepare_report_source(
+# 估算接口与执行器都调用同一准备函数，保证界面披露和真实外发范围一致。
     db: Session,
     *,
     novel_id: int,
@@ -461,6 +481,7 @@ def prepare_report_source(
 def _summary_batches(
     summaries: tuple[dict[str, object], ...],
 ) -> list[list[dict[str, object]]]:
+    """按章节顺序把摘要装入不超过提示字符预算的批次。"""
     batches: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
     for summary in summaries:
@@ -525,6 +546,7 @@ def report_is_current(
 
 
 def _system_prompt() -> str:
+    """构造报告系统提示，限制材料边界、输出结构与章节引用。"""
     return novelmind_system_prompt(
         role="资深中文小说分析编辑与叙事分析师",
         material_scope=(
@@ -552,6 +574,7 @@ def _system_prompt() -> str:
 def _ensure_can_continue(
     should_continue: Optional[Callable[[], bool]],
 ) -> None:
+    """调用可选存活回调；任务/来源失效时停止下一次模型调用。"""
     if should_continue is not None and not should_continue():
         raise _ReportJobCancelled()
 
@@ -560,6 +583,7 @@ def _validate_note_citations(
     payload: ReportEvidenceNotesPayload,
     allowed_indices: set[int],
 ) -> None:
+    """确认每条中间证据笔记只引用 allowed_indices 中的章节。"""
     for note in payload.notes:
         if not set(note.evidence_chapter_indices) <= allowed_indices:
             raise ProviderResponseError()
@@ -569,12 +593,14 @@ def _validate_report_citations(
     payload: NovelReportPayload,
     allowed_indices: set[int],
 ) -> None:
+    """遍历最终报告全部分区，拒绝任何白名单外章节引用。"""
     for section in payload.sections():
         if not set(section.evidence_chapter_indices) <= allowed_indices:
             raise ProviderResponseError()
 
 
 def generate_report_payload(
+# 分批/分层过程控制单次提示体积；最终结果还要统一检查章节引用白名单。
     source: PreparedReportSource,
     provider: LLMProvider,
     *,
@@ -720,6 +746,7 @@ def generate_report_payload(
 
 
 def _sleep_before_sqlite_retry(failed_attempt: int) -> None:
+    """报告状态写锁冲突后按次数执行有上限短退避。"""
     time.sleep(
         REPORT_JOB_SQLITE_RETRY_BASE_SECONDS
         * (2 ** (failed_attempt - 1))
@@ -731,6 +758,11 @@ def _claim_report_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
+    """有界 SQLite 锁重试地领取 queued 报告任务。
+
+    ``db`` 是 worker 会话，``job_id`` 定位任务，``claimed_at`` 写开始时间。条件
+    UPDATE 保证重复派发只一个 worker 返回 1；任务已被领取或终结返回 0。
+    """
     for attempt in range(1, REPORT_JOB_SQLITE_MAX_ATTEMPTS + 1):
         try:
             claimed = (
@@ -777,6 +809,7 @@ def _report_job_has_live_source(
     job_id: str,
     novel_id: int,
 ) -> bool:
+    """确认报告任务仍运行且小说仍存在，供每个外部步骤前取消检测。"""
     with session_factory() as status_db:
         return (
             status_db.query(AnalysisJob.id)
@@ -792,6 +825,38 @@ def _report_job_has_live_source(
         )
 
 
+def _report_job_source_is_unchanged(
+    session_factory: Callable[[], Session],
+    *,
+    job_id: str,
+    novel_id: int,
+    expected_model: str,
+    expected_source_hash: str,
+) -> bool:
+    """确认报告生成期间派生输入没有变化。
+
+    先检查任务/小说仍存活，再用新会话按 expected_model 重新准备摘要与人物输入，
+    将结果 source_hash 与 expected_source_hash 比较。前置条件失败也返回 False，
+    调用者据此取消迟到结果。
+    """
+    if not _report_job_has_live_source(
+        session_factory,
+        job_id=job_id,
+        novel_id=novel_id,
+    ):
+        return False
+    try:
+        with session_factory() as source_db:
+            current = prepare_report_source(
+                source_db,
+                novel_id=novel_id,
+                expected_model=expected_model,
+            )
+        return current.source_hash == expected_source_hash
+    except ReportSourceError:
+        return False
+
+
 def _mark_report_job_failed(
     session_factory: Callable[[], Session],
     job_id: str,
@@ -800,6 +865,11 @@ def _mark_report_job_failed(
     expected_status: str,
     failure_context: str,
 ) -> bool:
+    """只将仍处于 ``expected_status`` 的报告任务终结为 failed。
+
+    session_factory 创建独立短事务；error_message 是可安全保存/展示的文字；
+    failure_context 只用于日志定位。返回 True 表示任务已经离开预期活动状态。
+    """
     return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
@@ -811,6 +881,7 @@ def _mark_report_job_failed(
 
 
 def _close_provider(provider: LLMProvider) -> None:
+    """尽力关闭报告 provider；关闭异常只记录日志。"""
     close = getattr(provider, "close", None)
     if not callable(close):
         return
@@ -825,6 +896,11 @@ def run_report_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
+    """领取任务、准备输入、离库调用模型、复核来源并原子替换报告。
+
+    网络调用期间不持有 SQLite 写事务；失败保留旧 NovelReport，外层写安全失败
+    状态。provider 最终由 runner 关闭。
+    """
     """Generate one report and always release provider resources."""
     try:
         _run_report_job(job_id, provider, session_factory)
@@ -833,10 +909,16 @@ def run_report_job(
 
 
 def _run_report_job(
+# worker 在模型调用前后检查活动状态和来源哈希，迟到结果不会覆盖更新后的数据。
     job_id: str,
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
+    """领取任务、准备输入、离库生成、复核来源并原子替换报告。
+
+    ``job_id`` 定位持久任务，``provider`` 是本次不可变配置客户端，
+    ``session_factory`` 为每个短事务创建新会话。失败保留旧报告。
+    """
     with session_factory() as db:
         try:
             claimed = _claim_report_job(db, job_id, utc_now())
@@ -885,16 +967,18 @@ def _run_report_job(
             if scope is None:
                 return
             novel_id, force_refresh = scope
-            continuation_check = partial(
-                _report_job_has_live_source,
-                session_factory,
-                job_id=job_id,
-                novel_id=int(novel_id),
-            )
             source = prepare_report_source(
                 db,
                 novel_id=int(novel_id),
                 expected_model=provider.model,
+            )
+            continuation_check = partial(
+                _report_job_source_is_unchanged,
+                session_factory,
+                job_id=job_id,
+                novel_id=int(novel_id),
+                expected_model=provider.model,
+                expected_source_hash=source.source_hash,
             )
             existing = (
                 db.query(NovelReport)
@@ -947,27 +1031,40 @@ def _run_report_job(
                 return
 
             def advance_progress() -> None:
-                with session_factory() as progress_db:
-                    updated = (
-                        progress_db.query(AnalysisJob)
-                        .filter(
-                            AnalysisJob.id == job_id,
-                            AnalysisJob.status == "running",
-                            AnalysisJob.progress_current
-                            < AnalysisJob.progress_total,
-                        )
-                        .update(
-                            {
-                                AnalysisJob.progress_current: (
-                                    AnalysisJob.progress_current + 1
+                """以独立短会话推进一步；锁冲突有界重试，任务失效则取消。"""
+                for attempt in range(
+                    1, REPORT_JOB_SQLITE_MAX_ATTEMPTS + 1
+                ):
+                    try:
+                        with session_factory() as progress_db:
+                            updated = (
+                                progress_db.query(AnalysisJob)
+                                .filter(
+                                    AnalysisJob.id == job_id,
+                                    AnalysisJob.status == "running",
+                                    AnalysisJob.progress_current
+                                    < AnalysisJob.progress_total,
                                 )
-                            },
-                            synchronize_session=False,
-                        )
-                    )
-                    progress_db.commit()
-                    if updated != 1:
-                        raise _ReportJobCancelled()
+                                .update(
+                                    {
+                                        AnalysisJob.progress_current: (
+                                            AnalysisJob.progress_current + 1
+                                        )
+                                    },
+                                    synchronize_session=False,
+                                )
+                            )
+                            progress_db.commit()
+                        if updated != 1:
+                            raise _ReportJobCancelled()
+                        return
+                    except OperationalError as error:
+                        if (
+                            not is_sqlite_lock_error(error)
+                            or attempt == REPORT_JOB_SQLITE_MAX_ATTEMPTS
+                        ):
+                            raise
+                        _sleep_before_sqlite_retry(attempt)
 
             payload, generation_steps = generate_report_payload(
                 source,
@@ -1036,6 +1133,13 @@ def _run_report_job(
                 "Report job %s stopped because its state or source "
                 "was removed.",
                 job_id,
+            )
+            _mark_report_job_failed(
+                session_factory,
+                job_id,
+                "生成期间章节摘要或人物分析发生变化；旧报告已保留，请重新生成。",
+                expected_status="running",
+                failure_context="source changed during generation",
             )
         except Exception as error:
             db.rollback()

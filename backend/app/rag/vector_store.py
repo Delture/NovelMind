@@ -1,4 +1,9 @@
-"""Dependency-light local storage for externally generated vectors."""
+"""基于独立 SQLite 文件和 NumPy 的本地精确向量存储。
+
+外部服务只生成向量；持久化和检索在本机完成。集合使用版本化名称，建新索引
+不会修改当前集合。搜索读取 float32 向量并计算余弦相似度，是线性精确扫描，
+适合当前单机规模。本库不存小说原文，原文必须由主数据库按范围重新读取。
+"""
 
 import heapq
 import json
@@ -18,12 +23,12 @@ _QUERY_FETCH_SIZE = 256
 
 
 class VectorCollectionNotFoundError(LookupError):
-    """Raised when a logical vector collection does not exist."""
+    """索引指向的真实集合不存在，调用层通常应提示重建索引。"""
 
 
 @dataclass(frozen=True)
 class VectorSearchHit:
-    """One exact-cosine result with local provenance metadata."""
+    """一次向量命中；相似度用于排序，并不单独构成事实证据。"""
 
     chunk_id: str
     distance: float
@@ -31,9 +36,10 @@ class VectorSearchHit:
 
 
 class LocalVectorStore:
-    """Persist external vectors in local SQLite and search exact cosine."""
+    """管理版本化集合，并在本机执行精确余弦检索。"""
 
     def __init__(self, path: str) -> None:
+        """解析/创建存储目录，固定数据库名 ``vectors.sqlite3`` 并初始化表结构。"""
         resolved = Path(path).expanduser().resolve()
         resolved.mkdir(parents=True, exist_ok=True)
         self._database_path = resolved / "vectors.sqlite3"
@@ -41,6 +47,7 @@ class LocalVectorStore:
 
     @staticmethod
     def _validate_collection_name(name: str) -> str:
+        """仅允许受控 ASCII 集合名，非法类型或格式抛 ValueError，成功返回原名。"""
         if not isinstance(name, str) or not _COLLECTION_NAME_PATTERN.fullmatch(
             name
         ):
@@ -48,6 +55,7 @@ class LocalVectorStore:
         return name
 
     def _connect(self) -> sqlite3.Connection:
+        """创建启用外键、busy timeout 和行对象访问的短生命周期 sqlite3 连接。"""
         connection = sqlite3.connect(
             self._database_path,
             timeout=30.0,
@@ -58,6 +66,11 @@ class LocalVectorStore:
         return connection
 
     def _initialize(self) -> None:
+        """幂等创建本地向量库的集合表、向量表和查询索引。
+
+        使用 ``with self._connect()`` 让 DDL 在成功时提交、失败时回滚。函数只补齐
+        缺失结构，不删除或重建已有集合，因此每次 LocalVectorStore 构造都可调用。
+        """
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
@@ -121,6 +134,7 @@ class LocalVectorStore:
         connection: sqlite3.Connection,
         name: str,
     ) -> int | None:
+        """读取集合已固定的向量维度；空集合尚无维度时返回 None。"""
         row = connection.execute(
             "SELECT dimensions FROM vector_collections WHERE name = ?",
             (name,),
@@ -159,6 +173,10 @@ class LocalVectorStore:
     def _prepare_vector(
         vector: Sequence[float],
     ) -> tuple[np.ndarray, float]:
+        """把输入转为一维 float32 数组并返回 ``(数组, L2 范数)``。
+
+        拒绝空、非一维、非有限值或零向量，因为余弦相似度将无法定义。
+        """
         try:
             array = np.asarray(vector, dtype="<f4")
         except (TypeError, ValueError, OverflowError) as error:
@@ -282,7 +300,12 @@ class LocalVectorStore:
         collection_name: str,
         ids: Sequence[str],
     ) -> dict[str, tuple[float, ...]]:
-        """Read cached vectors by stable chunk ID."""
+        """按稳定分块 ID 批量读取缓存向量。
+
+        ``collection_name`` 先经名称校验，``ids`` 去重后用于参数化 SQL。返回仅包含
+        实际存在且 blob 长度符合集合维度的 ``id -> tuple[float, ...]``；未找到 ID
+        不出现在字典中，调用者据此决定重新 embedding。
+        """
         collection_name = self._validate_collection_name(collection_name)
         if not ids:
             return {}
@@ -331,6 +354,11 @@ class LocalVectorStore:
         query_norm: float,
         dimensions: int,
     ) -> Iterator[VectorSearchHit]:
+        """逐行解码集合向量并 yield 余弦距离命中，避免一次复制所有元数据。
+
+        参数 query_vector/query_norm 已预校验，dimensions 用于检查磁盘 blob 长度。
+        ``Iterator`` 表示调用方按需拉取结果；本函数本身含 yield，是生成器。
+        """
         cursor = connection.execute(
             """
             SELECT chunk_id, embedding, norm, metadata

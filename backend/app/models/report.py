@@ -1,4 +1,9 @@
-"""Persisted whole-novel report snapshots."""
+"""全书分析报告的当前原子快照。
+
+报告只使用已验证的章节摘要和可选人物快照，不再次发送整部正文。``report_data``
+保存经过 Pydantic 校验的完整结构；业务层生成成功后一次性替换本行，使刷新失败
+时旧报告继续可读。来源哈希、模型和提示版本共同决定缓存是否仍然有效。
+"""
 
 from sqlalchemy import (
     Boolean,
@@ -20,7 +25,7 @@ from backend.app.core.time import utc_now
 
 
 class NovelReport(Base):
-    """The current atomic generated report for one novel."""
+    """某部小说当前完整、可引用且来源可追踪的报告快照。"""
 
     __tablename__ = "novel_reports"
     __table_args__ = (

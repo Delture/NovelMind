@@ -1,4 +1,13 @@
-"""Small, ordered SQLite schema migrations for local NovelMind databases."""
+"""按版本、按顺序升级用户已有的本地 SQLite 数据库。
+
+``Base.metadata.create_all`` 只擅长创建缺失表，不会安全地把旧表自动改成新结构，
+因此正式项目需要迁移。每个迁移函数必须幂等：首次安装、旧版本升级和重复启动
+都应得到同一结构。升级前先反射并严格校验已有列、索引、外键和触发器；若发现
+未知或损坏结构，宁可提示备份修复，也不猜测性覆盖用户数据。
+
+新增迁移时只能在 ``MIGRATIONS`` 末尾追加更高版本，已发布版本的含义不可修改。
+一次 ``engine.begin()`` 包住结构变更和版本记录，使成功与记录尽量保持一致。
+"""
 
 from typing import Callable
 
@@ -6,6 +15,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection, Engine
 
 
+# 用类型别名明确每个迁移只接收当前事务连接，不自行创建或提交连接。
 MigrationFunction = Callable[[Connection], None]
 
 
@@ -663,7 +673,12 @@ def _validate_exact_cascade_foreign_key(
     referred_table: str,
     referred_columns: list[str],
 ) -> None:
-    """Validate one exact cascading foreign-key path."""
+    """严格校验一个复合级联外键的本地列、目标表和目标列。
+
+    ``connection`` 用于反射，``table_name`` 是待查表，``local_columns`` 与
+    ``referred_columns`` 必须按约束顺序对应，``referred_table`` 是父表。缺失、重复
+    或 ondelete 不是 CASCADE 都抛 RuntimeError，防止损坏结构继续运行。
+    """
     matching = [
         item
         for item in inspect(connection).get_foreign_keys(table_name)
@@ -738,6 +753,7 @@ def _validate_trigger(
     ).all()
 
     def normalize(value: object) -> str:
+        """规范反射得到的触发器 SQL，忽略无语义差异的 IF NOT EXISTS。"""
         return _normalized_sql(value).replace("ifnotexists", "")
 
     if (
@@ -1370,12 +1386,14 @@ def _add_rag_index_tables(connection: Connection) -> None:
                     CHECK (length(trim(collection_name)) > 0),
                 CONSTRAINT ck_rag_indices_embedding_provider
                     CHECK (
-                        embedding_provider = 'aliyun_model_studio'
+                        length(trim(embedding_provider)) BETWEEN 1 AND 50
                     ),
                 CONSTRAINT ck_rag_indices_embedding_model
-                    CHECK (embedding_model = 'text-embedding-v4'),
+                    CHECK (
+                        length(trim(embedding_model)) BETWEEN 1 AND 100
+                    ),
                 CONSTRAINT ck_rag_indices_embedding_dimensions
-                    CHECK (embedding_dimensions = 1024),
+                    CHECK (embedding_dimensions BETWEEN 1 AND 8192),
                 CONSTRAINT ck_rag_indices_chunk_version
                     CHECK (length(trim(chunk_version)) > 0),
                 CONSTRAINT ck_rag_indices_chunk_count_positive
@@ -1523,13 +1541,13 @@ def _add_rag_index_tables(connection: Connection) -> None:
                 "length(trim(collection_name)) > 0"
             ),
             "ck_rag_indices_embedding_provider": (
-                "embedding_provider = 'aliyun_model_studio'"
+                "length(trim(embedding_provider)) BETWEEN 1 AND 50"
             ),
             "ck_rag_indices_embedding_model": (
-                "embedding_model = 'text-embedding-v4'"
+                "length(trim(embedding_model)) BETWEEN 1 AND 100"
             ),
             "ck_rag_indices_embedding_dimensions": (
-                "embedding_dimensions = 1024"
+                "embedding_dimensions BETWEEN 1 AND 8192"
             ),
             "ck_rag_indices_chunk_version": (
                 "length(trim(chunk_version)) > 0"
@@ -1852,6 +1870,206 @@ def _add_novel_report_table(connection: Connection) -> None:
     )
 
 
+def _allow_configurable_embedding_models(connection: Connection) -> None:
+    """Relax the original fixed-provider checks while preserving RAG data."""
+    connection.execute(
+        text(
+            """
+            CREATE TABLE rag_indices_v9 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                novel_id INTEGER NOT NULL,
+                source_hash VARCHAR(64) NOT NULL,
+                collection_name VARCHAR(128) NOT NULL,
+                embedding_provider VARCHAR(50) NOT NULL,
+                embedding_model VARCHAR(100) NOT NULL,
+                embedding_dimensions INTEGER NOT NULL,
+                chunk_version VARCHAR(50) NOT NULL,
+                chunk_count INTEGER NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                CONSTRAINT ck_rag_indices_source_hash
+                    CHECK (length(source_hash) = 64),
+                CONSTRAINT ck_rag_indices_collection_name
+                    CHECK (length(trim(collection_name)) > 0),
+                CONSTRAINT ck_rag_indices_embedding_provider
+                    CHECK (
+                        length(trim(embedding_provider)) BETWEEN 1 AND 50
+                    ),
+                CONSTRAINT ck_rag_indices_embedding_model
+                    CHECK (
+                        length(trim(embedding_model)) BETWEEN 1 AND 100
+                    ),
+                CONSTRAINT ck_rag_indices_embedding_dimensions
+                    CHECK (embedding_dimensions BETWEEN 1 AND 8192),
+                CONSTRAINT ck_rag_indices_chunk_version
+                    CHECK (length(trim(chunk_version)) > 0),
+                CONSTRAINT ck_rag_indices_chunk_count_positive
+                    CHECK (chunk_count > 0),
+                FOREIGN KEY(novel_id) REFERENCES novels(id) ON DELETE CASCADE
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO rag_indices_v9 (
+                id, novel_id, source_hash, collection_name,
+                embedding_provider, embedding_model,
+                embedding_dimensions, chunk_version, chunk_count,
+                created_at, updated_at
+            )
+            SELECT
+                id, novel_id, source_hash, collection_name,
+                embedding_provider, embedding_model,
+                embedding_dimensions, chunk_version, chunk_count,
+                created_at, updated_at
+            FROM rag_indices
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE TABLE rag_chunks_v9 (
+                id INTEGER NOT NULL PRIMARY KEY,
+                rag_index_id INTEGER NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                chunk_id VARCHAR(70) NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                start_char INTEGER NOT NULL,
+                end_char INTEGER NOT NULL,
+                content_hash VARCHAR(64) NOT NULL,
+                CONSTRAINT ck_rag_chunks_chunk_id
+                    CHECK (length(chunk_id) = 70),
+                CONSTRAINT ck_rag_chunks_indexes_positive
+                    CHECK (chapter_index >= 1 AND chunk_index >= 1),
+                CONSTRAINT ck_rag_chunks_character_range
+                    CHECK (start_char >= 0 AND end_char > start_char),
+                CONSTRAINT ck_rag_chunks_content_hash
+                    CHECK (length(content_hash) = 64),
+                FOREIGN KEY(rag_index_id)
+                    REFERENCES rag_indices_v9(id) ON DELETE CASCADE,
+                FOREIGN KEY(chapter_id)
+                    REFERENCES chapters(id) ON DELETE CASCADE
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO rag_chunks_v9 (
+                id, rag_index_id, chapter_id, chunk_id,
+                chapter_index, chunk_index, start_char, end_char,
+                content_hash
+            )
+            SELECT
+                id, rag_index_id, chapter_id, chunk_id,
+                chapter_index, chunk_index, start_char, end_char,
+                content_hash
+            FROM rag_chunks
+            """
+        )
+    )
+    connection.execute(text("DROP TABLE rag_chunks"))
+    connection.execute(text("DROP TABLE rag_indices"))
+    connection.execute(
+        text("ALTER TABLE rag_indices_v9 RENAME TO rag_indices")
+    )
+    connection.execute(
+        text(
+            """
+            CREATE TABLE rag_chunks (
+                id INTEGER NOT NULL PRIMARY KEY,
+                rag_index_id INTEGER NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                chunk_id VARCHAR(70) NOT NULL,
+                chapter_index INTEGER NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                start_char INTEGER NOT NULL,
+                end_char INTEGER NOT NULL,
+                content_hash VARCHAR(64) NOT NULL,
+                CONSTRAINT ck_rag_chunks_chunk_id
+                    CHECK (length(chunk_id) = 70),
+                CONSTRAINT ck_rag_chunks_indexes_positive
+                    CHECK (chapter_index >= 1 AND chunk_index >= 1),
+                CONSTRAINT ck_rag_chunks_character_range
+                    CHECK (start_char >= 0 AND end_char > start_char),
+                CONSTRAINT ck_rag_chunks_content_hash
+                    CHECK (length(content_hash) = 64),
+                FOREIGN KEY(rag_index_id) REFERENCES rag_indices(id) ON DELETE CASCADE,
+                FOREIGN KEY(chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            INSERT INTO rag_chunks (
+                id, rag_index_id, chapter_id, chunk_id,
+                chapter_index, chunk_index, start_char, end_char,
+                content_hash
+            )
+            SELECT
+                id, rag_index_id, chapter_id, chunk_id,
+                chapter_index, chunk_index, start_char, end_char,
+                content_hash
+            FROM rag_chunks_v9
+            """
+        )
+    )
+    connection.execute(text("DROP TABLE rag_chunks_v9"))
+    connection.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX uq_rag_indices_novel_id
+            ON rag_indices (novel_id)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX uq_rag_indices_collection_name
+            ON rag_indices (collection_name)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX uq_rag_chunks_index_chunk_id
+            ON rag_chunks (rag_index_id, chunk_id)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE UNIQUE INDEX uq_rag_chunks_index_chapter_chunk
+            ON rag_chunks (rag_index_id, chapter_id, chunk_index)
+            """
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE INDEX ix_rag_chunks_index_chapter
+            ON rag_chunks (
+                rag_index_id,
+                chapter_index,
+                chunk_index
+            )
+            """
+        )
+    )
+    _add_rag_index_tables(connection)
+
+
+# 元组顺序就是升级顺序；名称用于人工审计，函数才执行实际结构变更。
 MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
     (1, "add unique chapter index", _add_unique_chapter_index),
     (2, "add analysis tables", _add_analysis_tables),
@@ -1881,11 +2099,20 @@ MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
         "add novel report snapshots",
         _add_novel_report_table,
     ),
+    (
+        9,
+        "allow configurable embedding models",
+        _allow_configurable_embedding_models,
+    ),
 )
 
 
 def run_migrations(engine: Engine) -> None:
-    """Apply every pending migration exactly once."""
+    """在一个事务中依次执行尚未记录的迁移，并写入版本账本。
+
+    “exactly once” 指同一数据库的正常执行语义；迁移函数本身仍需可重复运行，
+    因为进程崩溃、手工修复或某些 SQLite DDL 行为都可能留下边界状态。
+    """
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -1898,6 +2125,7 @@ def run_migrations(engine: Engine) -> None:
                 """
             )
         )
+        # 先一次性读取版本集合，循环无需反复查询账本。
         applied_versions = {
             row.version
             for row in connection.execute(

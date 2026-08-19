@@ -45,7 +45,12 @@ def db_session() -> Generator[Session, None, None]:
         Base.metadata.drop_all(bind=test_engine)
 
 
-def send_request(content: bytes, filename: Optional[str]) -> tuple[int, dict]:
+def send_request(
+    content: bytes,
+    filename: Optional[str],
+    *,
+    content_type: bytes = b"application/octet-stream",
+) -> tuple[int, dict]:
     """Send one HTTP request directly to the FastAPI ASGI application."""
     query_string = urlencode({"filename": filename}).encode() if filename else b""
     messages: list[dict] = []
@@ -70,7 +75,7 @@ def send_request(content: bytes, filename: Optional[str]) -> tuple[int, dict]:
         "path": "/api/novels/upload",
         "raw_path": b"/api/novels/upload",
         "query_string": query_string,
-        "headers": [(b"content-type", b"application/octet-stream")],
+        "headers": [(b"content-type", content_type)],
         "client": ("testclient", 50000),
         "server": ("testserver", 80),
     }
@@ -104,7 +109,7 @@ def test_upload_utf8_txt_and_save_chapters(db_session: Session) -> None:
         "第一章 开始",
         "第二章 相遇",
     ]
-    assert result["chapters"][0]["content"] == "第一章正文。"
+    assert "content" not in result["chapters"][0]
     assert result["chapters"][0]["character_count"] == 6
 
     saved_novel = db_session.get(Novel, result["novel_id"])
@@ -139,6 +144,20 @@ def test_reject_non_txt_file(db_session: Session) -> None:
 
     assert status_code == 400
     assert result["detail"] == "只支持上传 TXT 文件。"
+    assert db_session.query(Novel).count() == 0
+
+
+def test_reject_browser_form_media_type(db_session: Session) -> None:
+    status_code, result = send_request(
+        b"content",
+        "novel.txt",
+        content_type=b"text/plain",
+    )
+
+    assert status_code == 415
+    assert result["detail"] == (
+        "上传请求必须使用 application/octet-stream。"
+    )
     assert db_session.query(Novel).count() == 0
 
 

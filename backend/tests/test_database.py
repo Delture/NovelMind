@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.core import database
 from backend.app.models.novel import Chapter, Novel
+from backend.app.models.rag import RagChunkRecord, RagIndex
 
 
 def test_sqlite_engine_enables_foreign_keys() -> None:
@@ -157,9 +158,10 @@ def test_init_db_builds_and_versions_fresh_schema_idempotently() -> None:
         (4, "add analysis force scope"),
         (5, "add character analysis snapshots"),
         (6, "add rag index snapshots"),
-            (7, "add rag question history"),
-            (8, "add novel report snapshots"),
-        ]
+                (7, "add rag question history"),
+                (8, "add novel report snapshots"),
+                (9, "allow configurable embedding models"),
+            ]
 
 
 def test_migration_adds_unique_index_to_legacy_database() -> None:
@@ -215,7 +217,7 @@ def test_migration_adds_unique_index_to_legacy_database() -> None:
         and index["unique"]
         for index in indexes
     )
-    assert version_count == 8
+    assert version_count == 9
 
 
 def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
@@ -283,7 +285,7 @@ def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
     assert job_indexes[
         "ix_analysis_jobs_novel_type_created"
     ]["column_names"] == ["novel_id", "job_type", "created_at"]
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 
 def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
@@ -399,7 +401,7 @@ def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
     assert indexes["ux_analysis_jobs_active_novel_type"]["unique"]
     assert columns["force_refresh"]["nullable"] is False
     assert str(columns["force_refresh"]["default"]).strip("()'") == "0"
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
 
 def test_active_job_migration_rejects_duplicate_active_jobs() -> None:
@@ -1176,8 +1178,11 @@ def test_v5_upgrades_v4_with_strict_character_snapshot_schema() -> None:
         False,
     )
     assert (5, "add character analysis snapshots") in versions
-    assert versions[-1] == (8, "add novel report snapshots")
-    assert len(versions) == 8
+    assert versions[-1] == (
+        9,
+        "allow configurable embedding models",
+    )
+    assert len(versions) == 9
     assert legacy_rows == {
         "novels": 1,
         "chapters": 1,
@@ -1189,6 +1194,85 @@ def test_v5_upgrades_v4_with_strict_character_snapshot_schema() -> None:
         "UPDATE character_appearances"
         in ownership_trigger
     )
+
+
+def test_embedding_provider_migration_preserves_rag_snapshot_data() -> None:
+    engine = database.create_db_engine(
+        "sqlite://",
+        poolclass=StaticPool,
+    )
+    database.init_db(engine)
+    try:
+        with Session(engine) as session:
+            novel = Novel(
+                filename="migration-rag.txt",
+                encoding="utf-8",
+                chapter_count=1,
+                chapters=[
+                    Chapter(
+                        chapter_index=1,
+                        title="第一章",
+                        content="迁移测试正文",
+                        character_count=6,
+                    )
+                ],
+            )
+            session.add(novel)
+            session.flush()
+            index = RagIndex(
+                novel_id=novel.id,
+                source_hash="a" * 64,
+                collection_name="migration_rag_collection",
+                embedding_provider="aliyun_model_studio",
+                embedding_model="text-embedding-v4",
+                embedding_dimensions=1_024,
+                chunk_version="rag-chunk-v2-local-sqlite",
+                chunk_count=1,
+            )
+            session.add(index)
+            session.flush()
+            session.add(
+                RagChunkRecord(
+                    rag_index_id=index.id,
+                    chapter_id=novel.chapters[0].id,
+                    chunk_id="chunk_" + "b" * 64,
+                    chapter_index=1,
+                    chunk_index=1,
+                    start_char=0,
+                    end_char=6,
+                    content_hash="c" * 64,
+                )
+            )
+            session.commit()
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM schema_migrations WHERE version = 9")
+            )
+        import_module("backend.app.core.migrations").run_migrations(engine)
+
+        with engine.begin() as connection:
+            assert connection.execute(
+                text("SELECT COUNT(*) FROM rag_indices")
+            ).scalar_one() == 1
+            assert connection.execute(
+                text("SELECT COUNT(*) FROM rag_chunks")
+            ).scalar_one() == 1
+            connection.execute(
+                text(
+                    """
+                    UPDATE rag_indices
+                    SET embedding_provider = 'openai_compatible',
+                        embedding_model = 'custom-embedding',
+                        embedding_dimensions = 1536
+                    """
+                )
+            )
+            assert connection.execute(
+                text("PRAGMA foreign_key_check")
+            ).all() == []
+    finally:
+        engine.dispose()
 
 
 def test_v5_rejects_conflicting_named_character_index() -> None:

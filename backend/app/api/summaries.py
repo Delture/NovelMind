@@ -1,4 +1,10 @@
-"""API endpoints for chapter summaries and analysis jobs."""
+"""章节摘要的估算、启动、结果分页和任务状态接口。
+
+路由层只处理 HTTP 协议和任务调度，不实现摘要算法。标准顺序是：验证小说与
+双重授权、计算范围、创建 queued 任务、提交事务、再交给 BackgroundTasks。
+先提交保证后台线程能查到任务；派发失败则用独立会话补偿成 failed。数据库
+局部唯一索引处理并发竞态，冲突转换为 HTTP 409。
+"""
 
 import logging
 from datetime import datetime
@@ -21,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.analyzer.deepseek import (
     MAX_JSON_GENERATION_ATTEMPTS,
+    AsyncDeepSeekProvider,
     DeepSeekProvider,
 )
 from backend.app.analyzer.llm import LLMProvider
@@ -28,10 +35,17 @@ from backend.app.analyzer.jobs import (
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
 from backend.app.analyzer.summaries import (
+    SUMMARY_PROMPT_VERSION,
+    SUMMARY_AUTO_RETRY_LIMIT,
+    chapter_summary_source_hash,
     estimate_summary_generation_steps,
     run_summary_job,
 )
-from backend.app.core.config import Settings, get_settings
+from backend.app.core.config import (
+    GENERATION_PROVIDERS,
+    Settings,
+    get_settings,
+)
 from backend.app.core.database import SessionLocal, get_db
 from backend.app.models.analysis import AnalysisJob, ChapterSummary
 from backend.app.models.novel import Chapter, Novel
@@ -42,6 +56,7 @@ logger = logging.getLogger(__name__)
 ProviderFactory = Callable[[], LLMProvider]
 
 
+# 请求只承载用户选择；任务状态由服务端决定，不能相信浏览器提交内部状态。
 class StartSummariesRequest(BaseModel):
     """Explicit consent and refresh options for summary generation."""
 
@@ -99,8 +114,16 @@ class SummaryEstimateResponse(BaseModel):
     novel_id: int
     chapter_count: int
     character_count: int
+    cached_chapter_count: int
+    pending_chapter_count: int
     estimated_generation_steps: int
+    estimated_force_generation_steps: int
     maximum_request_attempts: int
+    maximum_force_request_attempts: int
+    concurrency_mode: str
+    initial_concurrency: int
+    maximum_concurrency: int
+    effective_concurrency: int
     provider: str
     model: str
     sends_original_text: bool
@@ -118,33 +141,56 @@ class AnalysisJobListResponse(BaseModel):
 
 
 def get_session_factory() -> Callable[[], Session]:
-    """Return the process-wide session factory for background work."""
+    """以依赖形式提供会话工厂，便于测试替换为隔离数据库。"""
     return SessionLocal
 
 
 def get_llm_provider(
     settings: Settings = Depends(get_settings),
 ) -> LLMProvider:
-    """Build the configured DeepSeek provider or reject AI requests."""
+    """Build the synchronous provider used by non-summary analyzers."""
     if not settings.deepseek_configured:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
-                "尚未配置 DeepSeek API 密钥，请先在本地 .env 中设置 "
-                "DEEPSEEK_API_KEY。"
+                "尚未配置生成模型 API 密钥，请前往“模型与密钥”设置"
+                "（也可设置 DEEPSEEK_API_KEY）。"
             ),
         )
     return DeepSeekProvider(settings)
 
 
+def get_summary_llm_provider(
+    settings: Settings = Depends(get_settings),
+) -> LLMProvider:
+    """Build the async-capable provider used by summary workers."""
+    if not settings.deepseek_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "尚未配置生成模型 API 密钥，请前往“模型与密钥”设置"
+                "（也可设置 DEEPSEEK_API_KEY）。"
+            ),
+        )
+    return AsyncDeepSeekProvider(settings)
+
+
 def get_llm_provider_factory(
     settings: Settings = Depends(get_settings),
 ) -> ProviderFactory:
-    """Defer network-client construction until consent checks pass."""
+    """Defer async summary-client construction until consent succeeds."""
+    return lambda: get_summary_llm_provider(settings)
+
+
+def get_sync_llm_provider_factory(
+    settings: Settings = Depends(get_settings),
+) -> ProviderFactory:
+    """Defer synchronous analysis-client construction until consent."""
     return lambda: get_llm_provider(settings)
 
 
 def _job_response(job: AnalysisJob) -> AnalysisJobResponse:
+    """把内部 AnalysisJob 复制为公开响应模型，避免直接序列化 ORM。"""
     return AnalysisJobResponse(
         id=job.id,
         novel_id=job.novel_id,
@@ -161,10 +207,29 @@ def _job_response(job: AnalysisJob) -> AnalysisJobResponse:
     )
 
 
+def _ensure_no_active_report(db: Session, novel_id: int) -> None:
+    """报告读取摘要期间禁止启动摘要变更；冲突时抛 HTTP 409。"""
+    active_report = (
+        db.query(AnalysisJob.id)
+        .filter(
+            AnalysisJob.novel_id == novel_id,
+            AnalysisJob.job_type == "report",
+            AnalysisJob.status.in_(("queued", "running")),
+        )
+        .first()
+    )
+    if active_report is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="报告生成期间不能更新摘要，请等待报告任务完成。",
+        )
+
+
 def _active_summary_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
+    """返回某小说当前活动摘要任务，供友好冲突提示；无任务返回 None。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -213,6 +278,8 @@ def _mark_committed_summary_job_failed(
     )
 
 
+# 派发发生在事务提交之后；否则后台线程可能先启动，却查询不到尚未提交的任务。
+# 若提交后到派发之间出错，函数会补偿性把 queued 任务改成 failed。
 def _schedule_summary_job(
     *,
     novel_id: int,
@@ -224,6 +291,11 @@ def _schedule_summary_job(
     session_factory: Callable[[], Session],
     target_chapter_index: Optional[int] = None,
 ) -> AnalysisJobResponse:
+    """创建并派发全书或单章摘要任务。
+
+    ``target_chapter_index=None`` 表示全书；其余参数分别提供请求范围、进度、授权、
+    后台容器、数据库和 provider 所有权。返回的任务 ID 供前端轮询。
+    """
     active_job = _active_summary_job(db, novel_id)
     if active_job is not None:
         _close_provider(provider)
@@ -332,6 +404,7 @@ def _schedule_summary_job(
     response_model=AnalysisJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+# HTTP 接口只创建任务并立即返回。耗时模型调用留在后台，前端轮询任务状态。
 def start_chapter_summaries(
     request: StartSummariesRequest,
     background_tasks: BackgroundTasks,
@@ -351,7 +424,7 @@ def start_chapter_summaries(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "生成摘要会把小说正文发送至 DeepSeek API，"
+                "生成摘要会把小说正文发送至外部生成模型 API，"
                 "请先明确确认。"
             ),
         )
@@ -359,11 +432,12 @@ def start_chapter_summaries(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "请确认你有权把小说标题和正文提交给 DeepSeek API，"
+                "请确认你有权把小说标题和正文提交给外部生成模型 API，"
                 "并已了解其数据处理条款。"
             ),
         )
 
+    _ensure_no_active_report(db, novel_id)
     chapter_count = (
         db.query(func.count(Chapter.id))
         .filter(Chapter.novel_id == novel_id)
@@ -418,7 +492,7 @@ def start_single_chapter_summary(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "生成摘要会把小说正文发送至 DeepSeek API，"
+                "生成摘要会把小说正文发送至外部生成模型 API，"
                 "请先明确确认。"
             ),
         )
@@ -426,10 +500,11 @@ def start_single_chapter_summary(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "请确认你有权把小说标题和正文提交给 DeepSeek API，"
+                "请确认你有权把小说标题和正文提交给外部生成模型 API，"
                 "并已了解其数据处理条款。"
             ),
         )
+    _ensure_no_active_report(db, novel_id)
     provider = provider_factory()
     return _schedule_summary_job(
         novel_id=novel_id,
@@ -588,44 +663,94 @@ def get_summary_estimate(
     chapter_count = 0
     character_count = 0
     generation_steps = 0
+    force_generation_steps = 0
+    cached_chapter_count = 0
     rows = (
-        db.query(Chapter.character_count, Chapter.content)
+        db.query(Chapter, ChapterSummary)
+        .outerjoin(ChapterSummary, ChapterSummary.chapter_id == Chapter.id)
         .filter(Chapter.novel_id == novel_id)
         .order_by(Chapter.chapter_index)
         .yield_per(10)
     )
-    for stored_character_count, content in rows:
+    for chapter, saved_summary in rows:
         chapter_count += 1
-        character_count += int(stored_character_count)
-        generation_steps += estimate_summary_generation_steps(content)
+        character_count += int(chapter.character_count)
+        chapter_steps = estimate_summary_generation_steps(chapter.content)
+        force_generation_steps += chapter_steps
+        summary_current = bool(
+            saved_summary is not None
+            and saved_summary.source_hash == chapter_summary_source_hash(
+                chapter.title,
+                chapter.content,
+            )
+            and saved_summary.prompt_version == SUMMARY_PROMPT_VERSION
+            and saved_summary.model == settings.deepseek_model
+        )
+        if summary_current:
+            cached_chapter_count += 1
+        else:
+            generation_steps += chapter_steps
 
-    maximum_request_attempts = (
-        generation_steps
-        * settings.deepseek_max_attempts
+    attempt_multiplier = (
+        settings.deepseek_max_attempts
         * MAX_JSON_GENERATION_ATTEMPTS
+        * (
+            1 + SUMMARY_AUTO_RETRY_LIMIT
+            if settings.summary_concurrency_mode == "auto"
+            else 1
+        )
+    )
+    maximum_request_attempts = generation_steps * attempt_multiplier
+    maximum_force_request_attempts = (
+        force_generation_steps * attempt_multiplier
     )
     return SummaryEstimateResponse(
         novel_id=novel_id,
         chapter_count=chapter_count,
         character_count=character_count,
+        cached_chapter_count=cached_chapter_count,
+        pending_chapter_count=chapter_count - cached_chapter_count,
         estimated_generation_steps=generation_steps,
+        estimated_force_generation_steps=force_generation_steps,
         maximum_request_attempts=maximum_request_attempts,
-        provider="deepseek",
+        maximum_force_request_attempts=maximum_force_request_attempts,
+        concurrency_mode=settings.summary_concurrency_mode,
+        initial_concurrency=settings.summary_initial_concurrency,
+        maximum_concurrency=(
+            settings.summary_effective_concurrency_limit
+        ),
+        effective_concurrency=min(
+            chapter_count,
+            settings.summary_initial_concurrency,
+        ),
+        provider=settings.generation_provider,
         model=settings.deepseek_model,
         sends_original_text=True,
         sends_chapter_titles=True,
         data_handling_notice=(
-            "章节标题和正文将由 DeepSeek 在中国处理。根据 DeepSeek "
-            "当前条款，输入可能被缓存、留存并用于服务改进或模型优化；"
-            "请仅提交你有权处理的内容。"
+            (
+                "章节标题和正文将由 DeepSeek 在中国处理。根据 DeepSeek "
+                "当前条款，输入可能被缓存、留存并用于服务改进或模型优化；"
+                "请仅提交你有权处理的内容。"
+            )
+            if settings.generation_provider == "deepseek"
+            else (
+                "章节标题和正文将发送至 "
+                f"{GENERATION_PROVIDERS[settings.generation_provider]} 处理。"
+                "请仅提交你有权处理的内容，并以所选供应商的条款为准。"
+            )
         ),
         terms_url=(
             "https://cdn.deepseek.com/policies/en-US/"
             "deepseek-open-platform-terms-of-service.html"
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
         ),
         privacy_url=(
             "https://cdn.deepseek.com/policies/en-US/"
             "deepseek-privacy-policy.html"
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
         ),
     )
 

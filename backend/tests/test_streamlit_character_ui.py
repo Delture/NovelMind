@@ -108,6 +108,9 @@ class FakeStreamlit(ModuleType):
         self.expander_labels.append(label)
         return FakeBlock(self)
 
+    def container(self, **__: object) -> FakeBlock:
+        return FakeBlock(self)
+
     def checkbox(
         self,
         label: str,
@@ -524,6 +527,60 @@ def test_character_jobs_and_results_use_server_side_filters_and_pagination(
     assert any(
         call["key"] == "start_character_analysis_7"
         and call["disabled"] is True
+        for call in fake.button_calls
+    )
+
+
+def test_failed_character_job_hides_legacy_theoretical_progress_limit(
+    streamlit_module: tuple[ModuleType, FakeStreamlit],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, fake = streamlit_module
+    configure_character_dependencies(
+        module,
+        monkeypatch,
+        job={
+            "id": "job-failed",
+            "status": "failed",
+            "target_chapter_index": None,
+            "progress_current": 0,
+            "progress_total": 34_558_682_323,
+            "error_message": "人物分析任务执行失败，请重试。",
+        },
+    )
+
+    module.render_character_workspace({"id": 7, "filename": "story.txt"})
+
+    rendered = "\n".join(body for _, body in fake.messages)
+    assert "34,558,682,323" not in rendered
+    assert "执行失败 · 尚未完成生成步骤" in rendered
+    assert fake.progress_values == []
+
+
+def test_failed_character_job_with_progress_offers_cached_resume(
+    streamlit_module: tuple[ModuleType, FakeStreamlit],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module, fake = streamlit_module
+    configure_character_dependencies(
+        module,
+        monkeypatch,
+        job={
+            "id": "job-partial",
+            "status": "failed",
+            "target_chapter_index": None,
+            "progress_current": 17,
+            "progress_total": 350,
+            "error_message": "生成模型返回了无法解析的结果，请重试。",
+        },
+    )
+
+    module.render_character_workspace({"id": 7, "filename": "story.txt"})
+
+    rendered = "\n".join(body for _, body in fake.messages)
+    assert "已有 1 章提取结果可复用" in rendered
+    assert any(
+        call["label"] == "继续未完成分析"
         for call in fake.button_calls
     )
 

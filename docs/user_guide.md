@@ -8,17 +8,18 @@
 NovelMind 在本机完成 TXT 解析、SQLite 存储、任务编排、向量检索和页面展示；
 涉及语义理解或生成的功能调用外部 API，本地不运行大模型。
 
-| 功能 | DeepSeek | 阿里云百炼 | 发送到外部的内容 |
+| 功能 | 生成模型 | 向量模型 | 发送到外部的内容 |
 |---|---:|---:|---|
 | 导入、资料库、正文阅读 | 不需要 | 不需要 | 不发送 |
 | 章节摘要 | 需要 | 不需要 | 章节标题和原文 |
 | 人物统计 | 需要 | 不需要 | 章节标题、原文和派生人物数据 |
 | 建立 RAG 索引 | 不需要 | 需要 | 章节标题和原文片段 |
-| RAG 提问 | 需要 | 需要 | 问题发给百炼；问题和检索片段发给 DeepSeek |
+| RAG 提问 | 需要 | 需要 | 问题发给硅基流动；问题和检索片段发给 DeepSeek |
 | 小说分析报告 | 需要 | 不需要 | 章节标题、派生摘要和可选人物分析；不再次发送原文 |
 
 外部 API 可能收费。每个相关工作区都会先显示处理范围和预计调用步骤，并要求
-确认外部处理与内容权利。不要导入或发送自己无权处理的文本。
+确认外部处理与内容权利。详细条款与隐私链接收在“数据处理说明”中，需要时
+展开查看。不要导入或发送自己无权处理的文本。
 
 推荐使用顺序：
 
@@ -36,7 +37,7 @@ NovelMind 在本机完成 TXT 解析、SQLite 存储、任务编排、向量检�
 - Windows 10/11。
 - Python 3.12。
 - Git（从 GitHub 获取或更新项目时需要）。
-- 可访问 DeepSeek 和阿里云百炼 API 的网络。
+- 可访问 DeepSeek 和硅基流动 API 的网络。
 
 项目目录示例：
 
@@ -84,10 +85,48 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-`.env` 已被 Git 忽略。真实密钥只能保存在本机 `.env`，不要提交到 GitHub，
-也不要放进截图、日志、聊天或前端代码。
+`.env` 已被 Git 忽略。它是首次启动和恢复配置时的默认来源。真实密钥只能
+保存在本机配置中，不要提交到 GitHub，也不要放进截图、日志、聊天或前端代码。
 
-### 3.2 获取并填写 DeepSeek API
+### 3.2 在前端管理模型与密钥
+
+后端和前端启动后，在左侧栏打开“模型与密钥”。页面分为：
+
+- 生成模型：摘要、人物、RAG 回答和报告共用。
+- 向量模型：RAG 建索引和问题向量共用。
+
+每部分都可以选择供应商、填写模型名与 API 地址并替换 API Key。密钥输入框
+永远为空：留空表示保留现有密钥，勾选“清除现有密钥”才会删除。读取接口只
+返回“是否已设置”，不会返回密钥正文。
+
+生成模型卡片还可以设置章节摘要并发：
+
+- “自动调节”根据模型从推荐值启动，稳定完成后逐步提高；遇到限流、超时或
+  临时服务错误会降低并发并重试失败章节。
+- “固定并发”始终使用填写值。
+- 实际并发不会超过待处理章节数、填写上限和识别到的模型上限。DeepSeek
+  V4 Flash 按 2500、V4 Pro 按 500 作为已知上限；未知模型使用保守档位。
+
+保存后，新任务立即使用新配置，不需要重启。已在运行的任务继续使用启动时的
+配置；已有分析结果保留其模型标记。更换向量供应商、模型或维度后，现有 RAG
+索引会显示为过期，必须重建。
+
+页面配置原子保存在本机 `data/model_settings.json`，该文件已被 Git 忽略。
+“恢复 `.env` 配置”会删除页面覆盖值并重新使用 `.env`。
+
+供应商选项：
+
+- `DeepSeek`：只接受 DeepSeek 官方 HTTPS 地址。
+- `硅基流动`：只接受官方 API 地址，并固定
+  `Qwen/Qwen3-Embedding-4B`、1024 维。
+- `OpenAI 兼容服务`：填写服务商提供的模型名和 API 根地址；外部地址必须
+  使用 HTTPS，本机 `localhost` 服务可使用 HTTP。
+
+切换供应商时必须同时填写新供应商的 API Key，防止把旧供应商密钥误发给
+另一个端点；如果同时勾选“清除密钥”，则允许切换为未配置状态，之后必须
+补填新密钥才能运行模型任务。
+
+### 3.3 获取并填写 DeepSeek API
 
 DeepSeek 用于章节摘要、人物统计、RAG 答案和分析报告。
 
@@ -98,11 +137,14 @@ DeepSeek 用于章节摘要、人物统计、RAG 答案和分析报告。
 
 ```dotenv
 DEEPSEEK_API_KEY=sk-你的真实密钥
+GENERATION_PROVIDER=deepseek
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-pro
 DEEPSEEK_TIMEOUT_SECONDS=660
 DEEPSEEK_MAX_ATTEMPTS=3
 DEEPSEEK_MAX_TOKENS=8192
+SUMMARY_CONCURRENCY_MODE=auto
+SUMMARY_MAX_CONCURRENCY=2500
 ```
 
 注意：
@@ -114,74 +156,67 @@ DEEPSEEK_MAX_TOKENS=8192
 - 官方调用方式可参考
   [DeepSeek API 文档](https://api-docs.deepseek.com/)。
 
-### 3.3 获取并填写阿里云百炼 API
+### 3.4 获取并填写硅基流动 API
 
-百炼仅用于 RAG 的文档向量和问题向量。项目固定使用：
+硅基流动仅用于 RAG 的文档向量和问题向量。项目固定使用：
 
-- 地域：中国（北京）。
-- 模型：`text-embedding-v4`。
+- API 根地址：`https://api.siliconflow.cn/v1`。
+- 模型：`Qwen/Qwen3-Embedding-4B`。
 - 维度：`1024`。
-- 协议：工作空间专属 OpenAI 兼容端点。
+- 协议：OpenAI 兼容 Embeddings API。
 
 操作步骤：
 
-1. 登录阿里云百炼，并切换到中国（北京）地域。
-2. 在目标工作空间创建 API Key。
-3. 保存创建成功页面显示的 API Key 和 API Host。
-4. API Key 与 API Host 必须属于同一个北京区工作空间。
-5. 在 `.env` 中填写：
+1. 登录[硅基流动控制台](https://cloud.siliconflow.cn/)。
+2. 在 API 密钥页面创建并保存 API Key。
+3. 在 `.env` 中填写：
 
 ```dotenv
-EMBEDDING_API_KEY=sk-你的百炼密钥
-EMBEDDING_BASE_URL=https://你的WorkspaceId.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_API_KEY=sk-你的硅基流动密钥
+EMBEDDING_PROVIDER=siliconflow
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B
 EMBEDDING_DIMENSIONS=1024
 EMBEDDING_TIMEOUT_SECONDS=120
 EMBEDDING_MAX_ATTEMPTS=3
 ```
 
-`EMBEDDING_BASE_URL` 中必须替换真实的 WorkspaceId，不要保留大括号或中文。
-例如：
-
-```dotenv
-EMBEDDING_BASE_URL=https://ws123456.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-```
-
 本项目会拒绝以下地址：
 
-- 非北京区地址。
-- 通用 DashScope 地址。
-- 缺少 `/compatible-mode/v1` 的地址。
+- 非硅基流动官方域名。
+- 缺少 `/v1` 的地址。
 - 带端口、查询参数、账号密码或其他路径的地址。
 
-本说明采用标准百炼工作空间 Key 与专属 API Host，不要混用 Token Plan Key、
-试用地址或其他地域凭据，即使它们的地址外观相似。
-
-`EMBEDDING_API_KEY` 与 `EMBEDDING_BASE_URL` 必须同时填写或同时留空。
-不要把新索引的维度改为其他值，否则与本地索引契约不兼容。
+不要把模型名或维度改为其他值，否则与本地索引契约不兼容。旧百炼配置首次
+加载时会自动切换到硅基流动预设并清空旧密钥，避免跨供应商误用凭据；随后需
+在“模型与密钥”页面填写硅基流动 API Key。
 
 官方说明：
 
-- [如何获取百炼 API Key](https://help.aliyun.com/en/model-studio/get-api-key)
-- [text-embedding-v4 与 OpenAI 兼容调用](https://help.aliyun.com/en/model-studio/embedding)
+- [硅基流动快速开始](https://docs.siliconflow.cn/cn/userguide/quickstart)
+- [Embeddings API](https://docs.siliconflow.cn/cn/api-reference/embeddings/create-embeddings)
 
-### 3.4 完整 `.env` 示例
+### 3.5 完整 `.env` 示例
 
 ```dotenv
 APP_NAME=NovelMind
 DATABASE_URL=sqlite:///./data/novelmind.db
 BACKEND_URL=http://127.0.0.1:8000
 
+GENERATION_PROVIDER=deepseek
 DEEPSEEK_API_KEY=sk-替换为DeepSeek真实密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-pro
 DEEPSEEK_TIMEOUT_SECONDS=660
 DEEPSEEK_MAX_ATTEMPTS=3
 DEEPSEEK_MAX_TOKENS=8192
+SUMMARY_CONCURRENCY_MODE=auto
+SUMMARY_MAX_CONCURRENCY=2500
 
-EMBEDDING_API_KEY=sk-替换为百炼真实密钥
-EMBEDDING_BASE_URL=https://替换为真实WorkspaceId.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_PROVIDER=siliconflow
+EMBEDDING_API_KEY=sk-替换为硅基流动真实密钥
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B
 EMBEDDING_DIMENSIONS=1024
 EMBEDDING_TIMEOUT_SECONDS=120
 EMBEDDING_MAX_ATTEMPTS=3
@@ -196,27 +231,53 @@ VECTOR_STORE_PATH=./vector_store
 - `APP_NAME`：后端应用名称。
 - `BACKEND_URL`：Streamlit 连接的后端地址。
 
-修改 `.env` 后必须停止并重新启动后端；如果修改了 `BACKEND_URL`，也要重启
-Streamlit。
+直接修改 `.env` 后必须停止并重新启动后端；通过“模型与密钥”页面修改供应商、
+模型、端点或密钥会立即生效。如果修改了 `BACKEND_URL`，仍需重启 Streamlit。
 
 ## 4. 启动与配置检查
 
-建议使用两个 PowerShell 窗口。
+### 4.1 推荐：一键启动
 
-### 4.1 启动后端
+完成一次虚拟环境和依赖安装后，后续无需再激活环境或输入启动命令：
+
+1. 双击项目根目录的 `启动 NovelMind.cmd`。
+2. 等待窗口显示“NovelMind 已启动”。
+3. 浏览器会自动打开 <http://127.0.0.1:8501>。
+4. 使用结束后在启动窗口按 `Ctrl+C`，或双击
+   `停止 NovelMind.cmd`。
+
+启动管理器会先检查 8000 和 8501 端口，启动 FastAPI 并等待健康检查成功，
+然后启动 Streamlit。重复双击启动入口不会创建第二套服务，而会直接打开已有
+页面。启动器不会结束占用端口的未知程序。
+
+运行日志分别位于：
+
+- `logs/backend.log`
+- `logs/frontend.log`
+- `logs/launcher.log`
+
+日志和 `data/runtime/launcher.json` 运行状态均已被 Git 忽略。运行状态文件中
+只有本机进程号和随机控制令牌，不包含模型 API Key。
+
+日常入口不会启用后端代码热重载。修改项目代码时可以双击
+`开发模式启动 NovelMind.cmd`；它使用相同的检查、日志和停止机制，但会为
+Uvicorn 启用 `--reload`。
+
+### 4.2 手动启动后端
 
 终端一：
 
 ```powershell
 cd D:\CodexPro\NovelMind
 .\.venv\Scripts\Activate.ps1
-uvicorn backend.app.main:app --host 127.0.0.1 --reload
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 检查：
 
 - 健康检查：<http://127.0.0.1:8000/health>
 - 配置状态：<http://127.0.0.1:8000/api/system/status>
+- 可编辑模型配置：<http://127.0.0.1:8000/api/system/model-settings>
 - Swagger API 文档：<http://127.0.0.1:8000/docs>
 
 PowerShell 检查命令：
@@ -237,10 +298,10 @@ Invoke-RestMethod http://127.0.0.1:8000/api/system/status |
     "configured": true
   },
   "embedding": {
-    "provider": "aliyun_model_studio",
-    "model": "text-embedding-v4",
+    "provider": "siliconflow",
+    "model": "Qwen/Qwen3-Embedding-4B",
     "dimensions": 1024,
-    "region": "cn-beijing",
+    "region": "global",
     "configured": true
   }
 }
@@ -249,14 +310,16 @@ Invoke-RestMethod http://127.0.0.1:8000/api/system/status |
 这里的 `configured` 只表示配置已加载，不会发送测试请求，也不能证明密钥余额
 或权限有效；首次真实任务会完成外部验证。
 
-### 4.2 启动前端
+开发时可以在后端命令末尾添加 `--reload`。
+
+### 4.3 手动启动前端
 
 终端二：
 
 ```powershell
 cd D:\CodexPro\NovelMind
 .\.venv\Scripts\Activate.ps1
-streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
+python -m streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 ```
 
 浏览器通常自动打开 <http://127.0.0.1:8501>。页面显示后端已连接后即可使用。
@@ -265,6 +328,14 @@ streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
 没有账号系统、多人权限隔离或公网部署防护。
 
 ## 5. 全部界面功能
+
+新版界面把书架与导入放在固定左侧栏；打开小说后，主区域上方可在正文、摘要、
+人物、原文问答和全书报告之间切换。正文与分析结果始终占据主要区域，模型配置、
+调用估算、数据范围、授权和强制刷新等低频内容收进右侧辅助区或折叠面板。
+这不会减少生成前的必要确认，只是避免日常阅读时反复显示大段说明。
+
+侧边栏“设置”下的“模型与密钥”独立于当前小说，随时可打开。页面不提供
+“显示密钥”功能，避免密钥进入浏览器 DOM、截图或复制记录。
 
 ### 5.1 导入小说
 
@@ -309,7 +380,8 @@ CHAPTER 001 Arrival
 
 1. 打开小说。
 2. 选择“正文阅读”。
-3. 选择章节；章节很多时使用“上一批章节/下一批章节”。
+3. 先用“章节范围”直接跳到目标区间，再选择章节；也可以使用
+   “上一批章节/下一批章节”。
 
 正文只在打开当前章节时读取，不会在资料库列表中一次加载整本小说。
 
@@ -318,11 +390,20 @@ CHAPTER 001 Arrival
 前提：已填写 DeepSeek API。
 
 1. 选择“章节摘要”。
-2. 查看全书字符数、预计生成步骤和最多请求尝试。
-3. 选择要查看的章节，可读取已有摘要。
+2. 查看全书字符数、预计生成步骤、最多请求尝试与本次有效并发。
+3. 章节很多时先使用“章节范围”跳到目标区间，再选择要查看的章节。
 4. 勾选外部处理同意与内容权利确认。
-5. 选择“生成全书摘要”或“仅生成当前章节”。
+5. 点击“批量生成缺失摘要”一次处理整本小说，或点击“生成本章摘要”
+   只处理当前章节。
 6. 任务创建后使用“刷新任务状态”查看进度。
+
+“批量生成摘要”面板默认展开，避免把全书处理能力藏在低频设置里。批量任务会
+自动复用来源、模型和提示版本均未变化的已有摘要；任务中途失败时，已经成功
+保存的章节不会丢失，重新提交后可继续处理缺失章节。
+
+各章摘要只使用本章标题与正文，彼此没有前后依赖，因此可以并发处理。超长章节
+只在该章内部切片和归并；跨章节剧情理解由后续人物分析和全书报告负责。并发
+工作只执行外部请求，结果和进度由单一协调器串行写入 SQLite。
 
 每章结果包含：
 
@@ -345,6 +426,8 @@ CHAPTER 001 Arrival
 5. 点击“生成人物统计”。
 6. 完成后可搜索、排序和分页浏览人物。
 
+人物列表与详情位于主区域，更新分析的估算、授权和强制刷新位于右侧折叠面板。
+
 可以查看：
 
 - 标准人物名和别名。
@@ -360,14 +443,15 @@ CHAPTER 001 Arrival
 ### 5.6 RAG 原文问答
 
 RAG 分为“建立索引”和“提问”两步。
+问题与历史记录位于主区域，索引和外部服务状态集中在右侧辅助面板。
 
 #### 建立或更新索引
 
-前提：已填写百炼 API Key 和北京区工作空间地址。
+前提：已填写硅基流动 API Key。
 
 1. 选择“RAG 问答”。
 2. 查看分块数、待生成向量数、复用数量和预计请求批次。
-3. 勾选同意将章节标题与原文片段发给百炼。
+3. 勾选同意将章节标题与原文片段发给硅基流动。
 4. 确认拥有内容处理权利。
 5. 点击“建立或更新索引”。
 6. 等待页面显示“RAG 索引已就绪”。
@@ -375,7 +459,7 @@ RAG 分为“建立索引”和“提问”两步。
 普通更新会复用未变化片段的向量。强制重建不复用旧向量，会重新发送全部原文
 片段，必须额外确认。
 
-本地向量库只保存百炼返回的 `float32` 向量和定位元数据，不复制小说正文；
+本地向量库只保存硅基流动返回的 `float32` 向量和定位元数据，不复制小说正文；
 命中后会回到 SQLite 校验原文范围与哈希。
 
 #### 基于原文提问
@@ -383,13 +467,13 @@ RAG 分为“建立索引”和“提问”两步。
 前提：
 
 - RAG 索引为当前版本。
-- DeepSeek 和百炼都已配置。
+- DeepSeek 和硅基流动都已配置。
 
 操作：
 
 1. 输入不超过 2,000 字符的问题。
 2. 选择检索片段数量，范围为 3–10，默认 6。
-3. 确认将问题发给百炼生成查询向量。
+3. 确认将问题发给硅基流动生成查询向量。
 4. 确认将问题和检索片段发给 DeepSeek。
 5. 确认拥有内容处理权利。
 6. 点击“提交 RAG 问题”并刷新状态。
@@ -410,6 +494,8 @@ RAG 分为“建立索引”和“提问”两步。
 3. 勾选外部处理同意与内容权利确认。
 4. 点击“生成或更新分析报告”。
 5. 完成后刷新并阅读已保存报告。
+
+已保存报告位于主区域；生成设置、输入范围和授权集中在右侧辅助面板。
 
 报告包含：
 
@@ -455,7 +541,10 @@ RAG 分为“建立索引”和“提问”两步。
 |---|---|---|
 | GET | `/health` | 健康检查 |
 | GET | `/api/system/status` | 查看模型配置状态，不返回密钥 |
-| POST | `/api/novels/upload` | 上传 TXT 原始字节；文件名使用 `filename` 查询参数 |
+| GET | `/api/system/model-settings` | 查看可编辑配置与密钥是否已设置 |
+| PUT | `/api/system/model-settings` | 本机更新供应商、模型、端点和密钥 |
+| DELETE | `/api/system/model-settings` | 本机恢复 `.env` 配置 |
+| POST | `/api/novels/upload` | 以 `application/octet-stream` 上传 TXT 原始字节；文件名使用 `filename` 查询参数 |
 | GET | `/api/novels` | 分页列出小说 |
 | GET | `/api/novels/{novel_id}` | 小说统计 |
 | GET | `/api/novels/{novel_id}/chapters` | 分页列出章节元数据 |
@@ -497,6 +586,9 @@ Invoke-WebRequest `
     -ContentType "application/octet-stream" `
     -InFile "data\samples\manual_test_novel.txt"
 ```
+
+上传成功响应只包含小说 ID、编码和章节元数据，不回传章节正文；正文需通过单章
+读取接口按需获取。其他 Content-Type 会返回 `415 Unsupported Media Type`。
 
 ### 7.3 生成任务请求体
 
@@ -571,7 +663,7 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/analysis-jobs/$($job.id)"
 
 ```text
 data/novelmind.db    # 小说正文、任务和分析结果
-vector_store/        # 百炼生成的派生向量
+vector_store/        # 硅基流动生成的派生向量
 .env                 # API 密钥与本地配置
 ```
 
@@ -583,7 +675,7 @@ vector_store/        # 百炼生成的派生向量
 4. `.env` 可单独加密备份，不要放进普通云盘或 Git 仓库。
 
 恢复时保持数据库与向量目录来自同一次备份。只恢复数据库也能保留小说、摘要、
-人物和报告，但 RAG 向量缺失时需要重新建立索引并产生百炼调用。
+人物和报告，但 RAG 向量缺失时需要重新建立索引并产生硅基流动调用。
 
 安全边界：
 
@@ -626,21 +718,20 @@ Invoke-RestMethod http://127.0.0.1:8000/api/system/status
 - `429`：等待后重试，避免同时重复创建任务。
 - `5xx/超时`：稍后重试；系统已做有限次数退避，不会无限调用。
 
-### 百炼显示未配置
+### 硅基流动显示未配置
 
 检查：
 
-- Key 与端点是否都填写。
-- 是否为同一北京区工作空间。
-- 地址是否以 `/compatible-mode/v1` 结束。
-- 是否误填了通用、试用、新加坡或 Token Plan 地址。
+- 是否填写了新的硅基流动 API Key。
+- 地址是否为 `https://api.siliconflow.cn/v1`。
+- 模型是否为 `Qwen/Qwen3-Embedding-4B`，维度是否为 `1024`。
 - 修改后是否重启后端。
 
 ### RAG 无法提问
 
 依次确认：
 
-1. DeepSeek 与百炼状态均为已配置。
+1. DeepSeek 与硅基流动状态均为已配置。
 2. 已成功建立索引。
 3. 页面没有提示索引过期。
 4. 三个授权框均已勾选。

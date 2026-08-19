@@ -286,8 +286,8 @@ def test_character_estimate_reports_cache_and_force_upper_bound(
         assert estimate.estimated_extraction_steps == 2
         assert estimate.estimated_generation_steps == 4
         assert estimate.estimated_force_generation_steps == 4
-        assert estimate.maximum_request_attempts == 69_228
-        assert estimate.maximum_force_request_attempts == 69_228
+        assert estimate.maximum_request_attempts == 115_380
+        assert estimate.maximum_force_request_attempts == 115_380
         assert estimate.up_to_date is False
 
         _add_snapshot(session, novel)
@@ -301,7 +301,7 @@ def test_character_estimate_reports_cache_and_force_upper_bound(
         assert cached.estimated_generation_steps == 0
         assert cached.maximum_request_attempts == 0
         assert cached.estimated_force_generation_steps == 4
-        assert cached.maximum_force_request_attempts == 69_228
+        assert cached.maximum_force_request_attempts == 115_380
         assert cached.up_to_date is True
 
 

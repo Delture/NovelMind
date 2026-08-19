@@ -1,4 +1,8 @@
-"""API endpoints for external whole-novel reports."""
+"""全书报告的输入估算、后台启动和当前快照读取接口。
+
+报告不重发正文，而是校验章节摘要来源并可选使用当前人物快照。准备输入、界面
+披露和后台执行共享同一规则。成功才原子替换旧报告，刷新失败不清空已有结果。
+"""
 
 import logging
 from datetime import datetime
@@ -38,10 +42,14 @@ from backend.app.api.summaries import (
     AnalysisJobResponse,
     ProviderFactory,
     _job_response,
-    get_llm_provider_factory,
+    get_sync_llm_provider_factory,
     get_session_factory,
 )
-from backend.app.core.config import Settings, get_settings
+from backend.app.core.config import (
+    GENERATION_PROVIDERS,
+    Settings,
+    get_settings,
+)
 from backend.app.core.database import get_db
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Novel
@@ -52,6 +60,7 @@ router = APIRouter(tags=["reports"])
 logger = logging.getLogger(__name__)
 
 
+# ``force`` 仅忽略可复用报告，不会绕过授权或来源完整性检查。
 class StartReportRequest(BaseModel):
     """Explicit external-processing and paid-refresh consent."""
 
@@ -109,6 +118,11 @@ def _source_or_http_error(
     novel_id: int,
     model: str,
 ) -> object:
+    """准备已验证报告输入，把 ``ReportSourceError`` 翻译成 HTTP 409。
+
+    ``db`` 和 ``novel_id`` 定位派生数据，``model`` 参与缓存来源判断。返回实际为
+    PreparedReportSource；类型写 object 是为保持依赖边界，调用者立即读取其字段。
+    """
     try:
         return prepare_report_source(
             db,
@@ -129,6 +143,7 @@ def _active_report_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
+    """查询该小说活动报告任务；没有时返回 None。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -142,6 +157,7 @@ def _active_report_job(
 
 
 def _close_provider(provider: LLMProvider) -> None:
+    """尽力调用报告 provider 的可选 close，关闭异常仅写日志。"""
     close = getattr(provider, "close", None)
     if not callable(close):
         return
@@ -157,6 +173,7 @@ def _mark_undispatched_report_failed(
     session_factory: Callable[[], Session],
     job_id: str,
 ) -> bool:
+    """派发失败后终结已提交的 queued 报告任务，返回补偿是否达成。"""
     try:
         db.rollback()
     except Exception:
@@ -174,6 +191,7 @@ def _mark_undispatched_report_failed(
     )
 
 
+# 报告任务先入库后派发；补偿逻辑消除“显示排队但没有工作线程”的状态。
 def _schedule_report_job(
     *,
     novel_id: int,
@@ -184,6 +202,12 @@ def _schedule_report_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> AnalysisJobResponse:
+    """持久化报告任务并安全移交生成客户端。
+
+    ``novel_id/progress_total/request`` 定义范围、进度和 force 授权；FastAPI
+    ``background_tasks`` 接收 worker；``db/session_factory`` 分别服务当前事务和
+    补偿事务。成功返回任务响应，派发前后失败都会关闭 provider 并终结任务。
+    """
     provider_transferred = False
     try:
         active = _active_report_job(db, novel_id)
@@ -225,8 +249,21 @@ def _schedule_report_job(
                     ),
                 )
             return _job_response(active)
-        db.refresh(job)
-        response = _job_response(job)
+        try:
+            db.refresh(job)
+            response = _job_response(job)
+        except Exception:
+            if not _mark_undispatched_report_failed(
+                db=db,
+                session_factory=session_factory,
+                job_id=job.id,
+            ):
+                logger.error(
+                    "Committed report job %s remained queued after "
+                    "response preparation failed.",
+                    job.id,
+                )
+            raise
         try:
             background_tasks.add_task(
                 run_report_job,
@@ -258,6 +295,12 @@ def _build_report_estimate(
     novel_id: int,
     settings: Settings,
 ) -> ReportEstimateResponse:
+    """生成报告授权页所需的纯本地估算。
+
+    ``db/novel_id`` 定位并复核全部当前摘要与可选人物快照，``settings`` 提供当前
+    生成模型。返回摘要/人物数量、批次、预计步骤、最大尝试和外发字符；不构造
+    provider，不产生模型费用。
+    """
     source = _source_or_http_error(
         db=db,
         novel_id=novel_id,
@@ -295,7 +338,7 @@ def _build_report_estimate(
         maximum_force_request_attempts=(
             force_steps * attempt_multiplier
         ),
-        provider="deepseek",
+        provider=settings.generation_provider,
         model=settings.deepseek_model,
         sends_original_text=False,
         sends_chapter_titles=True,
@@ -304,14 +347,30 @@ def _build_report_estimate(
             source.includes_character_analysis
         ),
         data_handling_notice=(
-            "章节标题、已生成的章节摘要，以及可选的当前人物档案和"
-            "关系数据将发送至 DeepSeek，并可能在中国处理；小说正文"
-            "不会在报告阶段再次发送。根据 DeepSeek 当前条款，输入"
-            "可能被缓存、留存并用于服务改进或模型优化；请仅提交你"
-            "有权处理的内容。"
+            (
+                "章节标题、已生成的章节摘要，以及可选的当前人物档案和"
+                "关系数据将发送至 DeepSeek，并可能在中国处理；小说正文"
+                "不会在报告阶段再次发送。根据 DeepSeek 当前条款，输入"
+                "可能被缓存、留存并用于服务改进或模型优化；请仅提交你"
+                "有权处理的内容。"
+            )
+            if settings.generation_provider == "deepseek"
+            else (
+                "章节标题、摘要及可选人物数据将发送至 "
+                f"{GENERATION_PROVIDERS[settings.generation_provider]}；"
+                "报告阶段不会再次发送小说正文。"
+            )
         ),
-        terms_url=DEEPSEEK_TERMS_URL,
-        privacy_url=DEEPSEEK_PRIVACY_URL,
+        terms_url=(
+            DEEPSEEK_TERMS_URL
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
+        ),
+        privacy_url=(
+            DEEPSEEK_PRIVACY_URL
+            if settings.generation_provider == "deepseek"
+            else settings.deepseek_base_url
+        ),
         up_to_date=up_to_date,
     )
 
@@ -338,13 +397,16 @@ def get_report_estimate(
     response_model=AnalysisJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+# 路由只做授权、来源准备和任务创建；昂贵生成在后台执行。
 def start_report(
     request: StartReportRequest,
     background_tasks: BackgroundTasks,
     novel_id: int = PathParameter(..., ge=1),
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
-    provider_factory: ProviderFactory = Depends(get_llm_provider_factory),
+    provider_factory: ProviderFactory = Depends(
+        get_sync_llm_provider_factory
+    ),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
     """Start one external report job after all explicit consent gates."""
@@ -354,18 +416,21 @@ def start_report(
             detail="未找到指定小说。",
         )
     if not request.confirm_external_processing:
+        provider_label = GENERATION_PROVIDERS[settings.generation_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "报告会把章节标题、派生摘要及可选人物分析数据发送至 "
-                "DeepSeek API，请先明确确认。"
+                f"{provider_label} API，请先明确确认。"
             ),
         )
     if not request.confirm_content_rights:
+        provider_label = GENERATION_PROVIDERS[settings.generation_provider]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "请确认你有权把这些小说派生数据提交给 DeepSeek API，"
+                "请确认你有权把这些小说派生数据提交给 "
+                f"{provider_label} API，"
                 "并已了解其数据处理条款。"
             ),
         )
@@ -385,6 +450,21 @@ def start_report(
                 ),
             )
         return _job_response(active)
+
+    changing_sources = (
+        db.query(AnalysisJob.id)
+        .filter(
+            AnalysisJob.novel_id == novel_id,
+            AnalysisJob.job_type.in_(("chapter_summaries", "characters")),
+            AnalysisJob.status.in_(("queued", "running")),
+        )
+        .first()
+    )
+    if changing_sources is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="摘要或人物分析正在更新，请等待其完成后再生成报告。",
+        )
 
     estimate = _build_report_estimate(
         db=db,

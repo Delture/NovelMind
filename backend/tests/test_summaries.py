@@ -23,6 +23,7 @@ from backend.app.analyzer.llm import (
 )
 from backend.app.analyzer import summaries as summaries_service
 from backend.app.analyzer import jobs as jobs_service
+from backend.app.api import summaries as summaries_api
 from backend.app.analyzer.summaries import (
     ChapterSummaryPayload,
     fail_interrupted_jobs,
@@ -148,6 +149,63 @@ class BlockingFakeProvider(FakeProvider):
             reasoning_effort=reasoning_effort,
             before_attempt=before_attempt,
         )
+
+
+class ConcurrentAsyncFakeProvider(FakeProvider):
+    """Expose native async generation and record peak request overlap."""
+
+    summary_concurrency_mode = "manual"
+    summary_initial_concurrency = 3
+    summary_max_concurrency = 3
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.active_calls = 0
+        self.peak_active_calls = 0
+        self.aclose_calls = 0
+
+    async def generate_json_async(self, **kwargs) -> JsonGenerationResult:
+        before_attempt = kwargs.get("before_attempt")
+        if before_attempt is not None:
+            before_attempt()
+        self.active_calls += 1
+        self.peak_active_calls = max(
+            self.peak_active_calls,
+            self.active_calls,
+        )
+        try:
+            await asyncio.sleep(0.01)
+            kwargs["before_attempt"] = None
+            return super().generate_json(**kwargs)
+        finally:
+            self.active_calls -= 1
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+
+
+class RetryOnceAsyncFakeProvider(ConcurrentAsyncFakeProvider):
+    """Fail one request transiently so automatic scheduling can recover."""
+
+    summary_concurrency_mode = "auto"
+    summary_initial_concurrency = 2
+    summary_max_concurrency = 2
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+        self.failed_once = False
+
+    async def generate_json_async(self, **kwargs) -> JsonGenerationResult:
+        self.attempts += 1
+        if not self.failed_once:
+            self.failed_once = True
+            before_attempt = kwargs.get("before_attempt")
+            if before_attempt is not None:
+                before_attempt()
+            await asyncio.sleep(0)
+            raise ProviderUnavailableError()
+        return await super().generate_json_async(**kwargs)
 
 
 @pytest.fixture()
@@ -466,6 +524,69 @@ def test_run_summary_job_completes_and_tracks_progress(
         assert provider.close_calls == 1
 
 
+def test_run_summary_job_generates_concurrently_and_writes_serially(
+    session_factory: Callable[[], Session],
+) -> None:
+    provider = ConcurrentAsyncFakeProvider()
+    with session_factory() as session:
+        novel = add_novel(session, chapter_count=6)
+        session.add(
+            AnalysisJob(
+                id="job-concurrent-success",
+                novel_id=novel.id,
+                job_type="chapter_summaries",
+                status="queued",
+                progress_current=0,
+                progress_total=6,
+            )
+        )
+        session.commit()
+
+    run_summary_job(
+        "job-concurrent-success",
+        provider,
+        session_factory,
+    )
+
+    with session_factory() as session:
+        job = session.get(AnalysisJob, "job-concurrent-success")
+        assert job is not None
+        assert job.status == "succeeded"
+        assert job.progress_current == 6
+        assert session.query(ChapterSummary).count() == 6
+    assert provider.peak_active_calls == 3
+    assert provider.aclose_calls == 1
+
+
+def test_auto_concurrency_retries_a_transient_failed_chapter(
+    session_factory: Callable[[], Session],
+) -> None:
+    provider = RetryOnceAsyncFakeProvider()
+    with session_factory() as session:
+        novel = add_novel(session, chapter_count=2)
+        session.add(
+            AnalysisJob(
+                id="job-auto-retry",
+                novel_id=novel.id,
+                job_type="chapter_summaries",
+                status="queued",
+                progress_current=0,
+                progress_total=2,
+            )
+        )
+        session.commit()
+
+    run_summary_job("job-auto-retry", provider, session_factory)
+
+    with session_factory() as session:
+        job = session.get(AnalysisJob, "job-auto-retry")
+        assert job is not None
+        assert job.status == "succeeded"
+        assert job.progress_current == 2
+        assert session.query(ChapterSummary).count() == 2
+    assert provider.attempts == 3
+
+
 def test_run_summary_job_uses_persisted_target_chapter(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -563,7 +684,7 @@ def test_run_summary_job_records_safe_provider_error(
         assert job.status == "failed"
         assert job.progress_current == 0
         assert job.completed_at is not None
-        assert job.error_message == "DeepSeek 服务暂时不可用，请稍后重试。"
+        assert job.error_message == "生成模型服务暂时不可用，请稍后重试。"
         assert session.query(ChapterSummary).count() == 0
 
 
@@ -1072,7 +1193,7 @@ def test_start_summaries_requires_external_processing_confirmation(
             )
 
     assert error.value.status_code == 400
-    assert "发送至 DeepSeek" in error.value.detail
+    assert "发送至外部生成模型 API" in error.value.detail
     provider_factory.assert_not_called()
 
 
@@ -1153,7 +1274,11 @@ def test_summary_estimate_reports_external_api_work(
     assert estimate.chapter_count == 2
     assert estimate.character_count == 16
     assert estimate.estimated_generation_steps == 2
-    assert estimate.maximum_request_attempts == 18
+    assert estimate.maximum_request_attempts == 90
+    assert estimate.concurrency_mode == "auto"
+    assert estimate.initial_concurrency == 64
+    assert estimate.maximum_concurrency == 500
+    assert estimate.effective_concurrency == 2
     assert estimate.provider == "deepseek"
     assert estimate.model == "deepseek-v4-pro"
     assert estimate.sends_original_text is True
@@ -1183,7 +1308,7 @@ def test_summary_estimate_uses_actual_paragraph_chunking(
         )
 
     assert estimate.estimated_generation_steps == 4
-    assert estimate.maximum_request_attempts == 36
+    assert estimate.maximum_request_attempts == 180
 
 
 def test_summary_generation_step_helper_counts_all_reduction_levels(
@@ -1398,6 +1523,35 @@ def test_missing_deepseek_key_is_reported_without_secret_details() -> None:
 
     assert error.value.status_code == 503
     assert "DEEPSEEK_API_KEY" in error.value.detail
+
+
+def test_summary_and_sync_analyzers_use_separate_provider_factories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_settings({"DEEPSEEK_API_KEY": "configured-for-test"})
+    sync_provider = Mock(name="sync_provider")
+    async_provider = Mock(name="async_provider")
+    sync_constructor = Mock(return_value=sync_provider)
+    async_constructor = Mock(return_value=async_provider)
+    monkeypatch.setattr(
+        summaries_api,
+        "DeepSeekProvider",
+        sync_constructor,
+    )
+    monkeypatch.setattr(
+        summaries_api,
+        "AsyncDeepSeekProvider",
+        async_constructor,
+    )
+
+    assert summaries_api.get_llm_provider(settings) is sync_provider
+    assert summaries_api.get_summary_llm_provider(settings) is async_provider
+    assert summaries_api.get_sync_llm_provider_factory(settings)() is (
+        sync_provider
+    )
+    assert summaries_api.get_llm_provider_factory(settings)() is async_provider
+    assert sync_constructor.call_count == 2
+    assert async_constructor.call_count == 2
 
 
 def test_summary_routes_are_registered() -> None:

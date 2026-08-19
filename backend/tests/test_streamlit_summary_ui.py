@@ -97,6 +97,9 @@ class FakeStreamlit(ModuleType):
         self.expander_labels.append(label)
         return FakeBlock(self)
 
+    def container(self, **__: object) -> FakeBlock:
+        return FakeBlock(self)
+
     def spinner(self, *_: object, **__: object) -> FakeBlock:
         return FakeBlock(self)
 
@@ -191,6 +194,10 @@ def configure_summary_dependencies(
                 "character_count": 12_345,
                 "estimated_generation_steps": 5,
                 "maximum_request_attempts": 45,
+                "concurrency_mode": "auto",
+                "initial_concurrency": 64,
+                "maximum_concurrency": 500,
+                "effective_concurrency": 3,
                 "provider": "deepseek",
                 "model": "deepseek-v4-pro",
                 "sends_original_text": True,
@@ -284,6 +291,10 @@ def test_summary_actions_require_consent_and_force_confirmation(
     action_calls = {
         call["key"]: call for call in fake.button_calls
     }
+    assert (
+        action_calls["start_all_summaries_7"]["label"]
+        == "重新生成全书摘要"
+    )
     assert action_calls["start_all_summaries_7"]["disabled"] is True
     assert action_calls["start_chapter_summary_7_1"]["disabled"] is True
     clients["start_summaries"].assert_not_called()
@@ -308,6 +319,25 @@ def test_summary_actions_are_disabled_without_external_consent(
     assert action_calls["start_chapter_summary_7_1"]["disabled"] is True
     clients["start_summaries"].assert_not_called()
     clients["start_chapter_summary"].assert_not_called()
+
+
+def test_long_novel_can_jump_directly_to_a_chapter_range(
+    streamlit_module: tuple[ModuleType, FakeStreamlit],
+) -> None:
+    module, fake = streamlit_module
+    fake.selectbox = Mock(return_value=3)
+
+    changed = module.render_chapter_range_jump(
+        total=348,
+        page=0,
+        page_size=50,
+        state_key="summary_chapter_page_7",
+        widget_key="summary_chapter_range_7",
+    )
+
+    assert changed is True
+    assert fake.session_state["summary_chapter_page_7"] == 3
+    assert ("rerun", "requested") in fake.messages
 
 
 def test_summary_actions_require_independent_content_rights_confirmation(
@@ -785,6 +815,7 @@ def test_navigation_switches_to_upload_without_touching_widget_state(
 
     assert fake.session_state["view"] == "upload"
     assert fake.session_state["novel_mode_7"] == "正文阅读"
+    assert ("rerun", "requested") in fake.messages
 
 
 def test_empty_library_is_user_facing_and_does_not_load_chapters(

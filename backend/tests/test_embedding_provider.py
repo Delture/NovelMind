@@ -1,4 +1,4 @@
-"""Tests for the external Bailian text-embedding-v4 client."""
+"""Tests for the external OpenAI-compatible embedding client."""
 
 import json
 import logging
@@ -12,7 +12,7 @@ import pytest
 from backend.app.core.config import Settings, load_settings
 from backend.app.rag.embedding import (
     MAX_EMBEDDING_BATCH_SIZE,
-    BailianEmbeddingProvider,
+    OpenAIEmbeddingProvider,
     EmbeddingAuthenticationError,
     EmbeddingBalanceError,
     EmbeddingNotConfiguredError,
@@ -26,19 +26,14 @@ from backend.app.rag.embedding import (
 
 def make_settings(
     *,
-    api_key: Optional[str] = "bailian-test-key",
+    api_key: Optional[str] = "siliconflow-test-key",
     max_attempts: int = 3,
 ) -> Settings:
-    """Return a valid Beijing workspace configuration."""
+    """Return a valid SiliconFlow embedding configuration."""
     return replace(
         load_settings({}),
         embedding_api_key=api_key,
-        embedding_base_url=(
-            "https://ws-test.cn-beijing.maas.aliyuncs.com/"
-            "compatible-mode/v1"
-            if api_key
-            else None
-        ),
+        embedding_base_url="https://api.siliconflow.cn/v1",
         embedding_max_attempts=max_attempts,
     )
 
@@ -48,7 +43,7 @@ def embedding_response(
     count: int = 2,
     dimensions: int = 1_024,
     status_code: int = 200,
-    model: str = "text-embedding-v4",
+    model: str = "Qwen/Qwen3-Embedding-4B",
     indices: Optional[list[int]] = None,
 ) -> httpx.Response:
     """Build one OpenAI-compatible embedding response."""
@@ -93,10 +88,10 @@ def make_provider(
     *,
     settings: Optional[Settings] = None,
     sleeps: Optional[list[float]] = None,
-) -> BailianEmbeddingProvider:
+) -> OpenAIEmbeddingProvider:
     """Create a provider backed by an in-memory HTTP transport."""
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
-    return BailianEmbeddingProvider(
+    return OpenAIEmbeddingProvider(
         settings or make_settings(),
         http_client=http_client,
         sleep=(sleeps if sleeps is not None else []).append,
@@ -109,7 +104,7 @@ def test_provider_requires_complete_embedding_configuration() -> None:
         EmbeddingNotConfiguredError,
         match="EMBEDDING_API_KEY",
     ):
-        BailianEmbeddingProvider(make_settings(api_key=None))
+        OpenAIEmbeddingProvider(make_settings(api_key=None))
 
 
 def test_embedding_wire_contract_and_response_order() -> None:
@@ -126,7 +121,7 @@ def test_embedding_wire_contract_and_response_order() -> None:
     result = provider.embed(["第一段", "第二段"])
 
     assert isinstance(provider, EmbeddingProvider)
-    assert provider.model == "text-embedding-v4"
+    assert provider.model == "Qwen/Qwen3-Embedding-4B"
     assert provider.dimensions == 1_024
     assert len(result.vectors) == 2
     assert len(result.vectors[0]) == 1_024
@@ -134,14 +129,11 @@ def test_embedding_wire_contract_and_response_order() -> None:
     assert result.vectors[1][0] == 2.0
     assert result.prompt_tokens == 23
     assert result.request_id == "embedding-request-123"
-    assert captured["url"] == (
-        "https://ws-test.cn-beijing.maas.aliyuncs.com/"
-        "compatible-mode/v1/embeddings"
-    )
-    assert captured["authorization"] == "Bearer bailian-test-key"
+    assert captured["url"] == "https://api.siliconflow.cn/v1/embeddings"
+    assert captured["authorization"] == "Bearer siliconflow-test-key"
     assert captured["payload"] == {
         "input": ["第一段", "第二段"],
-        "model": "text-embedding-v4",
+        "model": "Qwen/Qwen3-Embedding-4B",
         "dimensions": 1_024,
         "encoding_format": "float",
     }
@@ -183,7 +175,7 @@ def test_embedding_rejects_invalid_batches_without_network(
     [
         embedding_response(count=1),
         embedding_response(count=2, dimensions=768),
-        embedding_response(count=2, model="text-embedding-v3"),
+        embedding_response(count=2, model="Qwen/Qwen3-Embedding-0.6B"),
         embedding_response(count=2, indices=[0, 0]),
         embedding_response(count=2, indices=[0, 2]),
     ],
@@ -208,7 +200,7 @@ def test_embedding_rejects_nonfinite_and_zero_vectors() -> None:
 
     for invalid_value in [float("nan"), float("inf")]:
         invalid_response = SimpleNamespace(
-            model="text-embedding-v4",
+            model="Qwen/Qwen3-Embedding-4B",
             data=[
                 SimpleNamespace(
                     index=0,
@@ -279,13 +271,13 @@ def test_rate_limit_exhaustion_is_specific_and_safe() -> None:
         provider.embed(["sensitive novel body"])
     assert captured.value.retryable is True
     assert "sensitive" not in str(captured.value)
-    assert "bailian-test-key" not in str(captured.value)
+    assert "siliconflow-test-key" not in str(captured.value)
 
 
 def test_connection_exhaustion_is_safe() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(
-            "sensitive novel body and bailian-test-key",
+            "sensitive novel body and siliconflow-test-key",
             request=request,
         )
 
@@ -296,7 +288,7 @@ def test_connection_exhaustion_is_safe() -> None:
     with pytest.raises(EmbeddingUnavailableError) as captured:
         provider.embed(["sensitive novel body"])
     assert "sensitive" not in str(captured.value)
-    assert "bailian-test-key" not in str(captured.value)
+    assert "siliconflow-test-key" not in str(captured.value)
 
 
 @pytest.mark.parametrize(
@@ -345,7 +337,7 @@ def test_close_is_idempotent_and_closes_http_client() -> None:
             lambda _: embedding_response(count=1)
         )
     )
-    provider = BailianEmbeddingProvider(
+    provider = OpenAIEmbeddingProvider(
         make_settings(),
         http_client=http_client,
     )

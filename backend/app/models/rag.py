@@ -1,4 +1,9 @@
-"""SQLAlchemy models for the current RAG vector-index snapshot."""
+"""RAG 当前索引指针、分块定位信息和问答历史模型。
+
+向量本体存放在独立本地向量库，主 SQLite 只保存“哪一个集合是当前集合”和每个
+向量对应的精确原文范围。建索引时先写新集合，验证数量后才切换 ``RagIndex``；
+因此失败不会破坏旧索引。问答再从主库回读原文并核验哈希，绝不盲信向量元数据。
+"""
 
 from uuid import uuid4
 
@@ -23,11 +28,12 @@ from backend.app.core.time import utc_now
 
 
 def _new_uuid() -> str:
+    """为 RAG 问答生成数据库无关的 UUID 字符串主键。"""
     return str(uuid4())
 
 
 class RagIndex(Base):
-    """The single verified active vector snapshot for one novel."""
+    """一部小说唯一且已验证的当前向量快照指针。"""
 
     __tablename__ = "rag_indices"
     __table_args__ = (
@@ -48,15 +54,15 @@ class RagIndex(Base):
             name="ck_rag_indices_collection_name",
         ),
         CheckConstraint(
-            "embedding_provider = 'aliyun_model_studio'",
+            "length(trim(embedding_provider)) BETWEEN 1 AND 50",
             name="ck_rag_indices_embedding_provider",
         ),
         CheckConstraint(
-            "embedding_model = 'text-embedding-v4'",
+            "length(trim(embedding_model)) BETWEEN 1 AND 100",
             name="ck_rag_indices_embedding_model",
         ),
         CheckConstraint(
-            "embedding_dimensions = 1024",
+            "embedding_dimensions BETWEEN 1 AND 8192",
             name="ck_rag_indices_embedding_dimensions",
         ),
         CheckConstraint(
@@ -102,7 +108,7 @@ class RagIndex(Base):
 
 
 class RagChunkRecord(Base):
-    """Exact local source range corresponding to one external vector."""
+    """一个向量对应的章节、字符范围和哈希；本表不复制原文。"""
 
     __tablename__ = "rag_chunks"
     __table_args__ = (
@@ -164,7 +170,7 @@ class RagChunkRecord(Base):
 
 
 class RagQuestion(Base):
-    """One persisted background RAG question and evidence-backed answer."""
+    """一条持久化问答任务及其证据、答案和引用白名单结果。"""
 
     __tablename__ = "rag_questions"
     __table_args__ = (

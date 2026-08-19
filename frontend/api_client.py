@@ -1,4 +1,9 @@
-"""HTTP client used by the Streamlit frontend."""
+"""Streamlit 前端访问 FastAPI 的唯一 HTTP 客户端层。
+
+界面函数不直接拼 URL 或处理 requests 异常，而统一调用本模块。这样后端路径、
+超时、错误解析和测试替身都有单一位置。每个函数只做一次 HTTP 操作并返回字典；
+响应的业务字段由 UI 层继续严格验证，不能因为来自“自己的后端”就盲目信任。
+"""
 
 import os
 from typing import Any, Dict, Optional
@@ -13,13 +18,18 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 class NovelApiError(Exception):
-    """A user-facing error returned by the NovelMind backend."""
+    """可安全展示给用户的 API 错误，并保留状态码供界面分支判断。"""
 
     def __init__(
         self,
         message: str,
         status_code: Optional[int] = None,
     ) -> None:
+        """保存可展示错误文字和可选 HTTP 状态码。
+
+        ``message`` 交给 Exception 基类；``status_code`` 让 UI 针对 404、409 等
+        分支显示提示。连接失败没有 HTTP 响应时该值为 None。
+        """
         super().__init__(message)
         self.status_code = status_code
 
@@ -28,7 +38,11 @@ def _parse_response(
     response: requests.Response,
     fallback_error: str,
 ) -> Dict[str, Any]:
-    """Validate a JSON object response and raise readable API errors."""
+    """统一解析 JSON 对象，并把 HTTP/协议故障转换成稳定前端异常。
+
+    成功状态也必须检查顶层是否为对象。若反向代理或崩溃页返回 HTML，直接调用
+    ``response.json()`` 的底层异常不适合作为用户提示。
+    """
     try:
         result = response.json()
     except ValueError as error:
@@ -57,7 +71,7 @@ def _parse_response(
 
 
 def check_backend(backend_url: Optional[str] = None) -> bool:
-    """Return whether the FastAPI health endpoint is available."""
+    """快速探测后端是否为正确的 NovelMind 服务；离线属于正常 UI 状态。"""
     base_url = (backend_url or BACKEND_URL).rstrip("/")
     try:
         response = requests.get(f"{base_url}/health", timeout=1)
@@ -89,12 +103,65 @@ def get_system_status(
     return _parse_response(response, "读取系统状态失败，请稍后重试。")
 
 
+def get_model_settings(
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return editable model settings without either stored API key."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.get(
+            f"{base_url}/api/system/model-settings",
+            timeout=10,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "读取模型配置失败，请稍后重试。")
+
+
+def update_model_settings(
+    payload: Dict[str, Any],
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Save provider, model, endpoint, and optional replacement keys."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.put(
+            f"{base_url}/api/system/model-settings",
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "保存模型配置失败，请检查填写内容。")
+
+
+def reset_model_settings(
+    backend_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Remove frontend overrides and restore the local environment config."""
+    base_url = (backend_url or BACKEND_URL).rstrip("/")
+    try:
+        response = requests.delete(
+            f"{base_url}/api/system/model-settings",
+            timeout=30,
+        )
+    except requests.RequestException as error:
+        raise NovelApiError(
+            "无法连接后端服务，请确认 FastAPI 已启动。"
+        ) from error
+    return _parse_response(response, "恢复环境变量配置失败。")
+
+
 def upload_novel(
     filename: str,
     content: bytes,
     backend_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Upload one TXT file and return the parsed novel data."""
+    """以原始字节上传 TXT；后端而非浏览器负责最终编码与内容校验。"""
     base_url = (backend_url or BACKEND_URL).rstrip("/")
 
     try:
@@ -587,7 +654,12 @@ def start_rag_index(
     confirm_force_refresh: bool = False,
     backend_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start external source embedding for one novel."""
+    """请求后端启动一部小说的 RAG 建索引任务。
+
+    ``novel_id`` 进入路径；三个 confirm/force 布尔值组成 JSON 授权范围；可选
+    backend_url 仅供测试或自定义本机地址。返回任务字典；HTTP/网络错误统一抛
+    NovelApiError，本函数自身不调用 embedding 供应商。
+    """
     base_url = (backend_url or BACKEND_URL).rstrip("/")
     try:
         response = requests.post(
@@ -752,7 +824,12 @@ def start_report(
     confirm_force_refresh: bool = False,
     backend_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start one external whole-novel report job."""
+    """请求后端启动全书报告任务。
+
+    ``novel_id`` 进入路径；confirm_external_processing、confirm_content_rights 和
+    force/confirm_force_refresh 进入 JSON。返回持久任务字典；真正模型调用在后端
+    BackgroundTasks 中执行。
+    """
     base_url = (backend_url or BACKEND_URL).rstrip("/")
     try:
         response = requests.post(

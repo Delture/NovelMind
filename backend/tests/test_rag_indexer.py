@@ -29,7 +29,7 @@ class FakeProvider:
 
     @property
     def model(self) -> str:
-        return "text-embedding-v4"
+        return "Qwen/Qwen3-Embedding-4B"
 
     @property
     def dimensions(self) -> int:

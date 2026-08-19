@@ -1,8 +1,15 @@
-"""API endpoints for uploading novels."""
+"""小说上传、资料库分页、章节读取和删除接口。
+
+这是最适合初学者先读的完整 CRUD 流程：FastAPI 接收请求，Pydantic 描述响应，
+SQLAlchemy Session 执行事务，异常再转换为稳定 HTTP 错误。上传使用原始
+``application/octet-stream``，文件名放查询参数，正文保留原始字节供后端判定编码。
+"""
 
 import logging
 from datetime import datetime
 from pathlib import Path
+
+from charset_normalizer import from_bytes
 
 from fastapi import (
     APIRouter,
@@ -34,14 +41,15 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_CHAPTERS = 10_000
 MAX_FILENAME_CHARACTERS = 255
+MAX_UPLOAD_RESPONSE_CHAPTERS = 200
 
 
+# API 响应模型是对外合同。显式列出字段，避免数据库新增内部字段后意外泄露。
 class ChapterResponse(BaseModel):
-    """Chapter data returned after parsing an uploaded novel."""
+    """Chapter metadata returned after parsing an uploaded novel."""
 
     index: int
     title: str
-    content: str
     character_count: int
 
 
@@ -53,6 +61,7 @@ class NovelUploadResponse(BaseModel):
     encoding: str
     chapter_count: int
     chapters: list[ChapterResponse]
+    chapters_truncated: bool
 
 
 class NovelSummaryResponse(BaseModel):
@@ -101,7 +110,7 @@ class ChapterDetailResponse(ChapterSummaryResponse):
 
 
 def get_novel_or_404(db: Session, novel_id: int) -> Novel:
-    """Return a saved novel or a stable user-facing 404 error."""
+    """集中实现资源查找，并统一不存在时的 404 行为。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(
@@ -112,14 +121,29 @@ def get_novel_or_404(db: Session, novel_id: int) -> Novel:
 
 
 def decode_txt(content: bytes) -> tuple[str, str]:
-    """Decode common TXT encodings and return the text and encoding name."""
-    for encoding in ("utf-8-sig", "gb18030"):
+    """用受控候选编码解码 TXT，并返回文本及实际采用的编码名。"""
+    try:
+        return content.decode("utf-8-sig"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+
+    allowed_gb_encodings = {"gb18030", "gbk", "gb2312", "cp936"}
+    detected_gb = next(
+        (
+            candidate
+            for candidate in from_bytes(content)
+            if candidate.encoding
+            and candidate.encoding.lower().replace("-", "_")
+            in allowed_gb_encodings
+            and float(candidate.chaos) < 0.1
+        ),
+        None,
+    )
+    if detected_gb is not None:
         try:
-            text = content.decode(encoding)
-            display_encoding = "utf-8" if encoding == "utf-8-sig" else encoding
-            return text, display_encoding
+            return content.decode("gb18030"), "gb18030"
         except UnicodeDecodeError:
-            continue
+            pass
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -128,7 +152,7 @@ def decode_txt(content: bytes) -> tuple[str, str]:
 
 
 def validate_decoded_text(text: str) -> None:
-    """Reject binary control characters that should not appear in TXT input."""
+    """拒绝虽能解码却明显像乱码或二进制的数据，避免污染永久存储。"""
     allowed_controls = {"\n", "\r", "\t", "\f"}
     if any(
         ord(character) < 32 and character not in allowed_controls
@@ -155,11 +179,24 @@ def validate_decoded_text(text: str) -> None:
     },
 )
 async def upload_novel(
+    # 参数由 FastAPI 按路径、查询参数、请求体和依赖分别注入。
     request: Request,
     filename: str = Query(..., description="上传的 TXT 文件名"),
     db: Session = Depends(get_db),
 ) -> NovelUploadResponse:
-    """Upload, parse, and save a TXT novel."""
+    """接收原始 TXT 字节，校验、解码、切章并原子保存小说。
+
+    ``filename`` 来自查询参数，``request`` 提供流式请求体，``db`` 由 Depends
+    注入。函数限制扩展名/Content-Type/20MB，检测编码和乱码；小说与全部章节在
+    同一事务提交。成功返回元数据和章节，任何数据库错误 rollback 后返回 500。
+    """
+    content_type = request.headers.get("content-type", "")
+    media_type = content_type.partition(";")[0].strip().lower()
+    if media_type != "application/octet-stream":
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="上传请求必须使用 application/octet-stream。",
+        )
     safe_filename = Path(filename).name
     if Path(safe_filename).suffix.lower() != ".txt":
         raise HTTPException(
@@ -218,6 +255,7 @@ async def upload_novel(
         chapters=chapter_models,
     )
 
+    # 小说和全部章节必须一起成功；失败便 rollback，不能留下半部小说。
     try:
         db.add(novel)
         db.commit()
@@ -238,11 +276,13 @@ async def upload_novel(
             ChapterResponse(
                 index=chapter.chapter_index,
                 title=chapter.title,
-                content=chapter.content,
                 character_count=chapter.character_count,
             )
-            for chapter in novel.chapters
+            for chapter in novel.chapters[:MAX_UPLOAD_RESPONSE_CHAPTERS]
         ],
+        chapters_truncated=(
+            novel.chapter_count > MAX_UPLOAD_RESPONSE_CHAPTERS
+        ),
     )
 
 

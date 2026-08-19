@@ -1,4 +1,9 @@
-"""SQLAlchemy models for generated analysis data and background jobs."""
+"""章节摘要结果与通用后台任务的持久化模型。
+
+外部模型调用可能持续数分钟，HTTP 请求不能一直阻塞等待，所以接口先创建
+``AnalysisJob``，提交后再交给后台执行器。前端轮询同一行即可恢复进度。
+生成结果与任务状态分表：任务失败不会覆盖上一份仍然可用的摘要。
+"""
 
 from uuid import uuid4
 
@@ -24,12 +29,16 @@ from backend.app.core.time import utc_now
 
 
 def _new_uuid() -> str:
-    """Return a portable UUID string for an analysis job."""
+    """生成与数据库无关的字符串 UUID，避免依赖某种数据库 UUID 类型。"""
     return str(uuid4())
 
 
 class ChapterSummary(Base):
-    """The current generated summary for one chapter."""
+    """某章当前有效的结构化摘要；一章最多保留一份当前快照。
+
+    ``source_hash`` 绑定原文和提示版本。当原文改变时，即使数据库里已有结果，
+    业务层也能判断它已过期；这是派生数据缓存不能只看“有没有记录”的原因。
+    """
 
     __tablename__ = "chapter_summaries"
     __table_args__ = (
@@ -68,7 +77,12 @@ class ChapterSummary(Base):
 
 
 class AnalysisJob(Base):
-    """One persisted background analysis task for a novel."""
+    """一项可由界面查询和恢复的后台分析任务。
+
+    状态机只允许 ``queued -> running -> succeeded/failed``。数据库检查约束保护
+    进度范围；局部唯一索引保证同一小说同类任务最多一个处于活动状态。仅靠
+    Python 中“先查询再插入”会有并发竞态，因此唯一性必须落到数据库层。
+    """
 
     __tablename__ = "analysis_jobs"
     __table_args__ = (
@@ -104,6 +118,7 @@ class AnalysisJob(Base):
             "force_refresh IN (0, 1)",
             name="ck_analysis_jobs_force_refresh_boolean",
         ),
+        # partial unique index 只约束活动状态，历史成功/失败任务仍可保留多条。
         Index(
             "ix_analysis_jobs_novel_status",
             "novel_id",

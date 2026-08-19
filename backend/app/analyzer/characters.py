@@ -1,4 +1,10 @@
-"""API-backed character analysis with deterministic local orchestration."""
+"""人物逐章抽取、跨章消歧、关系推理和原子快照持久化。
+
+这是项目最复杂的流水线，可按五步阅读：准备章节与复用缓存；分页抽取人物观察；
+分批归并候选档案；必要时跨批次身份调和；推理关系并一次性保存当前快照。
+模型负责语义判断，本地负责确定性编排、ID 白名单、分区完整性、长度/数量上限、
+来源哈希和数据库事务。任何阶段失败都保留旧快照，不向用户展示半成品。
+"""
 
 import hashlib
 import json
@@ -21,6 +27,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from sqlalchemy import case
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
@@ -76,6 +83,7 @@ class _CharacterJobCancelled(RuntimeError):
 
 
 def _required_text(value: str) -> str:
+    """去除模型文本首尾空白并拒绝空值，返回规范化字符串。"""
     normalized = value.strip()
     if not normalized:
         raise ValueError("text cannot be blank")
@@ -87,6 +95,11 @@ def _normalized_unique_texts(
     *,
     maximum_length: int,
 ) -> list[str]:
+    """清理字符串列表、限制单项长度并按首次出现顺序去重。
+
+    ``values`` 是模型返回列表，``maximum_length`` 是每项字符上限。空项或超长项
+    抛 ValueError；重复项被合并，返回新列表而不修改调用者对象。
+    """
     normalized: list[str] = []
     for value in values:
         item = value.strip()
@@ -100,7 +113,7 @@ def _normalized_unique_texts(
 
 
 class CharacterObservationPayload(BaseModel):
-    """One model-extracted mention group inside a chapter fragment."""
+    """一次局部人物观察，不等于已经完成全书消歧的规范人物。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -131,11 +144,13 @@ class CharacterObservationPayload(BaseModel):
     )
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
+        """清理人物名、描述和本段出场摘要。"""
         return _required_text(value)
 
     @field_validator("aliases")
     @classmethod
     def normalize_aliases(cls, values: list[str]) -> list[str]:
+        """清理别名、限制长度并保持首次出现顺序去重。"""
         return _normalized_unique_texts(
             values,
             maximum_length=MAX_CHARACTER_ALIAS_CHARACTERS,
@@ -143,6 +158,7 @@ class CharacterObservationPayload(BaseModel):
 
     @model_validator(mode="after")
     def reject_name_as_alias(self) -> "CharacterObservationPayload":
+        """拒绝主名同时出现在 aliases，返回已验证对象。"""
         if self.name in self.aliases:
             raise ValueError("the primary name cannot also be an alias")
         return self
@@ -163,6 +179,7 @@ class ChapterCharacterExtractionPayload(BaseModel):
     def require_progress_when_more_exists(
         self,
     ) -> "ChapterCharacterExtractionPayload":
+        """has_more=True 时本页必须至少给出一条观察，避免无限空分页。"""
         if self.has_more and not self.observations:
             raise ValueError(
                 "a continued extraction page cannot be empty"
@@ -194,6 +211,7 @@ class StoredChapterExtractionData(BaseModel):
 
     @model_validator(mode="after")
     def require_unique_ids(self) -> "StoredChapterExtractionData":
+        """确保持久化单章缓存中所有本地 observation_id 唯一。"""
         identifiers = [
             observation.observation_id
             for observation in self.observations
@@ -219,11 +237,13 @@ class MergedCharacterProfilePayload(BaseModel):
     @field_validator("canonical_name", "short_description")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
+        """清理规范人物名称与简介。"""
         return _required_text(value)
 
     @field_validator("aliases")
     @classmethod
     def normalize_aliases(cls, values: list[str]) -> list[str]:
+        """清理全书人物别名并限制每项长度。"""
         return _normalized_unique_texts(values, maximum_length=255)
 
     @field_validator("observation_ids")
@@ -232,6 +252,7 @@ class MergedCharacterProfilePayload(BaseModel):
         cls,
         values: list[str],
     ) -> list[str]:
+        """清理 observation ID 并拒绝任何重复，保证归并结果是严格分区。"""
         normalized = _normalized_unique_texts(
             values,
             maximum_length=120,
@@ -244,6 +265,7 @@ class MergedCharacterProfilePayload(BaseModel):
 
     @model_validator(mode="after")
     def reject_name_as_alias(self) -> "MergedCharacterProfilePayload":
+        """拒绝规范名同时作为自身别名。"""
         if self.canonical_name in self.aliases:
             raise ValueError("the canonical name cannot also be an alias")
         return self
@@ -276,6 +298,7 @@ class ReconciledProfileGroupPayload(BaseModel):
         cls,
         values: list[str],
     ) -> list[str]:
+        """清理候选 profile ID，并要求同一身份组不重复引用。"""
         normalized = _normalized_unique_texts(
             values,
             maximum_length=80,
@@ -312,11 +335,13 @@ class SynthesizedCharacterProfilePayload(BaseModel):
     @field_validator("canonical_name", "short_description")
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
+        """清理身份综合后的规范名和人物简介。"""
         return _required_text(value)
 
     @field_validator("aliases")
     @classmethod
     def normalize_aliases(cls, values: list[str]) -> list[str]:
+        """清理综合人物别名并去重。"""
         return _normalized_unique_texts(values, maximum_length=255)
 
     @field_validator("profile_ids")
@@ -325,6 +350,7 @@ class SynthesizedCharacterProfilePayload(BaseModel):
         cls,
         values: list[str],
     ) -> list[str]:
+        """要求综合结果恰好引用一组互不重复的本地候选 ID。"""
         normalized = _normalized_unique_texts(
             values,
             maximum_length=80,
@@ -337,6 +363,7 @@ class SynthesizedCharacterProfilePayload(BaseModel):
     def reject_name_as_alias(
         self,
     ) -> "SynthesizedCharacterProfilePayload":
+        """拒绝综合后的规范名重复出现在别名列表。"""
         if self.canonical_name in self.aliases:
             raise ValueError("the canonical name cannot also be an alias")
         return self
@@ -371,6 +398,7 @@ class CharacterRelationPayload(BaseModel):
     )
     @classmethod
     def normalize_required_text(cls, value: str) -> str:
+        """清理关系端点 ID、关系类型和描述文本。"""
         return _required_text(value)
 
     @field_validator("evidence_chapter_indices")
@@ -379,6 +407,7 @@ class CharacterRelationPayload(BaseModel):
         cls,
         values: list[int],
     ) -> list[int]:
+        """要求证据章节均为正数且无重复，保持模型给出的顺序。"""
         if any(value < 1 for value in values):
             raise ValueError("evidence chapter indices must be positive")
         normalized = list(dict.fromkeys(values))
@@ -390,6 +419,7 @@ class CharacterRelationPayload(BaseModel):
 
     @model_validator(mode="after")
     def reject_self_relationship(self) -> "CharacterRelationPayload":
+        """拒绝起点和终点为同一候选人物的自环关系。"""
         if self.source_profile_id == self.target_profile_id:
             raise ValueError("character relationships cannot self-link")
         return self
@@ -407,6 +437,7 @@ class CharacterRelationsPayload(BaseModel):
 
 
 class _AnalysisSourceItem(BaseModel):
+    """参与整书来源哈希的一章：序号、单章哈希和已验证观察。"""
     model_config = ConfigDict(extra="forbid")
 
     chapter_index: StrictInt = Field(ge=1)
@@ -420,6 +451,7 @@ class _AnalysisSourceItem(BaseModel):
 
 @dataclass(frozen=True)
 class _PreparedChapter:
+    """分析准备阶段的一章及缓存状态；changed 表示本次需重抽取。"""
     chapter: Chapter
     source_hash: str
     extraction_data: StoredChapterExtractionData
@@ -429,12 +461,14 @@ class _PreparedChapter:
 
 @dataclass(frozen=True)
 class _ResolvedProfile:
+    """给模型归并档案分配稳定本地 profile_id 后的值对象。"""
     profile_id: str
     payload: MergedCharacterProfilePayload
 
 
 @dataclass(frozen=True)
 class _ObservationBatch:
+    """一个可装入归并提示预算的 ``(章节, 观察)`` 不可变批次。"""
     observations: tuple[
         tuple[_PreparedChapter, StoredCharacterObservation],
         ...,
@@ -442,6 +476,7 @@ class _ObservationBatch:
 
     @property
     def observation_ids(self) -> set[str]:
+        """返回批次所有观察 ID 的集合，供分区完整性验证。"""
         return {
             observation.observation_id
             for _, observation in self.observations
@@ -449,6 +484,7 @@ class _ObservationBatch:
 
 
 def _canonical_json(value: object) -> str:
+    """稳定序列化 JSON，确保同一人物来源数据产生同一哈希。"""
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -458,7 +494,7 @@ def _canonical_json(value: object) -> str:
 
 
 def character_chapter_source_hash(title: str, content: str) -> str:
-    """Hash every chapter field sent to the extraction API."""
+    """为单章抽取缓存计算稳定来源标识。"""
     material = _canonical_json(
         {
             "title": title,
@@ -504,6 +540,12 @@ def _character_extraction_request_data(
     previous_observations: list[dict[str, object]],
     text: str,
 ) -> dict[str, object]:
+    """组装一次逐章抽取请求的 JSON 材料。
+
+    chapter_index/title 标识章节，fragment 是当前片段，known_observation_ids 防止
+    后续分页重复人物，part/page_number 标识位置，continuation 说明是否承接上一页。
+    返回字典只用于序列化提示，不修改任何输入。
+    """
     return {
         "title": title,
         "chapter_index": chapter_index,
@@ -522,6 +564,7 @@ def _extraction_request_fits(
     chapter_index: int,
     part_marker: int,
 ) -> bool:
+    """序列化一次抽取请求，返回它是否落在单次提示字符预算内。"""
     request_data = _character_extraction_request_data(
         title=title,
         chapter_index=chapter_index,
@@ -545,6 +588,7 @@ def _largest_fitting_prefix(
     chapter_index: int,
     part_marker: int,
 ) -> int:
+    """用二分搜索找出从 start 开始可装入请求预算的最长文本前缀长度。"""
     lower = 1
     upper = len(text)
     best = 0
@@ -693,6 +737,7 @@ def maximum_character_generation_steps(
 
 
 def _extraction_system_prompt() -> str:
+    """构造逐章人物观察提示，要求分页信号和局部事实，不提前跨章合并。"""
     return novelmind_system_prompt(
         role="中文小说人物观察提取助手",
         material_scope=(
@@ -722,6 +767,7 @@ def _extraction_system_prompt() -> str:
 
 
 def _merge_system_prompt() -> str:
+    """构造观察归并提示，要求每个 observation_id 恰好归入一个人物档案。"""
     return novelmind_system_prompt(
         role="中文小说人物消歧与档案归并助手",
         material_scope=(
@@ -744,6 +790,7 @@ def _merge_system_prompt() -> str:
 
 
 def _reconciliation_system_prompt() -> str:
+    """构造跨批候选身份调和提示，只允许引用给定本地 profile_id。"""
     return novelmind_system_prompt(
         role="中文小说跨批人物消歧助手",
         material_scope=(
@@ -762,6 +809,7 @@ def _reconciliation_system_prompt() -> str:
 
 
 def _synthesis_system_prompt() -> str:
+    """构造同一身份候选的名称、别名和简介综合提示。"""
     return novelmind_system_prompt(
         role="中文小说人物档案合成助手",
         material_scope=(
@@ -780,6 +828,7 @@ def _synthesis_system_prompt() -> str:
 
 
 def _relationship_system_prompt() -> str:
+    """构造人物关系推理提示，要求关系端点和证据章节来自白名单。"""
     return novelmind_system_prompt(
         role="中文小说人物关系分析助手",
         material_scope=(
@@ -805,6 +854,7 @@ def _relationship_system_prompt() -> str:
 def _ensure_can_continue(
     should_continue: Optional[Callable[[], bool]],
 ) -> None:
+    """调用可选任务存活回调；失效时抛取消异常，避免继续付费调用。"""
     if should_continue is not None and not should_continue():
         raise _CharacterJobCancelled()
 
@@ -818,6 +868,11 @@ def _generate_payload(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> T:
+    """统一调用 provider.generate_json 并返回已验证 Pydantic 值。
+
+    ``response_model`` 指定本步骤合同，thinking/reasoning 传给供应商；生成前调用
+    should_continue。泛型 T 让调用者得到具体 payload 类型而非 BaseModel。
+    """
     _ensure_can_continue(should_continue)
     result = provider.generate_json(
         system_prompt=system_prompt,
@@ -839,21 +894,29 @@ def _generate_payload(
 
 
 def _extract_chapter(
+# 一章可能被切成多段且每段可分页；所有页都通过契约后才构成完整单章缓存。
     chapter: Chapter,
     provider: LLMProvider,
     *,
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> StoredChapterExtractionData:
+    """切分并分页抽取一章，返回可持久化的完整观察缓存。
+
+    ``chapter`` 提供序号/标题/正文，provider 调用外部模型，should_continue 在每次
+    付费请求前检测取消。每个片段可能多页；函数拒绝重复页面与超出安全上限，并
+    为观察分配包含章、片段、序号的稳定本地 ID。
+    """
     chunks = _split_character_text(
         chapter.content,
         title=chapter.title,
         chapter_index=chapter.chapter_index,
     )
     observations: list[StoredCharacterObservation] = []
+    chapter_fingerprints: set[str] = set()
     for part_index, chunk in enumerate(chunks, start=1):
         part_observations: list[StoredCharacterObservation] = []
-        fingerprints: set[str] = set()
+        part_fingerprints: set[str] = set()
         for page_index in range(
             1,
             MAX_CHARACTER_EXTRACTION_PAGES + 1,
@@ -903,9 +966,12 @@ def _extract_chapter(
                 fingerprint = _canonical_json(
                     observation.model_dump(mode="json")
                 )
-                if fingerprint in fingerprints:
+                if fingerprint in part_fingerprints:
                     raise ProviderResponseError()
-                fingerprints.add(fingerprint)
+                part_fingerprints.add(fingerprint)
+                if fingerprint in chapter_fingerprints:
+                    continue
+                chapter_fingerprints.add(fingerprint)
                 stored = StoredCharacterObservation(
                     observation_id=(
                         f"chapter-{chapter.id}-part-{part_index}-"
@@ -928,6 +994,7 @@ def _load_cached_extraction(
     source_hash: str,
     provider_model: str,
 ) -> Optional[StoredChapterExtractionData]:
+    """仅在 source_hash、模型和提示版本完全匹配时解析并返回单章缓存。"""
     if (
         extraction is None
         or extraction.source_hash != source_hash
@@ -948,15 +1015,52 @@ def _load_cached_extraction(
         return None
 
 
+def _persist_chapter_extraction(
+    db: Session,
+    prepared: _PreparedChapter,
+    *,
+    provider_model: str,
+) -> ChapterCharacterExtraction:
+    """Upsert one completed chapter extraction without touching snapshots."""
+    extraction = (
+        db.query(ChapterCharacterExtraction)
+        .filter(
+            ChapterCharacterExtraction.chapter_id
+            == prepared.chapter.id
+        )
+        .one_or_none()
+    )
+    now = utc_now()
+    if extraction is None:
+        extraction = ChapterCharacterExtraction(
+            chapter_id=prepared.chapter.id,
+            created_at=now,
+        )
+        db.add(extraction)
+    extraction.extraction_data = prepared.extraction_data.model_dump(
+        mode="json"
+    )
+    extraction.source_hash = prepared.source_hash
+    extraction.model = provider_model
+    extraction.prompt_version = CHARACTER_EXTRACTION_PROMPT_VERSION
+    extraction.updated_at = now
+    return extraction
+
+
 def _prepare_chapters(
     db: Session,
     novel: Novel,
     provider: LLMProvider,
     *,
     force: bool,
+    persist_extractions_incrementally: bool,
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> list[_PreparedChapter]:
+    """读取全部章节、计算来源哈希、复用有效缓存并抽取变化章节。
+
+    返回按章节顺序的 PreparedChapter 列表；新抽取会增量落盘，使失败后可恢复。
+    """
     chapters = (
         db.query(Chapter)
         .filter(Chapter.novel_id == novel.id)
@@ -1001,21 +1105,30 @@ def _prepare_chapters(
             if changed
             else cached
         )
-        prepared.append(
-            _PreparedChapter(
-                chapter=chapter,
-                source_hash=source_hash,
-                extraction_data=extraction_data,
-                existing=existing,
-                changed=changed,
-            )
+        prepared_chapter = _PreparedChapter(
+            chapter=chapter,
+            source_hash=source_hash,
+            extraction_data=extraction_data,
+            existing=existing,
+            changed=changed,
         )
+        prepared.append(prepared_chapter)
+        if changed and persist_extractions_incrementally:
+            _ensure_can_continue(should_continue)
+            _persist_chapter_extraction(
+                db,
+                prepared_chapter,
+                provider_model=provider.model,
+            )
+            db.commit()
+            _ensure_can_continue(should_continue)
     return prepared
 
 
 def _analysis_hash_input(
     prepared: list[_PreparedChapter],
 ) -> list[dict[str, object]]:
+    """把准备后章节压缩为稳定字典列表，作为整书人物来源哈希输入。"""
     return [
         {
             "chapter_index": item.chapter.chapter_index,
@@ -1035,6 +1148,7 @@ def _analysis_cache_is_current(
     provider_model: str,
     chapter_count: int,
 ) -> bool:
+    """比较现有人物快照的来源哈希、模型和三段提示版本，判断是否可复用。"""
     return bool(
         analysis is not None
         and analysis.source_hash == source_hash
@@ -1056,6 +1170,12 @@ def _planned_character_generation_steps(
     provider_model: str,
     force: bool,
 ) -> int:
+    """估算一次人物任务在正常路径需要的模型生成步骤。
+
+    读取章节并判断哪些单章缓存仍有效；变化章节按与执行器相同的切分算法计数，
+    再加入观察归并、身份调和、综合与关系批次。返回值用于进度初始 total，不把
+    极端安全上限伪装成预计进度。
+    """
     chapters = (
         db.query(Chapter)
         .filter(Chapter.novel_id == novel.id)
@@ -1078,7 +1198,6 @@ def _planned_character_generation_steps(
     extraction_steps = 0
     current_inputs: list[dict[str, object]] = []
     all_current = not force
-    cached_observation_count = 0
     for chapter in chapters:
         source_hash = character_chapter_source_hash(
             chapter.title,
@@ -1097,7 +1216,6 @@ def _planned_character_generation_steps(
                 chapter.content
             )
             continue
-        cached_observation_count += len(cached.observations)
         current_inputs.append(
             {
                 "chapter_index": chapter.chapter_index,
@@ -1107,10 +1225,11 @@ def _planned_character_generation_steps(
         )
 
     if not all_current:
-        return maximum_character_generation_steps(
-            extraction_steps,
-            cached_observation_count=cached_observation_count,
-        )
+        # This is a user-facing progress estimate, not the combinatorial
+        # safety ceiling used for request-bound disclosure. Pagination and
+        # reconciliation can add calls at runtime; record_generation_step
+        # expands the total if that happens.
+        return extraction_steps + 2
 
     source_hash = character_analysis_source_hash(current_inputs)
     analysis = (
@@ -1125,10 +1244,7 @@ def _planned_character_generation_steps(
         chapter_count=len(chapters),
     ):
         return 0
-    return maximum_character_generation_steps(
-        0,
-        cached_observation_count=cached_observation_count,
-    )
+    return 2
 
 
 def _bounded_text(value: str, maximum_length: int) -> str:
@@ -1198,6 +1314,7 @@ def _chapter_data_for_observations(
     *,
     include_titles: bool,
 ) -> list[dict[str, object]]:
+    """按 observation ID 聚合所涉章节/片段信息，供人物归并提示提供证据上下文。"""
     chapters_by_id: dict[int, dict[str, object]] = {}
     for item, observation in observations:
         chapter_data = chapters_by_id.setdefault(
@@ -1234,6 +1351,7 @@ def _merge_request_data(
     batch_index: int,
     batch_count: int,
 ) -> dict[str, object]:
+    """把一个观察批次和对应章节上下文组装为人物归并请求 JSON。"""
     return {
         "batch_index": batch_index,
         "batch_count": batch_count,
@@ -1253,6 +1371,7 @@ def _relationship_request_data(
     batch_index: int,
     batch_count: int,
 ) -> dict[str, object]:
+    """把候选人物与有限章节证据组装为关系推理请求 JSON。"""
     return {
         "batch_index": batch_index,
         "batch_count": batch_count,
@@ -1322,6 +1441,7 @@ def _validate_partition(
     *,
     profile_id_prefix: str = "profile",
 ) -> list[_ResolvedProfile]:
+    """验证归并结果对 expected_ids 不重不漏，并分配本地 profile_id。"""
     seen: set[str] = set()
     resolved: list[_ResolvedProfile] = []
     for index, profile in enumerate(payload.profiles, start=1):
@@ -1346,6 +1466,7 @@ def _validate_partition(
 def _profile_groups(
     profiles: list[_ResolvedProfile],
 ) -> list[list[_ResolvedProfile]]:
+    """按固定上限把候选档案顺序分组，供跨批身份调和。"""
     return [
         profiles[start : start + MAX_CHARACTER_PROFILE_GROUP_ITEMS]
         for start in range(
@@ -1360,6 +1481,7 @@ def _validate_profile_partition(
     payload: CharacterReconciliationPayload,
     expected_ids: set[str],
 ) -> list[set[str]]:
+    """验证身份组对 expected_ids 严格分区，返回每组 ID 集合。"""
     seen: set[str] = set()
     groups: list[set[str]] = []
     for group in payload.groups:
@@ -1380,6 +1502,7 @@ def _validate_profile_partition(
 def _reconciliation_requests(
     profiles: list[_ResolvedProfile],
 ) -> list[list[_ResolvedProfile]]:
+    """构造相邻及边界候选比较组，控制跨批身份调和提示规模。"""
     groups = _profile_groups(profiles)
     return [
         (
@@ -1400,6 +1523,12 @@ def _same_identity_decisions(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> dict[frozenset[str], bool]:
+    """调用模型判断候选档案是否属于同一人物。
+
+    profiles 是本地候选，provider 执行严格分区响应，should_continue 负责取消，
+    record_generation_step 更新进度。返回以 frozenset 两 ID 为键的对称布尔映射；
+    不在本地凭名字相似度猜身份。
+    """
     decisions: dict[frozenset[str], bool] = {}
     requests = _reconciliation_requests(profiles)
     for request_index, candidates in enumerate(requests, start=1):
@@ -1460,6 +1589,7 @@ def _complete_link_identity_clusters(
     profiles: list[_ResolvedProfile],
     decisions: dict[frozenset[str], bool],
 ) -> list[list[_ResolvedProfile]]:
+    """用 complete-link 聚类：候选须与簇内每个成员都判为同一身份。"""
     clusters: list[list[_ResolvedProfile]] = []
     for profile in profiles:
         for cluster in clusters:
@@ -1485,6 +1615,12 @@ def _synthesize_identity_cluster(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> _ResolvedProfile:
+    """把一个确认同一身份的候选簇综合为单一规范档案。
+
+    cluster 可能仍超过一次提示预算，因此函数分层合并；每轮要求模型返回精确的
+    profile_id 分区并保留所有 observation_ids。返回新的 ResolvedProfile，ID 由
+    本地确定，文本由模型生成并经 Pydantic 校验。
+    """
     current = list(cluster)
     round_index = 0
     while len(current) > 1:
@@ -1554,6 +1690,7 @@ def _reconcile_profiles_with_api(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> list[_ResolvedProfile]:
+    """跨归并批次调和同一人物，并综合多候选身份簇。"""
     if not profiles:
         return []
     decisions = _same_identity_decisions(
@@ -1592,6 +1729,12 @@ def _merge_profiles(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> tuple[list[_ResolvedProfile], list[_ObservationBatch]]:
+    """把全部逐章观察归并为全书规范人物。
+
+    prepared 是有序章节缓存；函数先按提示预算生成 ObservationBatch，各批严格
+    验证 observation_id 不重不漏，再跨批身份调和。返回 ``(最终档案, 原批次)``，
+    后者继续为关系证据范围和本地统计提供来源。
+    """
     batches = _observation_batches(prepared)
     batched_profiles: list[_ResolvedProfile] = []
     for batch_index, batch in enumerate(batches, start=1):
@@ -1639,6 +1782,12 @@ def _relationship_evidence_batches(
 ) -> list[list[
     tuple[_PreparedChapter, StoredCharacterObservation]
 ]]:
+    """按提示字符预算构造关系推理的章节证据批次。
+
+    prepared 提供逐章观察，profiles 给出合法人物白名单，base_request_characters
+    预留固定人物档案开销。返回批次保留章节序号和局部观察；未知 ID、空证据不会
+    被发给关系模型。
+    """
     known_ids = {profile.profile_id for profile in profiles}
     relevant = [
         pair
@@ -1700,6 +1849,7 @@ def _relationship_call_specs(
     list[_ResolvedProfile],
     list[tuple[_PreparedChapter, StoredCharacterObservation]],
 ]]:
+    """组合人物分组和证据批次，返回每次关系模型调用的参数规格。"""
     groups = _profile_groups(profiles)
     all_observations = [
         pair
@@ -1739,6 +1889,12 @@ def _infer_relationships(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> list[CharacterRelationPayload]:
+    """推理并合并整书人物关系。
+
+    profiles 是合法端点，prepared/observation_batches 提供证据，provider 执行
+    结构化生成。每次结果验证端点、关系方向和证据章节白名单；同一边重复出现时
+    本地合并证据而不重复保存。返回最终 CharacterRelationPayload 列表。
+    """
     if not profiles:
         return []
     specs = _relationship_call_specs(profiles, batches)
@@ -1821,6 +1977,7 @@ def _infer_relationships(
 
 
 def _persist_snapshot(
+# 新人物、出场和关系在一个事务中替换，读者不会观察到新旧快照混杂。
     db: Session,
     novel: Novel,
     provider: LLMProvider,
@@ -1829,26 +1986,20 @@ def _persist_snapshot(
     profiles: list[_ResolvedProfile],
     relationships: list[CharacterRelationPayload],
 ) -> CharacterAnalysis:
-    now = utc_now()
+    """在单事务中替换人物快照、人物、出场和关系。
+
+    保存前复核逐章来源；任一失败 rollback 并保留旧快照。返回新快照根记录。
+    """
     for item in prepared:
         if not item.changed:
             continue
-        extraction = item.existing
-        if extraction is None:
-            extraction = ChapterCharacterExtraction(
-                chapter_id=item.chapter.id,
-                created_at=now,
-            )
-            db.add(extraction)
-        extraction.extraction_data = item.extraction_data.model_dump(
-            mode="json"
+        _persist_chapter_extraction(
+            db,
+            item,
+            provider_model=provider.model,
         )
-        extraction.source_hash = item.source_hash
-        extraction.model = provider.model
-        extraction.prompt_version = (
-            CHARACTER_EXTRACTION_PROMPT_VERSION
-        )
-        extraction.updated_at = now
+
+    now = utc_now()
 
     existing_analysis = (
         db.query(CharacterAnalysis)
@@ -1975,10 +2126,12 @@ def _persist_snapshot(
 
 
 def analyze_novel_characters(
+# 这是纯业务编排入口；任务状态的 claim/失败落盘由下面的 job runner 负责。
     db: Session,
     novel: Novel,
     provider: LLMProvider,
     force: bool = False,
+    persist_extractions_incrementally: bool = False,
     should_continue: Optional[Callable[[], bool]] = None,
     on_generation_step: Optional[Callable[[], None]] = None,
 ) -> tuple[CharacterAnalysis, bool]:
@@ -1988,6 +2141,9 @@ def analyze_novel_characters(
         novel,
         provider,
         force=force,
+        persist_extractions_incrementally=(
+            persist_extractions_incrementally
+        ),
         should_continue=should_continue,
         on_generation_step=on_generation_step,
     )
@@ -2039,6 +2195,7 @@ def analyze_novel_characters(
 
 
 def _sleep_before_claim_retry(failed_attempt: int) -> None:
+    """领取人物任务遇 SQLite 写锁后按次数执行短退避。"""
     time.sleep(
         CHARACTER_JOB_SQLITE_RETRY_BASE_SECONDS
         * (2 ** (failed_attempt - 1))
@@ -2050,6 +2207,12 @@ def _claim_character_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
+    """有界 SQLite 锁重试地领取人物任务。
+
+    db 是 worker 会话，job_id 定位任务，claimed_at 写入开始时间。条件 UPDATE 只
+    接受 queued，因此重复派发仅一个 worker 得到返回 1；已被领取/结束返回 0，
+    非锁数据库错误继续抛出。
+    """
     for attempt in range(1, CHARACTER_JOB_SQLITE_MAX_ATTEMPTS + 1):
         try:
             claimed = (
@@ -2096,6 +2259,7 @@ def _character_job_has_live_source(
     job_id: str,
     novel_id: int,
 ) -> bool:
+    """确认人物任务仍运行且小说仍存在，供每次模型调用前取消检测。"""
     with session_factory() as status_db:
         return (
             status_db.query(AnalysisJob.id)
@@ -2112,6 +2276,7 @@ def _character_job_has_live_source(
 
 
 def _close_provider(provider: LLMProvider) -> None:
+    """调用人物 provider 的可选 close；异常只记录日志。"""
     close = getattr(provider, "close", None)
     if not callable(close):
         return
@@ -2134,10 +2299,15 @@ def run_character_job(
 
 
 def _run_character_job(
+# worker 必须重新从数据库读取任务范围，不能信任进程内回调参数作为事实来源。
     job_id: str,
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
+    """领取任务、准备章节、归并/推理并原子保存人物快照。
+
+    网络调用不持有写事务；异常由外层写 failed，旧快照保持可用。
+    """
     with session_factory() as db:
         try:
             claimed = _claim_character_job(db, job_id, utc_now())
@@ -2227,31 +2397,64 @@ def _run_character_job(
                 return
 
             def record_generation_step() -> None:
-                progressed = (
-                    db.query(AnalysisJob)
-                    .filter(
-                        AnalysisJob.id == job_id,
-                        AnalysisJob.status == "running",
-                    )
-                    .update(
-                        {
-                            AnalysisJob.progress_current: (
+                """模型每完成一步便以独立短事务推进任务进度。
+
+                若人物消歧产生估算外步骤，先增加 progress_total 再增加 current，
+                始终满足数据库 ``current <= total``。SQLite 锁按有界策略重试；任务
+                已取消或删除时抛内部取消异常。
+                """
+                for attempt in range(
+                    1, CHARACTER_JOB_SQLITE_MAX_ATTEMPTS + 1
+                ):
+                    try:
+                        with session_factory() as progress_db:
+                            next_progress = (
                                 AnalysisJob.progress_current + 1
-                            ),
-                        },
-                        synchronize_session=False,
-                    )
-                )
-                if progressed != 1:
-                    db.rollback()
-                    raise _CharacterJobCancelled()
-                db.commit()
+                            )
+                            progressed = (
+                                progress_db.query(AnalysisJob)
+                                .filter(
+                                    AnalysisJob.id == job_id,
+                                    AnalysisJob.status == "running",
+                                )
+                                .update(
+                                    {
+                                        AnalysisJob.progress_current: (
+                                            next_progress
+                                        ),
+                                        AnalysisJob.progress_total: case(
+                                            (
+                                                AnalysisJob.progress_total
+                                                < next_progress,
+                                                next_progress,
+                                            ),
+                                            else_=(
+                                                AnalysisJob.progress_total
+                                            ),
+                                        ),
+                                    },
+                                    synchronize_session=False,
+                                )
+                            )
+                            progress_db.commit()
+                        if progressed != 1:
+                            raise _CharacterJobCancelled()
+                        return
+                    except OperationalError as error:
+                        if (
+                            not is_sqlite_lock_error(error)
+                            or attempt
+                            == CHARACTER_JOB_SQLITE_MAX_ATTEMPTS
+                        ):
+                            raise
+                        _sleep_before_claim_retry(attempt)
 
             analyze_novel_characters(
                 db,
                 novel,
                 provider,
                 force=bool(force_refresh),
+                persist_extractions_incrementally=True,
                 should_continue=continuation_check,
                 on_generation_step=record_generation_step,
             )

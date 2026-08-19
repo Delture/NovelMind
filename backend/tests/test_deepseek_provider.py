@@ -1,5 +1,6 @@
 """Contract tests for the DeepSeek JSON generation provider."""
 
+import asyncio
 import json
 import logging
 from dataclasses import replace
@@ -10,6 +11,7 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.analyzer.deepseek import (
+    AsyncDeepSeekProvider,
     MAX_JSON_GENERATION_ATTEMPTS,
     DeepSeekProvider,
 )
@@ -125,6 +127,44 @@ def test_provider_requires_a_configured_api_key() -> None:
         match="DEEPSEEK_API_KEY",
     ):
         DeepSeekProvider(make_settings(api_key=None))
+
+
+def test_async_provider_generates_without_a_worker_thread() -> None:
+    captured: Dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return completion_response()
+
+    async def scenario() -> None:
+        http_client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        )
+        provider = AsyncDeepSeekProvider(
+            replace(
+                make_settings(),
+                deepseek_model="deepseek-v4-flash",
+            ),
+            http_client=http_client,
+        )
+        try:
+            result = await provider.generate_json_async(
+                system_prompt="You analyze novels.",
+                user_prompt="Summarize chapter one.",
+                response_model=AnalysisPayload,
+            )
+            assert result.value.summary == "ok"
+            assert provider.summary_concurrency_mode == "auto"
+            assert provider.summary_initial_concurrency == 128
+            assert provider.summary_max_concurrency == 2_500
+        finally:
+            await provider.aclose()
+        assert http_client.is_closed is True
+
+    asyncio.run(scenario())
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["thinking"] == {"type": "disabled"}
 
 
 def test_non_thinking_json_request_wire_contract_and_usage() -> None:
@@ -287,10 +327,61 @@ def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
         response_model=AnalysisPayload,
     )
 
-    assert MAX_JSON_GENERATION_ATTEMPTS == 3
-    assert calls == MAX_JSON_GENERATION_ATTEMPTS
+    assert MAX_JSON_GENERATION_ATTEMPTS == 5
+    assert calls == 3
     assert sleeps == []
     assert result.value.summary == "valid"
+
+
+def test_markdown_fenced_json_is_accepted_without_retry() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(
+            '```json\n{"summary":"valid","characters":[]}\n```'
+        )
+
+    result = make_provider(handler).generate_json(
+        system_prompt="Return JSON.",
+        user_prompt="Analyze.",
+        response_model=AnalysisPayload,
+    )
+
+    assert calls == 1
+    assert result.value.summary == "valid"
+
+
+def test_schema_retry_adds_safe_corrective_feedback() -> None:
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        if len(requests) == 1:
+            return completion_response(
+                '{"summary":7,"characters":"PRIVATE_INVALID_VALUE"}'
+            )
+        return completion_response(
+            '{"summary":"valid","characters":[]}'
+        )
+
+    result = make_provider(handler).generate_json(
+        system_prompt="Return JSON.",
+        user_prompt="Analyze.",
+        response_model=AnalysisPayload,
+    )
+
+    assert result.value.summary == "valid"
+    assert len(requests) == 2
+    retry_text = requests[1]["messages"][-1]["content"]
+    assert "字段校验" in retry_text
+    assert "summary" in retry_text
+    assert "characters" in retry_text
+    assert "PRIVATE_INVALID_VALUE" not in json.dumps(
+        requests[1],
+        ensure_ascii=False,
+    )
 
 
 def test_before_attempt_can_stop_semantic_retries() -> None:
@@ -364,7 +455,7 @@ def test_before_attempt_can_stop_network_retries() -> None:
         '{"summary":7,"characters":"not-a-list"}',
     ],
 )
-def test_semantic_failures_stop_after_two_retries(
+def test_semantic_failures_stop_at_retry_limit(
     invalid_content: Optional[str],
 ) -> None:
     calls = 0

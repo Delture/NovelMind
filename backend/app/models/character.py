@@ -1,4 +1,10 @@
-"""SQLAlchemy models for persisted character-analysis snapshots."""
+"""人物逐章缓存、当前快照、出场与关系的 ORM 模型。
+
+人物分析采用“两层持久化”：逐章抽取可增量复用，整书归并结果则作为一个当前
+快照原子替换。这样失败重试不必重复付费处理未变化章节，也不会让用户看到只
+更新了一半的人物网络。大量复合外键用于保证人物、章节、关系都属于同一小说
+和同一快照，而不是只验证某个整数 ID 恰好存在。
+"""
 
 from sqlalchemy import (
     Boolean,
@@ -25,7 +31,7 @@ from backend.app.core.time import utc_now
 
 
 class ChapterCharacterExtraction(Base):
-    """The current structured character extraction for one chapter."""
+    """单章当前人物观察缓存，来源哈希一致时才允许复用。"""
 
     __tablename__ = "chapter_character_extractions"
     __table_args__ = (
@@ -82,7 +88,7 @@ class ChapterCharacterExtraction(Base):
 
 
 class CharacterAnalysis(Base):
-    """The current atomic character snapshot for one novel."""
+    """一部小说当前完整人物分析的快照根记录。"""
 
     __tablename__ = "character_analyses"
     __table_args__ = (
@@ -167,7 +173,7 @@ class CharacterAnalysis(Base):
 
 
 class Character(Base):
-    """One canonical character in a novel analysis snapshot."""
+    """快照中经过跨章消歧后的规范人物，而不是原文里的一次名字出现。"""
 
     __tablename__ = "characters"
     __table_args__ = (
@@ -490,6 +496,9 @@ class CharacterRelationship(Base):
     )
 
 
+# 这个 SQLite 触发器兼顾 ORM 插入顺序与严格归属约束：部分 ORM 关系在 flush
+# 初期只能先写占位归属，触发器随即从人物记录补齐真实 analysis_id/novel_id。
+# 迁移中还会校验触发器定义，避免旧数据库悄悄缺少这条一致性规则。
 CHARACTER_APPEARANCE_OWNERSHIP_TRIGGER_SQL = """
 CREATE TRIGGER IF NOT EXISTS trg_character_appearances_fill_ownership
 AFTER INSERT ON character_appearances

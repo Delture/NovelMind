@@ -1,4 +1,10 @@
-"""Shared prompt policy adapted from the NovelMind Prompt Suite v3."""
+"""所有生成任务共用的提示词安全与证据政策。
+
+小说正文、标题、摘要和用户问题都属于不可信数据，其中可能恰好包含“忽略要求”
+等文字。统一系统提示明确这些只是待分析材料，防止每条业务提示各写一套、随后
+逐渐漂移。提示版本发生语义变化时，调用方也应提升自己的 prompt version，
+让旧缓存自动失效。
+"""
 
 from textwrap import dedent
 
@@ -9,7 +15,7 @@ def novelmind_system_prompt(
     material_scope: str,
     task_rules: str,
 ) -> str:
-    """Compose one task prompt with consistent evidence and safety rules."""
+    """把具体角色与任务规则嵌入统一的证据、安全和输出政策。"""
     return dedent(
         f"""
         你是 NovelMind 的{role}。目标是把给定小说材料转化为可靠、具体、
