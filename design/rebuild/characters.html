@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC%3Awght%40100..900&family=Noto+Serif+SC%3Awght%40200..900&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      *, ::before, ::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+    </style>
+  <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="reader.css">
+</head>
+  <body style="background-color: #FAF8F4">
+    <div
+      data-pencil-name="重构 04 · 人物档案"
+      style="background-color: #FAF8F4; border-radius: 20px; box-sizing: border-box; height: 900px; overflow: hidden; position: relative; width: 1440px"
+    >
+      <div
+        data-pencil-name="书内导航"
+        style="background-color: #EEE8DDD1; box-sizing: border-box; height: 900px; left: 0px; position: absolute; top: 0px; width: 232px; z-index: 0"
+      >
+        <div
+          data-pencil-name="nav-library"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 20px; position: absolute; top: 24px; width: 190px; z-index: 0"
+        >
+          <div
+            data-pencil-name="nav-library标签"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 36px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 9px; width: 142px; z-index: 0'
+          >
+            返回资料库
+          </div>
+          <svg
+            data-pencil-name="控件图标-leading"
+            data-icon-name="chevron-left"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 16px; left: 12px; position: absolute; top: 12px; width: 16px; z-index: 1"
+          >
+            <path
+              d="M8.59619 2.93945q-0.08545 0.02734-0.19482 0.1128-0.14014 0.12646-0.53321 0.51611l-1.28857 1.2749q-1.81836 1.82178-1.86279 1.90723-0.04102 0.08203-0.04102 0.24951 0 0.16748 0.04785 0.25977 0.05127 0.08887 1.8628 1.9038 1.81494 1.81152 1.9038 1.8628 0.09229 0.04785 0.2461 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.04443-0.23584-0.04102-0.08545-1.62012-1.66797l-1.58252-1.58252 1.58252-1.58252q1.5791-1.58252 1.62012-1.66455 0.04443-0.08545 0.04443-0.23926 0-0.15381-0.0376-0.23584-0.03418-0.08545-0.11621-0.18457-0.16748-0.15381-0.39307-0.16748-0.14014 0-0.18115 0.01367z"
+              fill="#85796A"
+            ></path>
+          </svg>
+        </div>
+        <div
+          data-pencil-name="当前小说"
+          style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 26px; font-style: normal; font-weight: 400; left: 24px; letter-spacing: 0px; line-height: 43px; position: absolute; text-align: left; top: 100px; width: 185px; z-index: 1'
+        >
+          雾港来信
+        </div>
+        <div
+          data-pencil-name="小说信息"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 24px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 146px; width: 180px; z-index: 2'
+        >
+          128 章 · 32.6 万字
+        </div>
+        <div
+          data-pencil-name="nav-reader"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 44px; left: 14px; position: absolute; top: 210px; width: 204px; z-index: 3"
+        >
+          <svg
+            data-pencil-name="阅读图标"
+            data-icon-name="book-open"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 13px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M1.46973 1.20313q-0.28027 0.05811-0.53321 0.30761-0.12305 0.12646-0.19482 0.23242-0.06836 0.10596-0.11279 0.27344l-0.04102 0.12647 0 7.96386 0.04102 0.12647q0.04443 0.15381 0.11279 0.2666 0.07178 0.11279 0.18115 0.22559 0.21191 0.2085 0.46485 0.30761l0.10937 0.04102 3.51367 0.01367q0.39307 0.01367 0.51953 0.02734 0.09912 0.01367 0.19483 0.07178l0.02734 0.01367q0.35205 0.18115 0.5332 0.51612 0.05469 0.11279 0.08204 0.20507 0.03076 0.08887 0.04443 0.28711 0.01367 0.19483 0.04785 0.28028 0.0376 0.08203 0.1333 0.17431 0.09912 0.08887 0.17432 0.12647 0.07861 0.03418 0.23242 0.03418 0.15381 0 0.229-0.03418 0.07861-0.0376 0.17432-0.12647 0.09912-0.09229 0.1333-0.17431 0.0376-0.08545 0.05127-0.28028 0.01367-0.19824 0.04102-0.28711 0.03076-0.09229 0.08545-0.1914 0.18115-0.34863 0.5332-0.52979l0.02734-0.01367q0.0957-0.05811 0.19483-0.07178 0.12646-0.01367 0.51953-0.02734l3.51367-0.01367 0.10937-0.04102q0.25293-0.09912 0.46485-0.30761 0.10938-0.11279 0.17773-0.22559 0.07178-0.11279 0.11621-0.2666l0.04102-0.12647 0-7.96386-0.04102-0.12647q-0.04443-0.16748-0.11621-0.27344-0.06836-0.10596-0.1914-0.23242-0.25293-0.24951-0.54688-0.30762-0.14014-0.04102-1.76367-0.03417-1.62354 0.00684-1.82178 0.03417-0.75537 0.11279-1.3706 0.57422-0.09912 0.07178-0.2666 0.23243-0.16748 0.16064-0.22559 0.23925-0.05469 0.0752-0.06836 0.0752-0.01367 0-0.07178-0.0752-0.05469-0.07861-0.22217-0.23925-0.16748-0.16064-0.2666-0.23243-0.48877-0.37598-1.04931-0.51611-0.25293-0.07178-0.54004-0.07861-0.28711-0.00684-1.6167-0.00684-1.65088 0-1.76367 0.02734z m3.33252 1.13476q0.65625 0.07178 1.104 0.51953 0.45117 0.44775 0.50586 1.09033 0 0.16748 0.00684 3.21973 0.00684 3.05225-0.00684 3.05225l-0.12647-0.05469q-0.23926-0.12646-0.56054-0.19824-0.0957-0.02734-0.40674-0.02735l-3.56836-0.01367 0-7.60156 1.42871 0q1.42871 0 1.62354 0.02734l0-0.01367z m7.44775 3.78027l0 3.80762-3.56836 0.01367q-0.31104 0-0.40674 0.02735-0.32129 0.07178-0.56054 0.19824l-0.12647 0.05469q-0.01367 0-0.00684-3.05225 0.00684-3.05225 0.00684-3.21973 0.05469-0.61523 0.4751-1.06298 0.21191-0.22559 0.50586-0.36573 0.29395-0.14014 0.58789-0.16748 0.16748-0.01367 1.62353-0.02734l1.46973 0 0 3.79394z"
+              fill="#746B60"
+            ></path>
+          </svg>
+          <div
+            data-pencil-name="阅读标签"
+            style='box-sizing: border-box; color: #61574D; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 44px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 10px; width: 140px; z-index: 1'
+          >
+            阅读
+          </div>
+        </div>
+        <div
+          data-pencil-name="nav-summary"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 44px; left: 14px; position: absolute; top: 266px; width: 204px; z-index: 4"
+        >
+          <svg
+            data-pencil-name="章节梳理图标"
+            data-icon-name="list-tree"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 13px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M1.65088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11962 0.17431l-0.02735 0.09571 0 7.43408 0.05469 0.15381q0.15723 0.51953 0.56055 0.86132 0.40674 0.3418 0.93994 0.39991 0.15381 0.02734 1.04248 0.02734 0.88867 0 1.00146-0.02734 0.16748-0.02734 0.29395-0.15381 0.22217-0.22559 0.16748-0.51953-0.05469-0.29395-0.34863-0.43408-0.05811-0.02734-0.19825-0.02735l-1.91748-0.02734-0.09912-0.04102q-0.28027-0.12646-0.32129-0.43408-0.01367-0.08545-0.02051-1.30225-0.00684-1.22021 0.00684-1.22021l0.14014 0.04443q0.08545 0.02734 0.24609 0.03418 0.16064 0.00684 0.95703 0.00684l0.96729 0q0.15381 0 0.22217-0.02735 0.21191-0.08545 0.3247-0.29394 0.04102-0.09912 0.04102-0.25293 0-0.09912-0.00684-0.14014-0.00684-0.04102-0.03418-0.11279-0.04443-0.08203-0.13672-0.16406-0.08887-0.08545-0.17431-0.11963-0.08203-0.0376-0.22217-0.0376l-0.81348 0q-0.93652 0-1.03564-0.02734-0.29395-0.05811-0.43408-0.33496l-0.04102-0.09912-0.02734-2.9668q0-0.2666-0.02735-0.31104-0.08545-0.18115-0.25976-0.27685-0.17432-0.09912-0.37256-0.05811z m2.92578-0.01367q-0.23584 0.04102-0.38281 0.24609-0.14697 0.20166-0.09229 0.44092 0.01367 0.0957 0.04785 0.16748 0.0376 0.06836 0.1128 0.14014 0.07861 0.06836 0.16064 0.11279l0.09912 0.04102 7.88184 0 0.09912-0.04102q0.2666-0.12646 0.32129-0.42041 0.05469-0.29395-0.15381-0.50586-0.14014-0.14014-0.33496-0.16748-0.09912-0.02734-3.8794-0.02734-3.78027 0-3.87939 0.01367z m2.80273 4.11524q-0.09912 0.04443-0.1914 0.12988-0.08887 0.08203-0.12647 0.16064-0.03418 0.0752-0.04101 0.11621-0.00684 0.04102-0.00684 0.14014 0 0.15381 0.04102 0.25293 0.11279 0.2085 0.3247 0.29395l0.09571 0.02734 4.94238 0 0.08545-0.04102q0.06836-0.04443 0.15039-0.12646 0.08545-0.08545 0.12647-0.16065 0.04443-0.07861 0.04443-0.24609 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666l-0.08545-0.05469-4.64844 0q-0.33496 0.01367-0.38965 0.02735z m0.06836 4.06054q-0.14014 0.04102-0.25976 0.15381-0.11963 0.11279-0.16065 0.25293-0.05469 0.19482 0.02735 0.39307 0.08545 0.19482 0.2666 0.29394 0.07178 0.04102 0.19824 0.04102 0.18115 0.01367 0.71094 0.02734l4.14599-0.01367 0.1128-0.04102q0.2085-0.11279 0.29052-0.32129 0.08545-0.21191 0.00684-0.4204-0.0752-0.21192-0.28369-0.32471l-0.09912-0.04102-2.45069-0.01367q-2.43359 0-2.50537 0.01367z"
+              fill="#746B60"
+            ></path>
+          </svg>
+          <div
+            data-pencil-name="章节梳理标签"
+            style='box-sizing: border-box; color: #61574D; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 44px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 10px; width: 140px; z-index: 1'
+          >
+            章节梳理
+          </div>
+        </div>
+        <div
+          data-pencil-name="nav-characters"
+          style="background-color: #DDD4C5; border-radius: 12px; box-sizing: border-box; height: 44px; left: 14px; position: absolute; top: 322px; width: 204px; z-index: 5"
+        >
+          <svg
+            data-pencil-name="人物图标"
+            data-icon-name="users"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 13px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M4.84326 1.20313q-0.81006 0.11279-1.42871 0.61865-0.61523 0.50244-0.89551 1.24414-0.18115 0.48877-0.18115 1.02197 0 0.28027 0.04102 0.50586 0.04443 0.22217 0.14013 0.48877 0.15381 0.46143 0.46826 0.84766 0.31787 0.38281 0.7212 0.63574 0.36572 0.22559 0.73486 0.32471 0.37256 0.0957 0.80664 0.0957 0.22559 0 0.3623-0.01367 0.14014-0.01367 0.35206-0.05811 0.60156-0.15381 1.104-0.55713 0.50586-0.40674 0.7998-0.98096 0.19482-0.39307 0.26661-0.88183 0.02734-0.14014 0.02734-0.40674 0-0.2666-0.02734-0.40674-0.09912-0.65625-0.46485-1.20312-0.3623-0.54688-0.93652-0.89551-0.43408-0.2666-0.98096-0.36572-0.15381-0.02734-0.45459-0.03418-0.30078-0.00684-0.45459 0.02051z m4.34082 0.0581q-0.14014 0.04102-0.25293 0.14014-0.11279 0.0957-0.15381 0.2666-0.04102 0.16748 0 0.32129 0.04102 0.15381 0.15381 0.25293 0.11279 0.0957 0.33838 0.18115 0.24951 0.08203 0.40332 0.17432 0.15381 0.08887 0.30762 0.25976 0.33838 0.33496 0.45459 0.76904 0.11963 0.43408 0.01367 0.86817-0.10254 0.43408-0.41699 0.76904-0.31445 0.33496-0.7793 0.48877-0.19482 0.07178-0.28711 0.14356-0.08887 0.06836-0.16064 0.20849-0.05469 0.09912-0.05469 0.23926 0 0.13672 0.05469 0.23584 0.08545 0.19482 0.28027 0.29395 0.12646 0.05811 0.25293 0.05126 0.12646-0.01025 0.33496-0.07861 0.35205-0.11279 0.6084-0.27344 0.25977-0.16064 0.5127-0.42724 0.78271-0.78271 0.85449-1.84912 0.09912-1.18945-0.70069-2.12598-0.48877-0.58789-1.2749-0.85449-0.33496-0.11279-0.48877-0.05469z m-3.73926 1.09033q0.40674 0.02734 0.78272 0.28711 0.37939 0.25977 0.58105 0.65967 0.20508 0.39648 0.18457 0.88184-0.02051 0.48193-0.28711 0.86132-0.15381 0.23584-0.37939 0.41358-0.22217 0.17432-0.46143 0.27002-0.19482 0.05811-0.2871 0.07861-0.08887 0.02051-0.32813 0.02051-0.23926 0-0.33154-0.02051-0.08887-0.02051-0.28369-0.07861-0.39307-0.14014-0.68018-0.46826-0.28711-0.32813-0.3999-0.73487-0.10938-0.46143 0.01367-0.90918 0.12646-0.44775 0.45459-0.76904 0.33154-0.32471 0.79297-0.45117 0.08545-0.02734 0.24609-0.04785 0.16064-0.02051 0.21533-0.00684l0.16748 0.01367z m-2.35156 5.85156q-0.96387 0.14014-1.65088 0.82715-0.54687 0.54688-0.75537 1.31592-0.07178 0.23926-0.08545 0.44092-0.01367 0.20166-0.01367 0.82031l0 0.76904 0.04102 0.1128q0.05811 0.0957 0.14013 0.18115 0.21191 0.19482 0.50586 0.14697 0.29395-0.04785 0.42041-0.31445l0.04102-0.09912 0.01367-0.79639q0.01367-0.61865 0.02734-0.77246 0.01367-0.15381 0.07178-0.34863 0.14014-0.37939 0.46826-0.68018 0.32813-0.30078 0.73487-0.41357 0.15381-0.04102 0.53662-0.05469 0.38623-0.01367 1.66113-0.01367 1.2749 0 1.65771 0.01367 0.38623 0.01367 0.54004 0.05469 0.42041 0.11279 0.75538 0.43066 0.33838 0.31445 0.46142 0.71778 0.05811 0.16748 0.06494 0.3247 0.00684 0.15381 0.02051 0.7417l0.01367 0.79639 0.04102 0.09912q0.12646 0.2666 0.42041 0.31445 0.29395 0.04785 0.50586-0.14697 0.08203-0.08545 0.14013-0.18115l0.04102-0.1128 0-0.76904q0-0.61865-0.01367-0.82031-0.01367-0.20166-0.08545-0.44092-0.08203-0.32129-0.23584-0.61523-0.2666-0.51953-0.73828-0.90235-0.46826-0.38623-1.02539-0.54004l-0.04444-0.01367q-0.16748-0.05811-0.29394-0.07178-0.15381-0.01367-0.56055-0.01367l-1.60986-0.01367q-2.05762 0-2.21143 0.02734z m7.85449 0.05811q-0.23926 0.05469-0.36572 0.27344-0.12305 0.21533-0.05469 0.45459 0.05811 0.19482 0.21192 0.30761 0.06836 0.04102 0.28027 0.12647 0.24951 0.08203 0.40332 0.17432 0.15381 0.08887 0.32471 0.27343 0.33496 0.34863 0.44775 0.78272 0.02734 0.11279 0.03418 0.24609 0.00684 0.1333 0.02051 0.70752l0.01367 0.79639 0.04102 0.09912q0.12646 0.2666 0.42041 0.31445 0.29395 0.04785 0.50586-0.14697 0.08203-0.08545 0.14013-0.18115l0.04102-0.1128 0.01367-0.64599q0-0.64258-0.02734-0.95703-0.02734-0.31445-0.12647-0.59473-0.14014-0.42041-0.42724-0.81006-0.28711-0.39307-0.64942-0.65967-0.31103-0.22559-0.69726-0.35888-0.38281-0.1333-0.5503-0.08887z"
+              fill="#746B60"
+            ></path>
+          </svg>
+          <div
+            data-pencil-name="人物标签"
+            style='box-sizing: border-box; color: #7D4C36; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 44px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 10px; width: 140px; z-index: 1'
+          >
+            人物
+          </div>
+        </div>
+        <div
+          data-pencil-name="nav-ask"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 44px; left: 14px; position: absolute; top: 378px; width: 204px; z-index: 6"
+        >
+          <svg
+            data-pencil-name="原文问答图标"
+            data-icon-name="messages-square"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 13px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M2.15674 0.60156q-0.29395 0.02734-0.58789 0.16748-0.29395 0.14014-0.50586 0.36573-0.30762 0.32129-0.43408 0.78271l-0.04102 0.16748 0 5.72852q0 0.58789 0.01367 0.68359 0.07178 0.43408 0.44092 0.67334 0.37256 0.23926 0.79297 0.12646 0.14014-0.04443 0.229-0.09912 0.09229-0.05469 0.28711-0.22216 0.14014-0.14014 0.57422-0.57422 0.4751-0.46484 0.62207-0.60157 0.14697-0.14014 0.21875-0.17089l0.0957-0.04102 4.6211-0.01367 0.15381-0.05469q0.36572-0.11279 0.65283-0.34863 0.28711-0.23926 0.44092-0.56397 0.14014-0.28027 0.18115-0.60156 0.01367-0.16748 0-2.04394l0-1.87647-0.04102-0.16748q-0.12646-0.46143-0.43408-0.76904-0.44775-0.48877-1.13476-0.56055-0.16748-0.01367-3.06592-0.01367-2.89844 0-3.07959 0.02734z m6.24463 1.20313q0.19482 0.09912 0.29394 0.29394l0.04102 0.09912 0 3.78028-0.04102 0.09912q-0.11279 0.22217-0.35205 0.32129-0.05469 0.01367-2.35156 0.02734l-2.31055 0-0.14013 0.04102q-0.14014 0.04443-0.30762 0.12988-0.16748 0.08203-0.28028 0.16064-0.11279 0.0752-0.65625 0.62207l-0.54687 0.52979 0.01367-5.71143 0.04102-0.09912q0.11279-0.24951 0.37939-0.32129 0.08545-0.02734 3.10694-0.02734l3.01123 0.01367 0.09912 0.04102z m3.07959 2.89844q-0.18457 0.05811-0.29053 0.21191-0.10254 0.15381-0.10254 0.33496 0 0.23926 0.16748 0.40674 0.08545 0.08203 0.17432 0.11963 0.09228 0.03418 0.24609 0.05468 0.15381 0.02051 0.23584 0.05811 0.08545 0.03418 0.16065 0.11279 0.07861 0.0752 0.12304 0.1709l0.04102 0.09912 0.01367 5.73877-0.57422-0.57422q-0.44775-0.43408-0.60156-0.56396-0.15381-0.1333-0.33496-0.21875-0.12646-0.05469-0.29395-0.09912l-0.1709-0.04102-2.27978-0.01367q-2.29688-0.01367-2.35156-0.02734-0.22559-0.08545-0.35205-0.33496-0.01367-0.05811-0.02735-0.14014-0.01367-0.08545-0.01367-0.3794-0.01367-0.42041-0.03418-0.48193-0.02051-0.06494-0.07861-0.14014-0.05469-0.07861-0.1128-0.11963-0.15381-0.11279-0.3623-0.11279-0.23926 0-0.40674 0.16748-0.12646 0.11279-0.15381 0.25977-0.02734 0.14697-0.01367 0.56738 0 0.2666 0.00684 0.36572 0.00684 0.0957 0.03418 0.2085 0.07178 0.25293 0.18115 0.44092 0.11279 0.18799 0.29394 0.37256 0.18457 0.18115 0.37256 0.29394 0.18799 0.10938 0.44092 0.18115l0.16748 0.04102 4.59375 0.01367 0.08203 0.04102q0.08545 0.04443 0.82715 0.78613 0.5332 0.51611 0.65625 0.63574 0.12646 0.11963 0.22559 0.16065 0.22558 0.11279 0.46142 0.11279 0.32129 0 0.58106-0.19482 0.25977-0.19824 0.37256-0.53321 0.01367-0.07178 0.02734-0.51953l0.01367-4.95605q-0.01367-0.69727-0.02734-0.93653-0.01367-0.18115-0.04102-0.32129-0.11279-0.39307-0.39307-0.70068-0.28027-0.30762-0.65966-0.46143-0.19482-0.07178-0.45459-0.10595-0.25977-0.03418-0.36914 0.02051z"
+              fill="#746B60"
+            ></path>
+          </svg>
+          <div
+            data-pencil-name="原文问答标签"
+            style='box-sizing: border-box; color: #61574D; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 44px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 10px; width: 140px; z-index: 1'
+          >
+            原文问答
+          </div>
+        </div>
+        <div
+          data-pencil-name="nav-report"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 44px; left: 14px; position: absolute; top: 434px; width: 204px; z-index: 7"
+        >
+          <svg
+            data-pencil-name="全书报告图标"
+            data-icon-name="notebook-pen"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 13px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M3.33252 0.60156q-0.50586 0.04102-0.9126 0.36573-0.40332 0.32129-0.5708 0.81005-0.05811 0.15381-0.07861 0.32471-0.02051 0.16748-0.02051 0.46143l0 0.3623-0.37939 0q-0.26318 0-0.32813 0.00684-0.06152 0.00684-0.11963 0.03418-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.18457 0.12646 0.06836 0.01367 0.13672 0.02051 0.07178 0.00684 0.31104 0.00684l0.34863 0 0 1.17578-0.3623 0q-0.2666 0.01367-0.33155 0.02051-0.06152 0.00684-0.1333 0.03418-0.28027 0.12646-0.32812 0.42041-0.04785 0.29395 0.16064 0.51953 0.11279 0.11279 0.24609 0.14697 0.1333 0.03418 0.45459 0.03418l0.29395 0 0 1.14844-0.34863 0q-0.2666 0.01367-0.33155 0.02051-0.06152 0.00684-0.1333 0.04785-0.23584 0.09912-0.32129 0.33838-0.08203 0.23584 0.02735 0.46142 0.04443 0.06836 0.11963 0.14014 0.07861 0.06836 0.15381 0.10596 0.07861 0.03418 0.14013 0.04101 0.06494 0.00684 0.33155 0.02051l0.3623 0 0 1.17578-0.37939 0q-0.26318 0-0.32813 0.00684-0.06152 0.00684-0.11963 0.03418-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.18457 0.12646 0.06836 0.01367 0.13672 0.02051 0.07178 0.00684 0.31104 0.00684l0.34863 0 0 0.3623q0 0.29395 0.02051 0.46485 0.02051 0.16748 0.07861 0.32129 0.14014 0.44775 0.48877 0.75537 0.34863 0.30762 0.81348 0.40674 0.10938 0.01367 0.66992 0.02734l3.17871 0 3.17871 0q0.56055-0.01367 0.66992-0.02734 0.54688-0.12647 0.92285-0.52637 0.3794-0.3999 0.46485-0.94336 0.01367-0.14014 0.01367-2.43701l-0.01367-2.28321-0.04102-0.0957q-0.04443-0.09912-0.13672-0.17432-0.08887-0.07861-0.18799-0.11962-0.0957-0.04443-0.229-0.0376-0.1333 0.00684-0.21875 0.05127-0.19482 0.0957-0.29394 0.30761l-0.04102 0.09913-0.01367 4.59033-0.05469 0.09912q-0.09912 0.19482-0.29394 0.29394l-0.07178 0.02735-7.30762 0-0.09912-0.04102q-0.08203-0.04443-0.16748-0.1333-0.08203-0.09228-0.12647-0.19141-0.01367-0.06836-0.0205-0.13671-0.00684-0.07178-0.00684-0.31104l0-0.34863 0.36572 0q0.26318 0 0.33155-0.00684 0.07178-0.00684 0.1333-0.04101 0.06494-0.0376 0.14697-0.11963 0.08545-0.08545 0.12647-0.16065 0.04443-0.07861 0.04443-0.24609 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.04102-0.12305-0.04785-0.06152-0.00684-0.33838-0.00684l-0.36572 0 0-1.17578 0.36572 0q0.26318-0.01367 0.31787-0.02051 0.05811-0.00684 0.14356-0.03418 0.2666-0.12646 0.32129-0.42041 0.05469-0.29395-0.15381-0.50586-0.11279-0.10938-0.25293-0.15039-0.14014-0.04443-0.4751-0.04443l-0.2666 0 0-1.14844 0.34863 0q0.25293-0.01367 0.31446-0.02051 0.06494-0.00684 0.15039-0.03418 0.2085-0.11279 0.29053-0.32129 0.08545-0.21191 0.00683-0.42041-0.0752-0.21191-0.28369-0.3247-0.08545-0.02734-0.14356-0.03418-0.05469-0.00684-0.31787-0.02051l-0.36572 0 0-1.17578 0.36572 0q0.26318 0 0.33155-0.00684 0.07178-0.00684 0.1333-0.04101 0.06494-0.0376 0.14697-0.11963 0.08545-0.08545 0.12647-0.16065 0.04443-0.07861 0.04443-0.24609 0-0.16748-0.04102-0.25293-0.09912-0.16748-0.28027-0.2666-0.05811-0.04102-0.12305-0.04785-0.06152-0.00684-0.33838-0.00684l-0.36572 0 0-0.34863q0-0.23926 0.00684-0.30762 0.00684-0.07178 0.0205-0.14014 0.04443-0.09912 0.12647-0.18798 0.08545-0.09229 0.16748-0.13672l0.09912-0.04102 2.31055-0.01367q2.29688-0.01367 2.35156-0.02734 0.16748-0.05811 0.28711-0.21875 0.11963-0.16064 0.10254-0.36231-0.01367-0.20508-0.14697-0.35889-0.12988-0.15381-0.3418-0.18115-0.0957-0.02734-2.24561-0.02734-2.1499 0-2.33105 0.02734z m8.09033 0q-0.58789 0.04102-1.03564 0.44776-0.15381 0.14014-1.63721 1.62353l-1.13477 1.13477q-0.34863 0.36572-0.46142 0.50586-0.08545 0.10938-0.14014 0.27685-0.05469 0.12646-0.32129 1.02539-0.16748 0.58789-0.21875 0.76221-0.04785 0.17432-0.04785 0.28711-0.01367 0.38965 0.25293 0.65625 0.15381 0.15381 0.37598 0.22558 0.12646 0.04102 0.23242 0.03418 0.10596-0.00684 0.3418-0.06152 0.18457-0.05811 0.72802-0.21191 0.88184-0.25293 0.98096-0.29395 0.19482-0.06836 0.40674-0.20849 0.0957-0.07178 1.68506-1.66114 1.58935-1.58936 1.66113-1.7124 0.2666-0.40674 0.31445-0.85449 0.04785-0.44775-0.1333-0.88184-0.18115-0.43408-0.59472-0.7417-0.41357-0.31104-0.86133-0.35205l-0.18115-0.01367q-0.05811 0-0.21192 0.01367z m0.43408 1.20313q0.09912 0.05811 0.19483 0.15039 0.09912 0.08887 0.14014 0.19482 0.04443 0.10254 0.04443 0.25977l0 0.04101q0.01367 0.12646-0.04102 0.2085-0.07178 0.11279-0.35205 0.40674-0.19482 0.2085-0.95019 0.96728l-1.87647 1.85938-0.19824 0.0581q-1.06299 0.33496-1.07666 0.31446-0.01367-0.02051 0.15381-0.59473 0.16748-0.57422 0.19482-0.64258 0.03076-0.07178 1.58252-1.61328l1.1211-1.13135q0.34863-0.33838 0.47509-0.42041 0.08545-0.07178 0.17432-0.09228 0.09229-0.02051 0.21875-0.00684 0.12647 0.01367 0.19482 0.04102z"
+              fill="#746B60"
+            ></path>
+          </svg>
+          <div
+            data-pencil-name="全书报告标签"
+            style='box-sizing: border-box; color: #61574D; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 44px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 10px; width: 140px; z-index: 1'
+          >
+            全书报告
+          </div>
+        </div>
+        <div
+          data-pencil-name="本书任务说明"
+          style='box-sizing: border-box; color: #887C6E; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 24px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 784px; width: 186px; z-index: 8'
+        >
+          阅读与分析结果保存在本机
+        </div>
+        <div
+          data-pencil-name="settings"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 20px; position: absolute; top: 830px; width: 190px; z-index: 9"
+        >
+          <div
+            data-pencil-name="settings标签"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 166px; z-index: 0'
+          >
+            设置
+          </div>
+        </div>
+      </div>
+      <div
+        data-pencil-name="页面路径"
+        style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 268px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 28px; width: 660px; z-index: 1'
+      >
+        雾港来信 / 人物
+      </div>
+      <div
+        data-pencil-name="tasks"
+        style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 1280px; position: absolute; top: 22px; width: 128px; z-index: 2"
+      >
+        <div
+          data-pencil-name="tasks标签"
+          style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 104px; z-index: 0'
+        >
+          任务 · 1
+        </div>
+      </div>
+      <div
+        data-pencil-name="预览标识"
+        style='box-sizing: border-box; color: #938777; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 10px; font-style: normal; font-weight: 400; left: 1180px; letter-spacing: 0px; line-height: 17px; position: absolute; text-align: left; top: 874px; width: 230px; z-index: 3'
+      >
+        交互设计预览 · 演示数据
+      </div>
+      <div
+        data-pencil-name="页面标题"
+        style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 32px; font-style: normal; font-weight: 400; left: 278px; letter-spacing: 0px; line-height: 53px; position: absolute; text-align: left; top: 105px; width: 600px; z-index: 4'
+      >
+        人物
+      </div>
+      <div
+        data-pencil-name="页面说明"
+        style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 278px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 160px; width: 740px; z-index: 5'
+      >
+        24 位人物，以及他们如何改变彼此。
+      </div>
+      <div
+        data-pencil-name="generate-characters"
+        style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 1210px; position: absolute; top: 114px; width: 198px; z-index: 6"
+      >
+        <div
+          data-pencil-name="generate-characters标签"
+          style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 174px; z-index: 0'
+        >
+          更新人物分析
+        </div>
+      </div>
+      <div
+        data-pencil-name="人物列表区"
+        style="background-color: #F0ECE4B3; border-radius: 22px; box-sizing: border-box; height: 608px; left: 270px; position: absolute; top: 224px; width: 274px; z-index: 7"
+      >
+        <div
+          data-pencil-name="character-search"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 16px; position: absolute; top: 16px; width: 242px; z-index: 0"
+        >
+          <div
+            data-pencil-name="character-search标签"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 218px; z-index: 0'
+          >
+            搜索人物与别名
+          </div>
+        </div>
+        <div
+          data-pencil-name="person-0"
+          style="background-color: #E2D8C9; border-radius: 12px; box-sizing: border-box; height: 74px; left: 12px; position: absolute; top: 84px; width: 250px; z-index: 1"
+        >
+          <div
+            data-pencil-name="person-name-0"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 26px; position: absolute; text-align: left; top: 10px; width: 220px; z-index: 0'
+          >
+            林舟
+          </div>
+          <div
+            data-pencil-name="person-meta-0"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 42px; width: 220px; z-index: 1'
+          >
+            小舟、阿舟 · 112 章
+          </div>
+        </div>
+        <div
+          data-pencil-name="person-1"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 74px; left: 12px; position: absolute; top: 170px; width: 250px; z-index: 2"
+        >
+          <div
+            data-pencil-name="person-name-1"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 26px; position: absolute; text-align: left; top: 10px; width: 220px; z-index: 0'
+          >
+            沈砚
+          </div>
+          <div
+            data-pencil-name="person-meta-1"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 42px; width: 220px; z-index: 1'
+          >
+            老沈 · 68 章
+          </div>
+        </div>
+        <div
+          data-pencil-name="person-2"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 74px; left: 12px; position: absolute; top: 256px; width: 250px; z-index: 3"
+        >
+          <div
+            data-pencil-name="person-name-2"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 26px; position: absolute; text-align: left; top: 10px; width: 220px; z-index: 0'
+          >
+            许知遥
+          </div>
+          <div
+            data-pencil-name="person-meta-2"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 42px; width: 220px; z-index: 1'
+          >
+            知遥 · 54 章
+          </div>
+        </div>
+        <div
+          data-pencil-name="person-3"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 74px; left: 12px; position: absolute; top: 342px; width: 250px; z-index: 4"
+        >
+          <div
+            data-pencil-name="person-name-3"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 26px; position: absolute; text-align: left; top: 10px; width: 220px; z-index: 0'
+          >
+            林远山
+          </div>
+          <div
+            data-pencil-name="person-meta-3"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 42px; width: 220px; z-index: 1'
+          >
+            林父 · 32 章
+          </div>
+        </div>
+        <div
+          data-pencil-name="person-4"
+          style="background-color: #FFFFFF00; border-radius: 12px; box-sizing: border-box; height: 74px; left: 12px; position: absolute; top: 428px; width: 250px; z-index: 5"
+        >
+          <div
+            data-pencil-name="person-name-4"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 26px; position: absolute; text-align: left; top: 10px; width: 220px; z-index: 0'
+          >
+            陈叔
+          </div>
+          <div
+            data-pencil-name="person-meta-4"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 42px; width: 220px; z-index: 1'
+          >
+            老陈 · 27 章
+          </div>
+        </div>
+      </div>
+      <div
+        data-pencil-name="人物详情"
+        style="background-color: #FFFDFA; border-radius: 24px; box-sizing: border-box; height: 538px; left: 574px; position: absolute; top: 224px; width: 834px; z-index: 8"
+      >
+        <div
+          data-pencil-name="人物简介组"
+          style="box-sizing: border-box; height: 185px; left: 32px; position: absolute; top: 28px; width: 770px; z-index: 0"
+        >
+          <div
+            data-pencil-name="person-title"
+            style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 32px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 53px; position: absolute; text-align: left; top: 0px; width: 700px; z-index: 0'
+          >
+            林舟
+          </div>
+          <div
+            data-pencil-name="person-alias"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 53px; width: 700px; z-index: 1'
+          >
+            别名：小舟、阿舟
+          </div>
+          <div
+            data-pencil-name="person-description"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 26px; position: absolute; text-align: left; top: 87px; width: 680px; z-index: 2'
+          >
+            回到故乡的年轻人。在追查一封来信的过程中，逐渐接近父母隐瞒多年的往事。
+          </div>
+          <div
+            data-pencil-name="person-stat"
+            style='box-sizing: border-box; color: #8A7B6C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 150px; width: 700px; z-index: 3'
+          >
+            出场 112 章 · 提及 846 次 · 首次出现于第 1 章
+          </div>
+        </div>
+        <div
+          data-pencil-name="人物关系组"
+          style="box-sizing: border-box; height: 260px; left: 32px; position: absolute; top: 240px; width: 770px; z-index: 1"
+        >
+          <div
+            data-pencil-name="关系标题"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 18px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 30px; position: absolute; text-align: left; top: 0px; width: 700px; z-index: 0'
+          >
+            人物关系
+          </div>
+          <div
+            data-pencil-name="关系条目1"
+            style="box-sizing: border-box; height: 100px; left: 0px; position: absolute; top: 44px; width: 770px; z-index: 1"
+          >
+            <div
+              data-pencil-name="relationship-name-1"
+              style='box-sizing: border-box; color: #40352B; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 500; left: 0px; letter-spacing: 0px; line-height: normal; position: absolute; text-align: left; top: 0px; width: 100px; z-index: 0'
+            >
+              沈砚
+            </div>
+            <div
+              data-pencil-name="relationship-type-1"
+              style='box-sizing: border-box; color: #94816B; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 110px; letter-spacing: 0px; line-height: normal; position: absolute; text-align: left; top: 2px; width: 200px; z-index: 1'
+            >
+              提供线索
+            </div>
+            <div
+              data-pencil-name="relationship-1"
+              style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 31px; width: 690px; z-index: 2'
+            >
+              帮助林舟追查往事，逐步揭开旧日线索。
+            </div>
+            <div
+              data-pencil-name="evidence-12"
+              style="background-color: #FFFFFF00; border-radius: 4px; box-sizing: border-box; height: 28px; left: 0px; position: absolute; top: 62px; width: 240px; z-index: 3"
+            >
+              <div
+                data-pencil-name="evidence-12标签"
+                style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 9px; width: 167px; z-index: 0'
+              >
+                第 9、12、28 章
+              </div>
+              <svg
+                data-pencil-name="控件图标-trailing"
+                data-icon-name="arrow-up-right"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+                xmlns="http://www.w3.org/2000/svg"
+                style="box-sizing: border-box; height: 16px; left: 185px; position: absolute; top: 12px; width: 16px; z-index: 1"
+              >
+                <path
+                  d="M3.94775 3.51367q-0.14014 0.04102-0.25976 0.15381-0.11963 0.11279-0.16065 0.25293-0.05469 0.19482 0.02735 0.39307 0.08545 0.19482 0.25293 0.29394 0.08545 0.02734 0.19482 0.04102 0.1709 0.01367 0.65967 0.02734l3.83496 0-2.45068 2.45068q-1.65088 1.65088-2.05762 2.07129-0.40332 0.42041-0.43408 0.4751-0.10938 0.23926-0.01367 0.46485 0.09912 0.22217 0.32128 0.32128 0.22559 0.0957 0.46485-0.01367 0.05469-0.03076 0.4751-0.43408 0.42041-0.40674 2.07129-2.05762l2.45068-2.45068 0 2.21143q0 2.2251 0.02734 2.31054 0.02734 0.18115 0.15381 0.29395 0.19824 0.19482 0.46143 0.17431 0.2666-0.02051 0.42041-0.24609l0.02734-0.02734q0.04443-0.05469 0.05811-0.18116 0.01367-0.15381 0.02734-0.68701l0-5.37646-0.04102-0.09571q-0.02734-0.11279-0.12646-0.21191-0.09912-0.09912-0.21192-0.12646l-0.0957-0.04102-3.01123 0q-2.99414 0-3.06592 0.01367z"
+                  fill="#85796A"
+                ></path>
+              </svg>
+            </div>
+          </div>
+          <div
+            data-pencil-name="关系条目2"
+            style="box-sizing: border-box; height: 100px; left: 0px; position: absolute; top: 154px; width: 770px; z-index: 2"
+          >
+            <div
+              data-pencil-name="relationship-name-2"
+              style='box-sizing: border-box; color: #40352B; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 16px; font-style: normal; font-weight: 500; left: 0px; letter-spacing: 0px; line-height: normal; position: absolute; text-align: left; top: 0px; width: 100px; z-index: 0'
+            >
+              林远山
+            </div>
+            <div
+              data-pencil-name="relationship-type-2"
+              style='box-sizing: border-box; color: #94816B; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 110px; letter-spacing: 0px; line-height: normal; position: absolute; text-align: left; top: 2px; width: 200px; z-index: 1'
+            >
+              父亲
+            </div>
+            <div
+              data-pencil-name="relationship-2"
+              style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 0px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 31px; width: 690px; z-index: 2'
+            >
+              父子之间存在尚未解开的误会。
+            </div>
+            <div
+              data-pencil-name="evidence-46"
+              style="background-color: #FFFFFF00; border-radius: 4px; box-sizing: border-box; height: 28px; left: 0px; position: absolute; top: 62px; width: 240px; z-index: 3"
+            >
+              <div
+                data-pencil-name="evidence-46标签"
+                style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 9px; width: 167px; z-index: 0'
+              >
+                第 1、12、46 章
+              </div>
+              <svg
+                data-pencil-name="控件图标-trailing"
+                data-icon-name="arrow-up-right"
+                data-icon-set="lucide"
+                viewBox="0 0 13.99993896484375 14"
+                preserveAspectRatio="xMidYMid meet"
+                xmlns="http://www.w3.org/2000/svg"
+                style="box-sizing: border-box; height: 16px; left: 185px; position: absolute; top: 12px; width: 16px; z-index: 1"
+              >
+                <path
+                  d="M3.94775 3.51367q-0.14014 0.04102-0.25976 0.15381-0.11963 0.11279-0.16065 0.25293-0.05469 0.19482 0.02735 0.39307 0.08545 0.19482 0.25293 0.29394 0.08545 0.02734 0.19482 0.04102 0.1709 0.01367 0.65967 0.02734l3.83496 0-2.45068 2.45068q-1.65088 1.65088-2.05762 2.07129-0.40332 0.42041-0.43408 0.4751-0.10938 0.23926-0.01367 0.46485 0.09912 0.22217 0.32128 0.32128 0.22559 0.0957 0.46485-0.01367 0.05469-0.03076 0.4751-0.43408 0.42041-0.40674 2.07129-2.05762l2.45068-2.45068 0 2.21143q0 2.2251 0.02734 2.31054 0.02734 0.18115 0.15381 0.29395 0.19824 0.19482 0.46143 0.17431 0.2666-0.02051 0.42041-0.24609l0.02734-0.02734q0.04443-0.05469 0.05811-0.18116 0.01367-0.15381 0.02734-0.68701l0-5.37646-0.04102-0.09571q-0.02734-0.11279-0.12646-0.21191-0.09912-0.09912-0.21192-0.12646l-0.0957-0.04102-3.01123 0q-2.99414 0-3.06592 0.01367z"
+                  fill="#85796A"
+                ></path>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  <script src="reader.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

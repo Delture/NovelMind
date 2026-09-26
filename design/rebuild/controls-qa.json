@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "layouts": [
+    {
+      "route": "library",
+      "issues": []
+    },
+    {
+      "route": "reader",
+      "issues": []
+    },
+    {
+      "route": "summary",
+      "issues": []
+    },
+    {
+      "route": "characters",
+      "issues": []
+    },
+    {
+      "route": "ask",
+      "issues": []
+    },
+    {
+      "route": "report",
+      "issues": []
+    }
+  ],
+  "checks": [
+    "all icon and label centers",
+    "labels fit buttons",
+    "no text arrow controls",
+    "native keyboard select",
+    "custom select styling",
+    "disclosure",
+    "escape close",
+    "reader dialog",
+    "dynamic status preserves icon"
+  ]
+}

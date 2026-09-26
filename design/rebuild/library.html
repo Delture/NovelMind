@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC%3Awght%40100..900&family=Noto+Serif+SC%3Awght%40200..900&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      *, ::before, ::after {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+    </style>
+  <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="reader.css">
+</head>
+  <body style="background-color: #FAF8F4">
+    <div
+      data-pencil-name="重构 01 · 资料库"
+      style="background-color: #FAF8F4; border-radius: 20px; box-sizing: border-box; height: 900px; overflow: hidden; position: relative; width: 1440px"
+    >
+      <svg
+        data-pencil-name="品牌图标"
+        data-icon-name="book-open"
+        data-icon-set="lucide"
+        viewBox="0 0 13.99993896484375 14"
+        preserveAspectRatio="xMidYMid meet"
+        xmlns="http://www.w3.org/2000/svg"
+        style="box-sizing: border-box; height: 23px; left: 28px; position: absolute; top: 28px; width: 23px; z-index: 0"
+      >
+        <path
+          d="M1.46973 1.20313q-0.28027 0.05811-0.53321 0.30761-0.12305 0.12646-0.19482 0.23242-0.06836 0.10596-0.11279 0.27344l-0.04102 0.12647 0 7.96386 0.04102 0.12647q0.04443 0.15381 0.11279 0.2666 0.07178 0.11279 0.18115 0.22559 0.21191 0.2085 0.46485 0.30761l0.10937 0.04102 3.51367 0.01367q0.39307 0.01367 0.51953 0.02734 0.09912 0.01367 0.19483 0.07178l0.02734 0.01367q0.35205 0.18115 0.5332 0.51612 0.05469 0.11279 0.08204 0.20507 0.03076 0.08887 0.04443 0.28711 0.01367 0.19483 0.04785 0.28028 0.0376 0.08203 0.1333 0.17431 0.09912 0.08887 0.17432 0.12647 0.07861 0.03418 0.23242 0.03418 0.15381 0 0.229-0.03418 0.07861-0.0376 0.17432-0.12647 0.09912-0.09229 0.1333-0.17431 0.0376-0.08545 0.05127-0.28028 0.01367-0.19824 0.04102-0.28711 0.03076-0.09229 0.08545-0.1914 0.18115-0.34863 0.5332-0.52979l0.02734-0.01367q0.0957-0.05811 0.19483-0.07178 0.12646-0.01367 0.51953-0.02734l3.51367-0.01367 0.10937-0.04102q0.25293-0.09912 0.46485-0.30761 0.10938-0.11279 0.17773-0.22559 0.07178-0.11279 0.11621-0.2666l0.04102-0.12647 0-7.96386-0.04102-0.12647q-0.04443-0.16748-0.11621-0.27344-0.06836-0.10596-0.1914-0.23242-0.25293-0.24951-0.54688-0.30762-0.14014-0.04102-1.76367-0.03417-1.62354 0.00684-1.82178 0.03417-0.75537 0.11279-1.3706 0.57422-0.09912 0.07178-0.2666 0.23243-0.16748 0.16064-0.22559 0.23925-0.05469 0.0752-0.06836 0.0752-0.01367 0-0.07178-0.0752-0.05469-0.07861-0.22217-0.23925-0.16748-0.16064-0.2666-0.23243-0.48877-0.37598-1.04931-0.51611-0.25293-0.07178-0.54004-0.07861-0.28711-0.00684-1.6167-0.00684-1.65088 0-1.76367 0.02734z m3.33252 1.13476q0.65625 0.07178 1.104 0.51953 0.45117 0.44775 0.50586 1.09033 0 0.16748 0.00684 3.21973 0.00684 3.05225-0.00684 3.05225l-0.12647-0.05469q-0.23926-0.12646-0.56054-0.19824-0.0957-0.02734-0.40674-0.02735l-3.56836-0.01367 0-7.60156 1.42871 0q1.42871 0 1.62354 0.02734l0-0.01367z m7.44775 3.78027l0 3.80762-3.56836 0.01367q-0.31104 0-0.40674 0.02735-0.32129 0.07178-0.56054 0.19824l-0.12647 0.05469q-0.01367 0-0.00684-3.05225 0.00684-3.05225 0.00684-3.21973 0.05469-0.61523 0.4751-1.06298 0.21191-0.22559 0.50586-0.36573 0.29395-0.14014 0.58789-0.16748 0.16748-0.01367 1.62353-0.02734l1.46973 0 0 3.79394z"
+          fill="#746B60"
+        ></path>
+      </svg>
+      <div
+        data-pencil-name="品牌"
+        style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 19px; font-style: normal; font-weight: 400; left: 64px; letter-spacing: 0px; line-height: 31px; position: absolute; text-align: left; top: 25px; width: 170px; z-index: 1'
+      >
+        NovelMind
+      </div>
+      <div
+        data-pencil-name="tasks"
+        style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 1280px; position: absolute; top: 22px; width: 128px; z-index: 2"
+      >
+        <div
+          data-pencil-name="tasks标签"
+          style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 104px; z-index: 0'
+        >
+          任务 · 1
+        </div>
+      </div>
+      <div
+        data-pencil-name="settings"
+        style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 1150px; position: absolute; top: 22px; width: 112px; z-index: 3"
+      >
+        <div
+          data-pencil-name="settings标签"
+          style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 88px; z-index: 0'
+        >
+          设置
+        </div>
+      </div>
+      <div
+        data-pencil-name="预览标识"
+        style='box-sizing: border-box; color: #938777; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 10px; font-style: normal; font-weight: 400; left: 1180px; letter-spacing: 0px; line-height: 17px; position: absolute; text-align: left; top: 874px; width: 230px; z-index: 4'
+      >
+        交互设计预览 · 演示数据
+      </div>
+      <div
+        data-pencil-name="页面标题"
+        style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 34px; font-style: normal; font-weight: 400; left: 80px; letter-spacing: 0px; line-height: 56px; position: absolute; text-align: left; top: 112px; width: 420px; z-index: 5'
+      >
+        资料库
+      </div>
+      <div
+        data-pencil-name="页面说明"
+        style='box-sizing: border-box; color: #817466; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 80px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 170px; width: 760px; z-index: 6'
+      >
+        3 本小说。继续阅读，或开始理解一段新故事。
+      </div>
+      <div
+        data-pencil-name="import"
+        style="background-color: #39342E; border-radius: 13px; border: 1px solid #39342E; box-sizing: border-box; height: 40px; left: 1218px; position: absolute; top: 125px; width: 142px; z-index: 7"
+      >
+        <div
+          data-pencil-name="import标签"
+          style='box-sizing: border-box; color: #FFFFFF; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 36px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 9px; width: 94px; z-index: 0'
+        >
+          导入小说
+        </div>
+        <svg
+          data-pencil-name="控件图标-leading"
+          data-icon-name="plus"
+          data-icon-set="lucide"
+          viewBox="0 0 13.99993896484375 14"
+          preserveAspectRatio="xMidYMid meet"
+          xmlns="http://www.w3.org/2000/svg"
+          style="box-sizing: border-box; height: 16px; left: 12px; position: absolute; top: 12px; width: 16px; z-index: 1"
+        >
+          <path
+            d="M6.90088 2.35156q-0.0957 0.01367-0.17432 0.05127-0.0752 0.03418-0.15381 0.12647-0.0752 0.08887-0.11279 0.16748-0.03418 0.0752-0.03418 0.32812l0 3.40088-3.66748 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.33838 0.03418l3.40088 0 0 3.40088q0 0.25293 0.03418 0.33838 0.0376 0.08203 0.11963 0.16748 0.08545 0.08203 0.18799 0.1333 0.10596 0.04785 0.23242 0.04785 0.12646 0 0.229-0.04785 0.10596-0.05127 0.18799-0.1333 0.08545-0.08545 0.11963-0.16748 0.0376-0.08545 0.0376-0.33838l0-3.40088 3.40088 0q0.25293 0 0.33496-0.03418 0.08545-0.0376 0.16748-0.11963 0.08545-0.08545 0.1333-0.18799 0.05127-0.10596 0.05127-0.23242 0-0.12646-0.04102-0.23926-0.09912-0.19482-0.29394-0.29394l-0.08545-0.04102-3.66748 0 0-3.38721q0-0.2666-0.02734-0.32128-0.07178-0.19824-0.25293-0.30079-0.18115-0.10596-0.39307-0.06494z"
+            fill="#FFFFFF"
+          ></path>
+        </svg>
+      </div>
+      <div
+        data-pencil-name="继续阅读卡片"
+        style="background-color: #EEE3D3; border-radius: 24px; box-sizing: border-box; height: 180px; left: 80px; position: absolute; top: 222px; width: 1280px; z-index: 8"
+      >
+        <div
+          data-pencil-name="当前书封"
+          style="background-color: #AA6C51; border-radius: 5px; box-sizing: border-box; height: 132px; left: 28px; position: absolute; top: 24px; width: 100px; z-index: 0"
+        >
+          <div
+            data-pencil-name="封面标题"
+            style='box-sizing: border-box; color: #FFFFFF; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 25px; font-style: normal; font-weight: 400; left: 15px; letter-spacing: 0px; line-height: 41px; position: absolute; text-align: left; top: 33px; width: 80px; z-index: 0'
+          >
+            雾港
+            <br />
+            来信
+          </div>
+        </div>
+        <div
+          data-pencil-name="继续阅读标签"
+          style='box-sizing: border-box; color: #A0664A; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 160px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 25px; width: 200px; z-index: 1'
+        >
+          继续阅读
+        </div>
+        <div
+          data-pencil-name="小说标题"
+          style='box-sizing: border-box; color: #37302A; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 26px; font-style: normal; font-weight: 400; left: 160px; letter-spacing: 0px; line-height: 43px; position: absolute; text-align: left; top: 54px; width: 520px; z-index: 2'
+        >
+          雾港来信
+        </div>
+        <div
+          data-pencil-name="阅读位置"
+          style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 14px; font-style: normal; font-weight: 400; left: 160px; letter-spacing: 0px; line-height: 23px; position: absolute; text-align: left; top: 108px; width: 520px; z-index: 3'
+        >
+          第 12 章 · 潮水退去之后
+        </div>
+        <div
+          data-pencil-name="nav-reader"
+          style="background-color: #39342E; border-radius: 13px; border: 1px solid #39342E; box-sizing: border-box; height: 40px; left: 1084px; position: absolute; top: 70px; width: 168px; z-index: 4"
+        >
+          <div
+            data-pencil-name="nav-reader标签"
+            style='box-sizing: border-box; color: #FFFFFF; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 9px; width: 158px; z-index: 0'
+          >
+            继续阅读
+          </div>
+          <svg
+            data-pencil-name="控件图标-trailing"
+            data-icon-name="arrow-right"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 16px; left: 176px; position: absolute; top: 12px; width: 16px; z-index: 1"
+          >
+            <path
+              d="M6.90088 2.35156q-0.18115 0.02734-0.32129 0.16748-0.11279 0.11279-0.14697 0.28028-0.03418 0.16748 0.02051 0.32129 0.02734 0.08545 0.25976 0.3247 0.23242 0.23584 1.36377 1.37061 1.58252 1.58252 1.58252 1.59619 0 0.01367-3.45557 0.01367l-3.44531 0-0.08545 0.04102q-0.22217 0.11279-0.30078 0.33838-0.0752 0.22217 0.00684 0.43408 0.05811 0.0957 0.14013 0.18115 0.08545 0.08203 0.16748 0.11963 0.08545 0.03418 0.53321 0.03418l3.01123 0q3.42822 0 3.42822 0.01367 0 0.01367-1.58252 1.59619-1.13135 1.13477-1.36377 1.37402-0.23242 0.23584-0.25976 0.3213-0.05469 0.15381-0.02051 0.32128 0.03418 0.16748 0.14697 0.28028 0.18115 0.18115 0.42041 0.18115l0.04102 0q0.11279 0 0.19824-0.05469 0.14014-0.09912 0.51611-0.46484l1.68164-1.67822q2.1123-2.10205 2.15332-2.18409 0.07178-0.12646 0.07178-0.28027 0-0.15381-0.07178-0.28027-0.04102-0.08203-2.1499-2.18067-2.10547-2.10205-2.17725-2.13623-0.06836-0.0376-0.23584-0.06494-0.04102 0-0.12646 0.01367z"
+              fill="#FFFFFF"
+            ></path>
+          </svg>
+        </div>
+      </div>
+      <div
+        data-pencil-name="所有小说标题"
+        style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 20px; font-style: normal; font-weight: 400; left: 80px; letter-spacing: 0px; line-height: 33px; position: absolute; text-align: left; top: 436px; width: 600px; z-index: 9'
+      >
+        所有小说
+      </div>
+      <div
+        data-pencil-name="library-search"
+        style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 1110px; position: absolute; top: 424px; width: 250px; z-index: 10"
+      >
+        <div
+          data-pencil-name="library-search标签"
+          style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 226px; z-index: 0'
+        >
+          搜索书名
+        </div>
+      </div>
+      <div
+        data-pencil-name="书籍-0"
+        style="background-color: #FFFFFF7A; border-radius: 20px; box-sizing: border-box; height: 244px; left: 80px; position: absolute; top: 494px; width: 412px; z-index: 11"
+      >
+        <div
+          data-pencil-name="书封-0"
+          style="background-color: #AA6C51; border-radius: 5px; box-sizing: border-box; height: 132px; left: 22px; position: absolute; top: 22px; width: 112px; z-index: 0"
+        >
+          <div
+            data-pencil-name="书名-0"
+            style='box-sizing: border-box; color: #FFFFFF; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 24px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 40px; position: absolute; text-align: left; top: 48px; width: 88px; z-index: 0'
+          >
+            雾港
+            <br />
+            来信
+          </div>
+        </div>
+        <div
+          data-pencil-name="书籍名称-0"
+          style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 21px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 35px; position: absolute; text-align: left; top: 28px; width: 232px; z-index: 1'
+        >
+          雾港来信
+        </div>
+        <div
+          data-pencil-name="书籍信息-0"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 74px; width: 230px; z-index: 2'
+        >
+          128 章 · 32.6 万字
+        </div>
+        <div
+          data-pencil-name="书籍状态-0"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 100px; width: 225px; z-index: 3'
+        >
+          12 章 · 上次读到这里
+        </div>
+        <div
+          data-pencil-name="nav-reader"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 156px; position: absolute; top: 134px; width: 110px; z-index: 4"
+        >
+          <div
+            data-pencil-name="nav-reader标签"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 8px; width: 86px; z-index: 0'
+          >
+            打开
+          </div>
+        </div>
+        <div
+          data-pencil-name="book-menu-0"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 344px; position: absolute; top: 182px; width: 46px; z-index: 5"
+        >
+          <svg
+            data-pencil-name="更多操作图标"
+            data-icon-name="ellipsis"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 10px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M2.77197 5.85156q-0.2666 0.01367-0.50244 0.18115-0.33838 0.22559-0.45801 0.59815-0.11621 0.36914 0.00684 0.7417 0.12646 0.36914 0.46484 0.6084 0.26318 0.18115 0.62891 0.18115 0.25293 0 0.44092-0.0752 0.18799-0.07861 0.37597-0.2666 0.19141-0.19141 0.26661-0.37939 0.07861-0.18799 0.07861-0.44092 0-0.25293-0.07861-0.44092-0.0752-0.18799-0.25635-0.37256-0.15381-0.15381-0.29395-0.22216-0.30762-0.15381-0.67334-0.1128z m4.10157 0q-0.2085 0.01367-0.37598 0.09912-0.23926 0.11279-0.3999 0.31446-0.16064 0.20166-0.23243 0.44091-0.02734 0.11279-0.02734 0.29395 0 0.18115 0.02734 0.29395 0.08545 0.30762 0.30762 0.5332 0.22559 0.22217 0.5332 0.30762 0.11279 0.02734 0.29395 0.02734 0.18115 0 0.29395-0.02734 0.30762-0.08545 0.52978-0.30762 0.22559-0.22559 0.31104-0.5332 0.02734-0.11279 0.02734-0.29395 0-0.18115-0.02734-0.29395-0.07178-0.23926-0.23243-0.44091-0.16064-0.20166-0.3999-0.31446-0.26318-0.14014-0.6289-0.09912z m4.07421 0q-0.39307 0.02734-0.70068 0.33496-0.16748 0.18457-0.24609 0.37256-0.0752 0.18799-0.0752 0.44092 0 0.25293 0.0752 0.44775 0.07861 0.19482 0.2666 0.3794 0.19141 0.18115 0.37939 0.25976 0.18799 0.0752 0.44092 0.0752 0.36572 0 0.62891-0.18115 0.33838-0.23926 0.46142-0.6084 0.12647-0.37256 0.00684-0.7417-0.11621-0.37256-0.46143-0.60156-0.3418-0.23242-0.77588-0.17774z"
+              fill="#514A42"
+            ></path>
+          </svg>
+        </div>
+        <div
+          data-pencil-name="本地保存-0"
+          style='box-sizing: border-box; color: #938777; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 22px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 193px; width: 290px; z-index: 6'
+        >
+          TXT · 已保存到本机
+        </div>
+      </div>
+      <div
+        data-pencil-name="书籍-1"
+        style="background-color: #FFFFFF7A; border-radius: 20px; box-sizing: border-box; height: 244px; left: 514px; position: absolute; top: 494px; width: 412px; z-index: 12"
+      >
+        <div
+          data-pencil-name="书封-1"
+          style="background-color: #97866E; border-radius: 5px; box-sizing: border-box; height: 132px; left: 22px; position: absolute; top: 22px; width: 112px; z-index: 0"
+        >
+          <div
+            data-pencil-name="书名-1"
+            style='box-sizing: border-box; color: #FFFFFF; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 24px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 40px; position: absolute; text-align: left; top: 48px; width: 88px; z-index: 0'
+          >
+            长夏
+            <br />
+            未尽
+          </div>
+        </div>
+        <div
+          data-pencil-name="书籍名称-1"
+          style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 21px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 35px; position: absolute; text-align: left; top: 28px; width: 232px; z-index: 1'
+        >
+          长夏未尽
+        </div>
+        <div
+          data-pencil-name="书籍信息-1"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 74px; width: 230px; z-index: 2'
+        >
+          64 章 · 16.8 万字
+        </div>
+        <div
+          data-pencil-name="书籍状态-1"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 100px; width: 225px; z-index: 3'
+        >
+          尚未开始阅读
+        </div>
+        <div
+          data-pencil-name="book-demo-1"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 156px; position: absolute; top: 134px; width: 110px; z-index: 4"
+        >
+          <div
+            data-pencil-name="book-demo-1标签"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 134px; width: 86px; z-index: 0'
+          >
+            打开
+          </div>
+        </div>
+        <div
+          data-pencil-name="book-menu-1"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 344px; position: absolute; top: 182px; width: 46px; z-index: 5"
+        >
+          <svg
+            data-pencil-name="更多操作图标"
+            data-icon-name="ellipsis"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 10px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M2.77197 5.85156q-0.2666 0.01367-0.50244 0.18115-0.33838 0.22559-0.45801 0.59815-0.11621 0.36914 0.00684 0.7417 0.12646 0.36914 0.46484 0.6084 0.26318 0.18115 0.62891 0.18115 0.25293 0 0.44092-0.0752 0.18799-0.07861 0.37597-0.2666 0.19141-0.19141 0.26661-0.37939 0.07861-0.18799 0.07861-0.44092 0-0.25293-0.07861-0.44092-0.0752-0.18799-0.25635-0.37256-0.15381-0.15381-0.29395-0.22216-0.30762-0.15381-0.67334-0.1128z m4.10157 0q-0.2085 0.01367-0.37598 0.09912-0.23926 0.11279-0.3999 0.31446-0.16064 0.20166-0.23243 0.44091-0.02734 0.11279-0.02734 0.29395 0 0.18115 0.02734 0.29395 0.08545 0.30762 0.30762 0.5332 0.22559 0.22217 0.5332 0.30762 0.11279 0.02734 0.29395 0.02734 0.18115 0 0.29395-0.02734 0.30762-0.08545 0.52978-0.30762 0.22559-0.22559 0.31104-0.5332 0.02734-0.11279 0.02734-0.29395 0-0.18115-0.02734-0.29395-0.07178-0.23926-0.23243-0.44091-0.16064-0.20166-0.3999-0.31446-0.26318-0.14014-0.6289-0.09912z m4.07421 0q-0.39307 0.02734-0.70068 0.33496-0.16748 0.18457-0.24609 0.37256-0.0752 0.18799-0.0752 0.44092 0 0.25293 0.0752 0.44775 0.07861 0.19482 0.2666 0.3794 0.19141 0.18115 0.37939 0.25976 0.18799 0.0752 0.44092 0.0752 0.36572 0 0.62891-0.18115 0.33838-0.23926 0.46142-0.6084 0.12647-0.37256 0.00684-0.7417-0.11621-0.37256-0.46143-0.60156-0.3418-0.23242-0.77588-0.17774z"
+              fill="#514A42"
+            ></path>
+          </svg>
+        </div>
+        <div
+          data-pencil-name="本地保存-1"
+          style='box-sizing: border-box; color: #938777; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 22px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 193px; width: 290px; z-index: 6'
+        >
+          TXT · 已保存到本机
+        </div>
+      </div>
+      <div
+        data-pencil-name="书籍-2"
+        style="background-color: #FFFFFF7A; border-radius: 20px; box-sizing: border-box; height: 244px; left: 948px; position: absolute; top: 494px; width: 412px; z-index: 13"
+      >
+        <div
+          data-pencil-name="书封-2"
+          style="background-color: #778178; border-radius: 5px; box-sizing: border-box; height: 132px; left: 22px; position: absolute; top: 22px; width: 112px; z-index: 0"
+        >
+          <div
+            data-pencil-name="书名-2"
+            style='box-sizing: border-box; color: #FFFFFF; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 24px; font-style: normal; font-weight: 400; left: 16px; letter-spacing: 0px; line-height: 40px; position: absolute; text-align: left; top: 48px; width: 88px; z-index: 0'
+          >
+            山海
+            <br />
+            之间
+          </div>
+        </div>
+        <div
+          data-pencil-name="书籍名称-2"
+          style='box-sizing: border-box; color: #302B26; font-family: "Noto Serif SC", system-ui, sans-serif; font-size: 21px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 35px; position: absolute; text-align: left; top: 28px; width: 232px; z-index: 1'
+        >
+          山海之间
+        </div>
+        <div
+          data-pencil-name="书籍信息-2"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 74px; width: 230px; z-index: 2'
+        >
+          216 章 · 58.2 万字
+        </div>
+        <div
+          data-pencil-name="书籍状态-2"
+          style='box-sizing: border-box; color: #84796C; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 12px; font-style: normal; font-weight: 400; left: 156px; letter-spacing: 0px; line-height: 20px; position: absolute; text-align: left; top: 100px; width: 225px; z-index: 3'
+        >
+          尚未开始阅读
+        </div>
+        <div
+          data-pencil-name="book-demo-2"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 156px; position: absolute; top: 134px; width: 110px; z-index: 4"
+        >
+          <div
+            data-pencil-name="book-demo-2标签"
+            style='box-sizing: border-box; color: #514A42; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 13px; font-style: normal; font-weight: 400; left: 12px; letter-spacing: 0px; line-height: 21px; position: absolute; text-align: left; top: 134px; width: 86px; z-index: 0'
+          >
+            打开
+          </div>
+        </div>
+        <div
+          data-pencil-name="book-menu-2"
+          style="background-color: #FFFFFFB8; border-radius: 13px; border: 1px solid #E8E0D5; box-sizing: border-box; height: 40px; left: 344px; position: absolute; top: 182px; width: 46px; z-index: 5"
+        >
+          <svg
+            data-pencil-name="更多操作图标"
+            data-icon-name="ellipsis"
+            data-icon-set="lucide"
+            viewBox="0 0 13.99993896484375 14"
+            preserveAspectRatio="xMidYMid meet"
+            xmlns="http://www.w3.org/2000/svg"
+            style="box-sizing: border-box; height: 18px; left: 13px; position: absolute; top: 10px; width: 18px; z-index: 0"
+          >
+            <path
+              d="M2.77197 5.85156q-0.2666 0.01367-0.50244 0.18115-0.33838 0.22559-0.45801 0.59815-0.11621 0.36914 0.00684 0.7417 0.12646 0.36914 0.46484 0.6084 0.26318 0.18115 0.62891 0.18115 0.25293 0 0.44092-0.0752 0.18799-0.07861 0.37597-0.2666 0.19141-0.19141 0.26661-0.37939 0.07861-0.18799 0.07861-0.44092 0-0.25293-0.07861-0.44092-0.0752-0.18799-0.25635-0.37256-0.15381-0.15381-0.29395-0.22216-0.30762-0.15381-0.67334-0.1128z m4.10157 0q-0.2085 0.01367-0.37598 0.09912-0.23926 0.11279-0.3999 0.31446-0.16064 0.20166-0.23243 0.44091-0.02734 0.11279-0.02734 0.29395 0 0.18115 0.02734 0.29395 0.08545 0.30762 0.30762 0.5332 0.22559 0.22217 0.5332 0.30762 0.11279 0.02734 0.29395 0.02734 0.18115 0 0.29395-0.02734 0.30762-0.08545 0.52978-0.30762 0.22559-0.22559 0.31104-0.5332 0.02734-0.11279 0.02734-0.29395 0-0.18115-0.02734-0.29395-0.07178-0.23926-0.23243-0.44091-0.16064-0.20166-0.3999-0.31446-0.26318-0.14014-0.6289-0.09912z m4.07421 0q-0.39307 0.02734-0.70068 0.33496-0.16748 0.18457-0.24609 0.37256-0.0752 0.18799-0.0752 0.44092 0 0.25293 0.0752 0.44775 0.07861 0.19482 0.2666 0.3794 0.19141 0.18115 0.37939 0.25976 0.18799 0.0752 0.44092 0.0752 0.36572 0 0.62891-0.18115 0.33838-0.23926 0.46142-0.6084 0.12647-0.37256 0.00684-0.7417-0.11621-0.37256-0.46143-0.60156-0.3418-0.23242-0.77588-0.17774z"
+              fill="#514A42"
+            ></path>
+          </svg>
+        </div>
+        <div
+          data-pencil-name="本地保存-2"
+          style='box-sizing: border-box; color: #938777; font-family: "Noto Sans SC", system-ui, sans-serif; font-size: 11px; font-style: normal; font-weight: 400; left: 22px; letter-spacing: 0px; line-height: 18px; position: absolute; text-align: left; top: 193px; width: 290px; z-index: 6'
+        >
+          TXT · 已保存到本机
+        </div>
+      </div>
+    </div>
+  <script src="reader.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
