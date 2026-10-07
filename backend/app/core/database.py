@@ -73,7 +73,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db(db_engine: Engine = engine) -> None:
-    """加载全部模型、创建缺失表，再执行可重复运行的版本迁移。
+    """加载全部模型、建立小说基础表，再由版本迁移管理其余表。
 
     下列模型导入不能删除：导入会向 ``Base.metadata`` 注册表定义。默认参数允许
     测试传入隔离引擎而不触碰真实数据库。
@@ -83,7 +83,8 @@ def init_db(db_engine: Engine = engine) -> None:
     from backend.app.models import novel  # noqa: F401
     from backend.app.models import rag  # noqa: F401
     from backend.app.models import report  # noqa: F401
+    from backend.app.models import workspace  # noqa: F401
     from backend.app.core.migrations import run_migrations
 
-    Base.metadata.create_all(bind=db_engine)
+    Base.metadata.create_all(bind=db_engine, tables=[novel.Novel.__table__, novel.Chapter.__table__])
     run_migrations(db_engine)

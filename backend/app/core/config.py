@@ -198,8 +198,12 @@ def _choice_value(
 
 def _normalize_http_url(name: str, value: str) -> str:
     """规范化服务根地址，并拒绝容易泄密或产生歧义的 URL 组成部分。"""
-    normalized = value.rstrip("/")
-    parsed = urlparse(normalized)
+    normalized = value.strip().rstrip("/")
+    try:
+        parsed = urlparse(normalized)
+        port = parsed.port
+    except ValueError:
+        raise ConfigurationError(f"{name} contains an invalid URL") from None
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.netloc
@@ -211,7 +215,24 @@ def _normalize_http_url(name: str, value: str) -> str:
         raise ConfigurationError(
             f"{name} must be an absolute HTTP(S) URL without credentials"
         )
-    return normalized
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise ConfigurationError(f"{name} requires a hostname")
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is not None and port != (443 if parsed.scheme == "https" else 80):
+        host += f":{port}"
+    return f"{parsed.scheme.lower()}://{host}{parsed.path}"
+
+
+def service_destination(provider: str, base_url: str | None) -> tuple[str, str]:
+    """密钥和授权绑定的目的地；忽略域名大小写、默认端口和尾斜线。"""
+    return provider.strip().lower(), _normalize_http_url("service URL", base_url) if base_url else ""
+
+
+def privacy_scope(settings: Settings) -> list[list[str]]:
+    """只包含公开目的地，不持久化密钥；JSON 形式便于本机授权核对。"""
+    return [list(service_destination(settings.generation_provider, settings.deepseek_base_url)),
+            list(service_destination(settings.embedding_provider, settings.embedding_base_url))]
 
 
 def _normalize_compatible_base_url(name: str, value: str) -> str:
@@ -271,6 +292,18 @@ def _normalize_siliconflow_base_url(value: str) -> str:
             "https://api.siliconflow.cn/v1 for siliconflow"
         )
     return SILICONFLOW_EMBEDDING_BASE_URL
+
+
+def normalize_provider_url(role: str, provider: str, base_url: str) -> str:
+    """探测草稿与保存设置采用同一角色、协议和官方地址边界。"""
+    providers = GENERATION_PROVIDERS if role == "generation" else EMBEDDING_PROVIDERS
+    if role not in {"generation", "embedding"} or provider not in providers:
+        raise ConfigurationError("Unsupported model provider for this role")
+    if provider == "deepseek":
+        return _normalize_deepseek_base_url(base_url)
+    if provider == "siliconflow":
+        return _normalize_siliconflow_base_url(base_url)
+    return _normalize_compatible_base_url("MODEL_BASE_URL", base_url)
 
 
 def load_settings(environ: Mapping[str, str]) -> Settings:

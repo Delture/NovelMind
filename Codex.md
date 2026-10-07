@@ -1,304 +1,37 @@
-# Codex.md
+# NovelMind 开发约束
 
-本文件用于让 Codex 在每次参与 NovelMind 开发时快速恢复项目上下文。修改代码前应优先阅读本文件，再结合 README 和 docs 下的文档判断当前任务范围。
+开始前读本文件、README 和 `git status`。用户当次明确授权的修复范围优先。
 
-## 项目定位
+- 在已有工作上继续；保留未提交文件，不用 reset/checkout 覆盖或清理未跟踪内容。
+- 不提交、推送、安装升级依赖、调用收费 API，除非用户明确授权。
+- 保护 `.env`、`.venv`、`data`、`vector_store`、`logs`、`output`；测试仅临时目录与假提供商。
+- 本地只做解析、存储、统计、检索、编排和界面；语义生成与 embedding 使用外部 API。
+- 代码面向有 Python 基础的本科生。解释公开边界、复杂流程与不直观原因，保留教学资料；不要用注释字数作质量指标。
+- 保持小而明确的模块，不引入通用工作流框架、新前端构建链或万能基类。
+- 端点和密钥绑定，读取与错误不暴露密钥；任务持有受理时配置。显式授权、失败保留旧结果、来源复核、外键与原子性不能削弱。
+- Windows 移动/删除前确认完整绝对路径在项目内，用 PowerShell LiteralPath 操作。
+- 修改后更新 `docs/dev_log.md`，按实际运行结果报告验证边界。
 
-NovelMind 是一个基于 RAG 的网络小说结构分析与写作辅助系统。
+## 入口
 
-当前 MVP 已完成文本基础、摘要、人物分析、RAG 问答和分析报告。
+- `backend/app/main.py`：单应用，默认网页/API 共用 8501。
+- `backend/app/api/`：HTTP 声明；`services/`：共享请求处理、派发与明确的两种任务链。
+- `analyzer/character_pipeline/`：人物结构、抽取、归并、持久化与 worker。
+- `core/migrations.py`：版本账本；`core/migration_steps/`：按历史版本分组。
+- `frontend/web/`：原生模块；`legacy/streamlit/`：可选旧界面。
+- `tests/{backend,web,launcher,legacy,integration,support}/`：功能分组和共享替身。
+- `design/current/`：有效设计参考；`design/history/`、`design/artifacts/`：历史与验收。
 
-## 使用者背景
-
-项目维护者是人工智能专业大二学生，熟悉 Python/C++/Java 基础语法，但工程经验较少。
-
-代码要求：
-
-- 结构清晰，便于初学者理解和维护。
-- 不要过度抽象，不要提前设计复杂架构。
-- 注释适量，只解释不直观的逻辑。
-- 每次只实现一个小功能，并配套基础测试。
-
-## 技术栈
-
-- 后端：Python + FastAPI
-- 前端展示：Streamlit
-- 数据库：SQLite
-- ORM：SQLAlchemy
-- 外部 embedding：硅基流动 `Qwen/Qwen3-Embedding-4B`，固定输出 1024 维
-- 向量库：本地 SQLite + NumPy 精确余弦检索，只保存外部派生向量
-- 测试：pytest
-
-## 当前项目结构
-
-```text
-NovelMind/
-  backend/
-    app/
-      api/          # FastAPI 接口路由
-      core/         # 配置、数据库连接等基础能力
-      models/       # SQLAlchemy 数据模型
-      parser/       # 小说章节解析逻辑
-      rag/          # 分块、外部 embedding、本地向量、问答和清理
-      analyzer/     # 摘要、角色抽取、结构分析等逻辑
-      main.py       # FastAPI 应用入口
-    tests/          # pytest 测试
-  frontend/
-    api_client.py       # 前端 HTTP 客户端
-    streamlit_app.py    # Streamlit 页面入口
-    ui_styles.py        # 前端集中样式
-  docs/
-    product_requirements.md
-    architecture.md
-    rag_design.md
-    dev_log.md
-  data/
-    samples/
-  .env.example
-  .gitignore
-  README.md
-  requirements.txt
-```
-
-## 已有最小功能
-
-- FastAPI 应用入口：`backend/app/main.py`
-- 健康检查接口：`GET /health`
-- Streamlit 上传、章节列表和正文预览：`frontend/streamlit_app.py`
-- 前端 HTTP 客户端：`frontend/api_client.py`
-- TXT 章节解析：`backend/app/parser/chapter_splitter.py`
-- TXT 小说上传接口：`POST /api/novels/upload`
-- SQLite 保存小说和章节：`backend/app/core/database.py`、`backend/app/models/novel.py`
-- DeepSeek 结构化章节摘要、缓存和持久化后台任务。
-- DeepSeek 人物分页抽取、全书归并、关系推理和本地确定性统计。
-- 人物搜索排序、详情、出场记录、关系查询和 Streamlit 人物工作区。
-- 基础文档：`README.md` 和 `docs/`
-
-`GET /health` 应返回：
-
-```json
-{"status":"ok","project":"NovelMind"}
-```
-
-## 常用启动命令
-
-进入项目目录：
+## 命令和文档
 
 ```powershell
-cd D:\CodexPro\NovelMind
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8501
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m pytest tests -q
+.\.venv\Scripts\python.exe scripts/check_web.py
+.\.venv\Scripts\python.exe tests/integration/run_isolated.py tests -q
 ```
 
-激活虚拟环境：
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-安装依赖时优先使用：
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-启动后端：
-
-```powershell
-uvicorn backend.app.main:app --host 127.0.0.1 --reload
-```
-
-启动前端：
-
-```powershell
-streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
-```
-
-运行测试：
-
-```powershell
-python -m pytest -q
-```
-
-## 开发守则
-
-1. 不要一次性实现完整系统。
-2. 每次只处理一个清晰的小功能。
-3. 新功能应尽量添加 pytest 测试。
-4. 测试通过后再建议提交。
-5. 不要上传真实商业小说文本。
-6. 不要提交 `.env`、数据库文件、向量库文件、上传文件和日志。
-7. 不要引入复杂依赖；确有必要时先说明理由。
-8. 先做解析、上传、存储和展示，再做 RAG。
-9. Streamlit 当前用于快速展示，不急着切换到 Vue/React。
-10. 每次完成实质功能后，更新 `docs/dev_log.md`。
-11. 本地只运行非模型功能；文本生成、人物分析、RAG 问答、报告和
-    embedding 等模型能力统一调用外部 API，不引入本地模型运行时。
-
-## Codex 修改代码时的约束
-
-- 优先遵循现有目录结构。
-- 不要修改与当前任务无关的文件。
-- 不要重写已有简单实现，除非当前任务确实需要。
-- 后端接口放在 `backend/app/api/`，基础配置放在 `backend/app/core/`。
-- 数据模型放在 `backend/app/models/`。
-- 章节解析逻辑放在 `backend/app/parser/`。
-- RAG 相关代码放在 `backend/app/rag/`，不得引入本地模型运行时。
-- 分析类功能放在 `backend/app/analyzer/`。
-- 测试文件放在 `backend/tests/`，文件名使用 `test_*.py`。
-
-## 推荐 Commit 规范
-
-格式：
-
-```text
-类型(模块): 简短说明
-```
-
-常用类型：
-
-- `chore`：初始化、配置、杂项
-- `feat`：新功能
-- `fix`：修 bug
-- `docs`：文档
-- `test`：测试
-- `refactor`：重构
-
-示例：
-
-```text
-feat(parser): add txt chapter splitter
-docs: update development log
-test(parser): add chapter splitter tests
-```
-
-## 下一阶段路线
-
-建议按以下顺序推进：
-
-1. TXT 章节解析（已完成）
-2. 小说上传接口（已完成）
-3. SQLite 保存小说和章节（已完成）
-4. Streamlit 上传页面（已完成）
-5. 章节摘要（已完成）
-6. 角色抽取与统计（已完成）
-7. RAG 问答（已完成）
-8. 分析报告（已完成）
-
-当前 MVP 已形成完整闭环。后续新增功能时仍须保持：文本生成使用
-DeepSeek V4 Pro API，embedding 使用硅基流动 `Qwen/Qwen3-Embedding-4B`，
-本地不运行模型。
-
-## TXT 小说上传接口
-
-接口：
-
-```text
-POST /api/novels/upload?filename=小说文件名.txt
-Content-Type: application/octet-stream
-```
-
-请求体是 TXT 文件的原始字节。接口当前：
-
-- 只接受 `.txt` 文件名。
-- 支持 UTF-8、带 BOM 的 UTF-8 和 GB18030 编码。
-- 文件最大为 20 MB。
-- 调用章节解析器并返回 `novel_id`、章节标题、正文和字符数。
-- 不保存原始上传文件。
-- 使用同一个数据库事务保存小说和全部章节。
-
-## SQLite 数据库
-
-- 默认地址：`sqlite:///./data/novelmind.db`
-- 环境变量：`DATABASE_URL`
-- 后端启动时自动创建缺少的表。
-- `novels` 表保存小说基本信息。
-- `chapters` 表保存章节顺序、标题、正文和字符数。
-- `chapter_summaries` 表保存结构化摘要、来源哈希、模型和提示词版本。
-- `analysis_jobs` 表保存持久化任务范围、状态和进度。
-- `chapter_character_extractions` 表保存逐章人物观察缓存。
-- `character_analyses`、`characters`、`character_appearances` 和
-  `character_relationships` 保存当前全书人物快照及本地统计。
-- 测试必须使用独立数据库，不得写入开发数据库。
-
-## TXT 章节解析模块目标
-
-建议文件：
-
-```text
-backend/app/parser/chapter_splitter.py
-backend/tests/test_chapter_splitter.py
-```
-
-核心函数：
-
-```python
-def split_chapters(raw_text: str) -> list[Chapter]:
-    ...
-```
-
-章节标题应支持：
-
-- `第1章 xxx`
-- `第001章 xxx`
-- `第一章 xxx`
-- `第十七章 xxx`
-- `Chapter 1 xxx`
-- `CHAPTER 001 xxx`
-
-基本要求：
-
-- 尽量保留原文段落。
-- 去除首尾多余空白。
-- 如果没有章节标题，则把全文作为第 1 章。
-- 不要把正文中的“第x章”误判为章节标题，章节标题一般应单独成行。
-- 至少测试阿拉伯数字章节、中文数字章节、英文章节标题、无章节标题、空文本、正文误判情况。
-
-## RAG 设计原则
-
-RAG 已实现的数据流：
-
-```text
-用户问题
-  ↓
-检索相关章节片段
-  ↓
-把片段作为证据交给大模型
-  ↓
-生成基于证据的回答
-  ↓
-返回答案 + 引用来源
-```
-
-实现约束：
-
-- 确定性 1200 字符分块、200 字符重叠，分块算法必须版本化。
-- 硅基流动预设只允许官方 HTTPS API 根地址，模型固定输出 1024 维。
-- 本地向量库不保存原文，只存外部 API 生成的 float32 向量和定位元数据。
-- 新版本集合完整校验后才切换 SQLite 当前指针，失败保留旧索引。
-- 检索命中必须回查 SQLite 并校验原文范围与哈希。
-- DeepSeek 引用只能来自本次检索 ID，答案和引用只按纯文本展示。
-
-## 已知依赖注意事项
-
-如果 Streamlit 启动时报错找不到 `altair.vegalite.v4`，应确保 `requirements.txt` 中保留：
-
-```text
-altair<5
-```
-
-这是为了兼容部分 Streamlit 版本对 Altair v4 API 的依赖。
-
-前端使用 `requests` 调用 FastAPI。直接启动页面的标准命令是：
-
-```powershell
-streamlit run frontend/streamlit_app.py --server.address 127.0.0.1
-```
-
-因此 `frontend/streamlit_app.py` 内部使用同目录导入：
-
-```python
-from api_client import ...
-from ui_styles import APP_CSS
-```
-
-不要在此入口中改为 `from frontend...`，否则使用上述命令时可能出现
-`ModuleNotFoundError: No module named 'frontend'`。
+README 是快速开始和导航；`docs/user_guide.md` 管操作，`architecture.md` 管实现。
+`rag_design.md`、`report_design.md` 保留业务算法约束；两份教学指南继续维护。
+历史 HANDOFF/SAVEPOINT 位于 `docs/archive/`，不能当作当前待实现清单。

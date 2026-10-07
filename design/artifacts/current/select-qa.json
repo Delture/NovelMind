@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "geometry": {
+    "trigger": "12px",
+    "menu": "14px"
+  },
+  "checks": [
+    "three consistent menus",
+    "selected state",
+    "native select hidden",
+    "mouse selection",
+    "Home and arrow navigation",
+    "Escape keeps dialog",
+    "outside click",
+    "single open menu",
+    "Tab closes",
+    "backing value synchronization"
+  ],
+  "errors": []
+}

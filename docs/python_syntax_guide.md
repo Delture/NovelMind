@@ -289,3 +289,8 @@ lambda 是只能写一个表达式的匿名函数；`functools.partial` 预先�
 掌握以上语法后，再按 `code_reading_guide.md` 的调用链阅读。语法指南回答“这句
 Python 怎么读”，代码内每个函数的文档字符串回答“这个函数在 NovelMind 中为何
 存在、参数从哪里来、会改变什么”。
+
+## 集成测试中的语法应用
+
+跨模块运行案例现位于 `tests/integration/`。阅读 `run_isolated.py` 可对照理解环境变量、临时目录和子进程参数；`test_launcher_lifecycle.py` 与 `launcher_probe.py` 展示 fixture、上下文清理和进程状态断言。
+这些测试使用隔离环境；不应把其中的数据库路径或假提供商配置复制为日常用户配置。

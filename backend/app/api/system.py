@@ -5,7 +5,7 @@
 API 端点并诱导程序发送密钥。
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
@@ -15,6 +15,7 @@ from backend.app.core.config import (
     GENERATION_PROVIDERS,
     ConfigurationError,
     Settings,
+    service_destination,
     clear_runtime_model_settings,
     get_settings,
     runtime_model_settings_exist,
@@ -270,23 +271,28 @@ def put_model_settings(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="向量模型密钥不能同时替换和清除。",
         )
+    try:
+        generation_changed = service_destination(payload.generation.provider, payload.generation.base_url) != service_destination(current.generation_provider, current.deepseek_base_url)
+        embedding_changed = service_destination(payload.embedding.provider, payload.embedding.base_url) != service_destination(current.embedding_provider, current.embedding_base_url)
+    except ConfigurationError:
+        raise HTTPException(400, "服务地址格式无效，请检查地址。") from None
     if (
-        payload.generation.provider != current.generation_provider
+        generation_changed
         and not generation_api_key
         and not payload.generation.clear_api_key
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="切换生成模型供应商时需要填写该供应商的新 API Key。",
+            detail="切换生成模型供应商或服务地址时需要填写新的 API Key，或明确清除密钥。",
         )
     if (
-        payload.embedding.provider != current.embedding_provider
+        embedding_changed
         and not embedding_api_key
         and not payload.embedding.clear_api_key
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="切换向量模型供应商时需要填写该供应商的新 API Key。",
+            detail="切换向量模型供应商或服务地址时需要填写新的 API Key，或明确清除密钥。",
         )
     generation_key = (
         ""
@@ -313,11 +319,7 @@ def put_model_settings(
                 ),
                 "EMBEDDING_PROVIDER": payload.embedding.provider,
                 "EMBEDDING_API_KEY": embedding_key,
-                "EMBEDDING_BASE_URL": (
-                    ""
-                    if payload.embedding.clear_api_key
-                    else payload.embedding.base_url
-                ),
+                "EMBEDDING_BASE_URL": payload.embedding.base_url,
                 "EMBEDDING_MODEL": payload.embedding.model,
                 "EMBEDDING_DIMENSIONS": str(
                     payload.embedding.dimensions
@@ -345,3 +347,36 @@ def reset_model_settings(request: Request) -> ModelSettingsResponse:
             detail=str(error),
         ) from None
     return _model_settings_response(restored)
+
+
+class ModelProbeRequest(BaseModel):
+    """主动读取服务目录的草稿；不写配置，也不接收小说数据。"""
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["generation", "embedding"]
+    provider: str = Field(min_length=1, max_length=50)
+    base_url: str = Field(min_length=1, max_length=500)
+    api_key: Optional[str] = Field(default=None, max_length=4096)
+    use_saved_key: StrictBool = True
+    confirm_connection: StrictBool
+
+
+def get_model_probe_transport():
+    """测试覆盖此依赖注入假传输，默认只在用户主动操作时建立外部连接。"""
+    return None
+
+
+@router.get("/provider-presets")
+def get_provider_presets():
+    """公开服务端点建议；模型名称和密钥由用户自行选择。"""
+    from backend.app.services.model_probe import PRESETS
+    return PRESETS
+
+
+@router.post("/model-probe")
+async def post_model_probe(payload: ModelProbeRequest, request: Request,
+                           settings: Settings = Depends(get_settings),
+                           transport=Depends(get_model_probe_transport)):
+    """本机主动连接草稿目的地读取目录；不发送正文或生成请求。"""
+    from backend.app.services.model_probe import probe_models
+    _require_local_request(request)
+    return await probe_models(payload, settings, transport)

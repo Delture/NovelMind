@@ -1,0 +1,40 @@
+{
+  "layout": [
+    {
+      "route": "library",
+      "overflow": []
+    },
+    {
+      "route": "reader",
+      "overflow": []
+    },
+    {
+      "route": "summary",
+      "overflow": []
+    },
+    {
+      "route": "characters",
+      "overflow": []
+    },
+    {
+      "route": "ask",
+      "overflow": []
+    },
+    {
+      "route": "report",
+      "overflow": []
+    }
+  ],
+  "errors": [],
+  "checks": [
+    "continuous reader directory",
+    "50 to 51",
+    "continuous summaries",
+    "missing summary state",
+    "citation drawer to source and back",
+    "report prerequisite orchestration",
+    "background task survives navigation",
+    "modal TXT import",
+    "privacy controls AI action"
+  ]
+}

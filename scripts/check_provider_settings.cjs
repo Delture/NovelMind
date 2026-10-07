@@ -1,0 +1,202 @@
+const {runSuite} = require('../tests/support/browser_qa.cjs');
+
+runSuite('provider-settings',async ({page,api,url,select,shot,check,eventually,assert,details,upload}) => {
+  await upload('暖纸中的原创故事.txt','第1章 夜信\n原创故事，只为隔离界面验收。');
+  await page.goto(url);
+  const records = async () => (await api('/qa/probe-records',{method:'POST'})).items;
+  const scenario = value => api('/qa/probe-scenario',{method:'POST',data:value});
+  const open = async () => {
+    await page.getByRole('button',{name:'设置',exact:true}).click();
+    const d = page.getByRole('dialog',{name:'模型与设置'});
+    await d.waitFor();return d;
+  };
+  const close = async d => {await d.getByRole('button',{name:'关闭',exact:true}).click();await d.waitFor({state:'detached'});};
+  const savedBefore = await api('/system/model-settings');
+  let d = await open();
+  let gen = d.getByRole('tabpanel',{name:'文本生成',exact:true});
+  assert.equal(await d.getByText('接口格式',{exact:true}).count(),0);
+  assert.equal(await d.locator('[name="generation.protocol_label"]').count(),0);
+  assert.equal(await d.locator('[name="generation.provider"]').inputValue(),savedBefore.generation.provider);
+  check('内部接口枚举不再显示，提交所需provider值保持');
+  details.layout=[];details.menuLayouts=[];
+  for(const [name,viewport] of [['desktop',{width:1440,height:1000}],['mobile-short',{width:390,height:600}]]) {
+    await page.setViewportSize(viewport);
+    await eventually(()=>d.evaluate(node=>node.getAnimations().every(a=>a.playState!=='running'&&!a.pending)),'settings settled');
+    for(const edge of ['top','bottom']) {
+      await d.locator('.settings-scroll').evaluate((node,edge)=>{node.scrollTop=edge==='top'?0:node.scrollHeight;},edge);
+      await page.waitForTimeout(60);
+      const geometry=await d.evaluate(node=>{
+        const bounds=selector=>{const r=node.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height};};
+        const save=node.querySelector('[data-save-settings]'),r=save.getBoundingClientRect();
+        return {scroll:bounds('.settings-scroll'),footer:bounds('.settings-footer'),save:bounds('[data-save-settings]'),
+          heading:bounds('h2'),close:bounds('.close'),
+          saveUnobscured:save.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};
+      });
+      assert(geometry.save.top>=0&&geometry.save.bottom<=viewport.height&&geometry.saveUnobscured);
+      assert(geometry.scroll.bottom<=geometry.footer.top+1);
+      assert(geometry.heading.top>=0&&geometry.close.top>=0);
+      if(name==='mobile-short')assert(Math.abs(geometry.save.width-geometry.footer.width)<=1);
+      details.layout.push({name,edge,...geometry});
+      await shot(`layout-${name}-${edge}`);
+    }
+    const lastInput=gen.getByLabel('最大并发',{exact:true});
+    await lastInput.scrollIntoViewIfNeeded();
+    const field=await lastInput.boundingBox(),footer=await d.locator('.settings-footer').boundingBox();
+    assert(field.y+field.height<=footer.y+1,'Last field must remain above the action strip');
+    const combo=gen.getByRole('combobox',{name:'摘要并发',exact:true});
+    await combo.scrollIntoViewIfNeeded();
+    await d.locator('.settings-scroll').evaluate(node=>{
+      const trigger=node.querySelector('[aria-label="摘要并发"][role="combobox"]');
+      const a=trigger.getBoundingClientRect(),b=node.getBoundingClientRect();
+      node.scrollTop+=a.bottom-(b.bottom-5);
+    });
+    await combo.click();await page.waitForTimeout(70);
+    const menu=await page.locator('.select-menu:not([hidden])').boundingBox();
+    const clip=await d.locator('.settings-scroll').boundingBox();
+    assert(menu.y>=clip.y-1&&menu.y+menu.height<=clip.y+clip.height+1,'Menu must fit the field viewport above footer');
+    details.menuLayouts.push({name,menu,clip});
+    await eventually(()=>page.locator('.select-menu:not([hidden])').evaluate(node=>node.getAnimations().every(a=>a.playState!=='running'&&!a.pending)),'menu settled');
+    await shot(`layout-${name}-footer-menu`);
+    await combo.press('End');await combo.press('Enter');
+    assert.equal(await d.locator('[name="mode"]').inputValue(),'manual');
+    await combo.click();await combo.press('Home');await combo.press('Enter');
+    assert.equal(await d.locator('[name="mode"]').inputValue(),'auto');
+    check(`${name}: 长表单顶/底保存可见且不挡字段，footer旁菜单与键盘可用`);
+  }
+  await gen.getByLabel('文本生成模型名称',{exact:true}).fill('mobile-unsaved-model');
+  await d.getByRole('button',{name:'关闭',exact:true}).click();
+  await d.getByRole('button',{name:'继续编辑',exact:true}).click();
+  assert.equal(await gen.getByLabel('文本生成模型名称',{exact:true}).inputValue(),'mobile-unsaved-model');
+  await d.getByRole('button',{name:'关闭',exact:true}).click();
+  await shot('layout-mobile-short-dirty');
+  await d.getByRole('button',{name:'放弃更改',exact:true}).click();await d.waitFor({state:'detached'});
+  assert.deepEqual(await api('/system/model-settings'),savedBefore);
+  assert(await page.getByRole('button',{name:'设置',exact:true}).evaluate(node=>node===document.activeElement));
+  check('短屏dirty继续/放弃不丢草稿或误保存，退出焦点返回设置入口');
+  await page.setViewportSize({width:1440,height:1000});
+  d=await open();gen=d.getByRole('tabpanel',{name:'文本生成',exact:true});
+  assert.equal(await gen.getByLabel('文本生成 API Key',{exact:true}).inputValue(),'');
+  await gen.getByLabel('文本生成模型名称',{exact:true}).fill('user-manual-model');
+  await gen.getByLabel('文本生成 API Key',{exact:true}).fill('visible-draft-key-not-real');
+  await select(gen,'文本生成服务预设','OpenAI');
+  assert.equal(await gen.getByLabel('文本生成模型名称',{exact:true}).inputValue(),'user-manual-model');
+  assert.equal(await gen.getByLabel('文本生成 API Key',{exact:true}).inputValue(),'visible-draft-key-not-real');
+  assert.equal((await records()).length,0);
+  assert.deepEqual(await api('/system/model-settings'),savedBefore);
+  await gen.getByRole('button',{name:'显示当前输入',exact:true}).click();
+  assert.equal(await gen.getByLabel('文本生成 API Key',{exact:true}).getAttribute('type'),'text');
+  await gen.getByRole('button',{name:'隐藏当前输入',exact:true}).click();
+  check('预设不保存不探测，保留模型和密钥草稿，显隐仅当前输入');
+  await d.getByRole('button',{name:'关闭',exact:true}).click();
+  await d.getByRole('button',{name:'继续编辑',exact:true}).waitFor();
+  await shot('dirty-draft');
+  await d.getByRole('button',{name:'继续编辑',exact:true}).click();
+  assert.equal(await gen.getByLabel('文本生成模型名称',{exact:true}).inputValue(),'user-manual-model');
+  await d.getByRole('button',{name:'关闭',exact:true}).click();
+  await d.getByRole('button',{name:'放弃更改',exact:true}).click();
+  await d.waitFor({state:'detached'});
+  assert.deepEqual(await api('/system/model-settings'),savedBefore);
+  check('dirty继续编辑与放弃更改不写配置，关闭后移除浮层');
+
+  d = await open();gen = d.getByRole('tabpanel',{name:'文本生成',exact:true});
+  await gen.getByRole('button',{name:'获取模型列表',exact:true}).click();
+  await gen.getByRole('button',{name:'deepseek-v4-flash',exact:true}).waitFor();
+  await shot('generation-catalog');
+  assert.deepEqual(await api('/system/model-settings'),savedBefore);
+  await gen.getByRole('button',{name:'deepseek-v4-flash',exact:true}).click();
+  assert.equal(await gen.getByLabel('文本生成模型名称',{exact:true}).inputValue(),'deepseek-v4-flash');
+  assert.deepEqual(await api('/system/model-settings'),savedBefore);
+  await d.getByRole('button',{name:'保存配置',exact:true}).click();
+  await eventually(async () => (await api('/system/model-settings')).generation.model === 'deepseek-v4-flash','model save');
+  assert(await d.isVisible());
+  check('主动目录只读，明确选择成为草稿，保存后实际配置更新且弹窗保留');
+
+  await d.getByRole('tab',{name:'文本向量',exact:true}).click();
+  const emb = d.getByRole('tabpanel',{name:'文本向量',exact:true});
+  await emb.getByLabel('文本向量模型名称',{exact:true}).fill('pending-embedding-model');
+  await emb.getByLabel('向量维度',{exact:true}).fill('1536');
+  await select(emb,'文本向量服务预设','OpenAI');
+  await select(emb,'文本向量服务预设','硅基流动');
+  assert.equal(await emb.getByLabel('文本向量模型名称',{exact:true}).inputValue(),'pending-embedding-model');
+  assert.equal(await emb.getByLabel('向量维度',{exact:true}).inputValue(),'1536');
+  await emb.getByRole('button',{name:'获取模型列表',exact:true}).click();
+  const fixed = emb.getByRole('button',{name:/Qwen\/Qwen3-Embedding-4B.*1024/});
+  await fixed.waitFor();
+  assert.equal(await emb.getByRole('button',{name:'fixture-other-embedding',exact:true}).count(),0);
+  await shot('embedding-fixed-catalog');
+  await fixed.click();
+  assert.equal(await emb.getByLabel('向量维度',{exact:true}).inputValue(),'1024');
+  await d.getByRole('button',{name:'保存配置',exact:true}).click();
+  await eventually(async () => await d.locator('[data-draft-status]').textContent() === '已保存配置','embedding saved');
+  const sf = (await api('/system/model-settings')).embedding;
+  assert.equal(sf.model,'Qwen/Qwen3-Embedding-4B');assert.equal(sf.dimensions,1024);
+  check('SF仅可选固定Qwen1024，预设不强改草稿，明确选择与真实保存契约一致');
+
+  await d.getByRole('tab',{name:'文本生成',exact:true}).click();
+  await select(gen,'文本生成服务预设','自定义兼容服务');
+  await gen.getByLabel('文本生成服务地址',{exact:true}).fill('https://draft-only.example/v1');
+  const count = (await records()).length;
+  await gen.getByRole('button',{name:'测试连接',exact:true}).click();
+  await gen.getByText(/新的服务地址需要输入对应的新密钥/).waitFor();
+  assert.equal((await records()).length,count);
+  await gen.getByLabel('文本生成 API Key',{exact:true}).fill('new-fake-key');
+  await scenario({mode:'401'});
+  await gen.getByRole('button',{name:'测试连接',exact:true}).click();
+  await gen.getByText(/服务拒绝了认证/).waitFor();
+  assert(!await d.innerText().then(text => text.includes('UNTRUSTED_REMOTE_FIXTURE') || text.includes('new-fake-key')));
+  await shot('safe-error-manual-fallback');
+  assert(await gen.getByLabel('文本生成模型名称',{exact:true}).isEditable());
+  check('换址不借旧key且零请求；新key假探测失败安全显示并保留手填入口');
+  await gen.getByLabel('最大并发',{exact:true}).fill('0');
+  await d.getByRole('button',{name:'保存配置',exact:true}).click();
+  await d.getByText('并发数应为1至2500的整数。',{exact:true}).waitFor();
+  await gen.getByLabel('最大并发',{exact:true}).fill('64');
+  check('字段错误拒绝保存');
+  await d.getByRole('button',{name:'关闭',exact:true}).click();
+  await d.getByRole('button',{name:'保存并关闭',exact:true}).click();
+  await d.waitFor({state:'detached'});
+  assert.equal((await api('/system/model-settings')).generation.base_url,'https://draft-only.example/v1');
+  d=await open();gen=d.getByRole('tabpanel',{name:'文本生成',exact:true});
+  assert.equal(await gen.getByLabel('文本生成 API Key',{exact:true}).inputValue(),'');
+  check('dirty保存并关闭实际持久化，新打开仍不回填旧密钥');
+
+  const configBeforeRace = await api('/system/model-settings');
+  await scenario({mode:'success',delay_ms:900,tag:'OLD'});
+  await gen.getByRole('button',{name:'获取模型列表',exact:true}).click();
+  await eventually(async () => (await records()).some(item => item.tag === 'OLD' && !item.finished),'slow probe entered');
+  await select(gen,'文本生成服务预设','OpenRouter');
+  await eventually(async () => (await records()).some(item => item.tag === 'OLD' && item.finished),'old fake response finishes');
+  await page.waitForTimeout(150);
+  assert.equal(await gen.getByRole('button',{name:'fixture-model-OLD',exact:true}).count(),0,
+    'Old endpoint response must not populate the new preset model list');
+  assert.deepEqual(await api('/system/model-settings'),configBeforeRace);
+  check('预设切换忽略上一端点的迟到模型列表');
+  await gen.getByRole('checkbox',{name:'清除已保存的密钥',exact:true}).check();
+  const beforeClearProbe=(await records()).length;
+  await gen.getByRole('button',{name:'测试连接',exact:true}).click();
+  await gen.getByText(/请输入密钥，或使用同地址已保存的密钥/).waitFor();
+  assert.equal((await records()).length,beforeClearProbe);
+  await d.getByRole('button',{name:'保存配置',exact:true}).click();
+  await eventually(async()=>!(await api('/system/model-settings')).generation.api_key_set,'explicit key removal');
+  const clearedBeforeReset=await api('/system/model-settings');
+  check('清除草稿禁止复用旧key探测，保存后真实移除凭据');
+
+  await d.getByRole('button',{name:'恢复 .env 配置',exact:true}).click();
+  await d.getByRole('button',{name:'取消',exact:true}).click();
+  assert.deepEqual(await api('/system/model-settings'),clearedBeforeReset);
+  await d.getByRole('button',{name:'恢复 .env 配置',exact:true}).click();
+  await d.getByRole('button',{name:'确认恢复 .env',exact:true}).click();
+  await eventually(async () => !(await api('/system/model-settings')).local_override,'env reset');
+  const reset = await api('/system/model-settings');
+  assert(!reset.generation.api_key_set && !reset.embedding.api_key_set);
+  await close(d);
+  await page.waitForTimeout(200);
+  details.finalFocus = await page.evaluate(() => ({tag:document.activeElement?.tagName,
+    text:document.activeElement?.textContent?.slice(0,60),action:document.activeElement?.dataset?.action}));
+  assert(await page.getByRole('button',{name:'设置',exact:true}).evaluate(node => node === document.activeElement),
+    'Closing settings must return focus to its visible trigger: '+JSON.stringify(details.finalFocus));
+  check('恢复确认/取消与焦点返回，临时.env无密钥回填');
+  details.requests = await records();
+  assert(details.requests.every(item => item.method === 'GET' && item.path.endsWith('/models')));
+  assert.deepEqual(await api('/workspace/tasks'),[]);
+}).catch(error => {console.error(error);process.exitCode=1;});

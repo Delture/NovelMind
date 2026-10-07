@@ -21,7 +21,10 @@ class Chapter:
 _CHINESE_NUMBER = "0-9零〇一二三四五六七八九十百千万两"
 _MAX_CHAPTER_TITLE_CHARACTERS = 255
 _CHINESE_CHAPTER_PREFIX_PATTERN = re.compile(
-    rf"^第[{_CHINESE_NUMBER}]+章",
+    rf"^第(?P<number>[{_CHINESE_NUMBER}]+)章",
+)
+_REPEATED_NUMBER_SUFFIX_PATTERN = re.compile(
+    r"^\s*(?P<number>[0-9０-９]+)\s*[.．、:：]\s*\S",
 )
 _ENGLISH_CHAPTER_TITLE_PATTERN = re.compile(
     r"^chapter\s+\d+.*$",
@@ -35,16 +38,28 @@ def _is_chapter_title(line: str) -> bool:
     if not title or len(title) > _MAX_CHAPTER_TITLE_CHARACTERS:
         return False
 
-    # 中文标题可带副标题；若“章”后直接接字且整行以句号结束，则更像正文。
+    # 问号/叹号常见于章标题，不能仅因结尾标点拒绝。对句号/分号仍保留正文
+    # 防误切；“第3章3.标题。”具有重复章号与分隔符，是明确的编号副标题。
     chinese_match = _CHINESE_CHAPTER_PREFIX_PATTERN.match(title)
     if chinese_match:
         suffix = title[chinese_match.end():]
         direct_suffix = (
             suffix
             and not suffix[0].isspace()
-            and suffix[0] not in "：:、.-—"
+            and suffix[0] not in "：:、.．-—"
         )
-        if direct_suffix and title.endswith(("。", "！", "？", "；")):
+        numbered_suffix = _REPEATED_NUMBER_SUFFIX_PATTERN.match(suffix)
+        number = chinese_match.group("number")
+        repeated_number = (
+            numbered_suffix is not None
+            and number.isdecimal()
+            and int(numbered_suffix.group("number")) == int(number)
+        )
+        if (
+            direct_suffix
+            and not repeated_number
+            and title.endswith(("。", ".", "；", ";"))
+        ):
             return False
         return True
 

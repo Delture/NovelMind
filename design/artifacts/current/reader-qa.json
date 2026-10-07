@@ -1,0 +1,40 @@
+{
+  "passed": true,
+  "checks": [
+    "128 chapters",
+    "long scroll",
+    "bookmark persists",
+    "paragraph position restores",
+    "six reading preferences",
+    "three themes",
+    "focus and escape",
+    "sidebar toggle",
+    "chapter jump",
+    "50 to 51",
+    "bookmark jump and delete",
+    "first and last chapter states",
+    "page down",
+    "narrow viewport",
+    "cleanup when leaving"
+  ],
+  "positionBefore": {
+    "chapter": 12,
+    "paragraph": 8,
+    "offset": 0
+  },
+  "positionAfter": {
+    "chapter": 12,
+    "paragraph": 8,
+    "offset": 0
+  },
+  "prefs": {
+    "theme": "sepia",
+    "font": "sans",
+    "size": 22,
+    "line": 2.1,
+    "width": 800,
+    "gap": 28,
+    "sidebar": true
+  },
+  "errors": []
+}
