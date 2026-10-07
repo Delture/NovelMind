@@ -1,7 +1,7 @@
 """启动、监控并安全停止本机 NovelMind 后端和前端。
 
-启动顺序不是简单地同时运行两个命令：先检查重复实例和端口，启动 FastAPI 并
-等待健康检查，再启动 Streamlit 并等待页面就绪，最后才打开浏览器。状态文件和
+启动器先检查重复实例和端口，启动唯一 FastAPI 并
+等待健康检查和网页就绪，最后才打开浏览器。状态文件和
 随机本机控制端口让另一个“停止”命令能联系正确启动器，token 防止无关本机请求
 误触发停止。Windows Job Object 确保启动器异常退出时子进程树不会变成孤儿。
 
@@ -38,17 +38,17 @@ from ctypes import wintypes
 # 启动因此具有相同行为。
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
-RUNTIME_DIR = PROJECT_ROOT / "data" / "runtime"
+RUNTIME_DIR = Path(os.environ.get("NOVELMIND_RUNTIME_DIR", str(PROJECT_ROOT / "data" / "runtime")))
 STATE_FILE = RUNTIME_DIR / "launcher.json"
-LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR = Path(os.environ.get("NOVELMIND_LOG_DIR", str(PROJECT_ROOT / "logs")))
 BACKEND_LOG = LOG_DIR / "backend.log"
 FRONTEND_LOG = LOG_DIR / "frontend.log"
 LAUNCHER_LOG = LOG_DIR / "launcher.log"
 
 BACKEND_HOST = "127.0.0.1"
-BACKEND_PORT = 8000
+BACKEND_PORT = int(os.environ.get("NOVELMIND_PORT", "8501"))
 FRONTEND_HOST = "127.0.0.1"
-FRONTEND_PORT = 8501
+FRONTEND_PORT = BACKEND_PORT
 BACKEND_HEALTH_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/health"
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
 STARTUP_TIMEOUT_SECONDS = 45.0
@@ -439,14 +439,15 @@ def _python_executable() -> Path:
 def build_backend_command(python: Path, *, development: bool) -> list[str]:
     """构造 uvicorn 参数列表，不启动进程。
 
-    ``python`` 是解释器路径；``development=True`` 追加热重载。返回列表而不是拼接
+    ``python`` 是解释器路径；``development=True`` 追加热重载；Windows 使用进程事件停止 worker，避免依赖
+    控制台 Ctrl+C 传递。返回列表而不是拼接
     shell 字符串，可避免带空格路径的转义问题和命令注入。
     """
     command = [
         str(python),
         "-m",
-        "uvicorn",
-        "backend.app.main:app",
+        "scripts.novelmind_server" if development and os.name == "nt" else "uvicorn",
+        os.environ.get("NOVELMIND_APP", "backend.app.main:app"),
         "--host",
         BACKEND_HOST,
         "--port",
@@ -458,20 +459,8 @@ def build_backend_command(python: Path, *, development: bool) -> list[str]:
 
 
 def build_frontend_command(python: Path) -> list[str]:
-    """构造固定绑定回环地址的 Streamlit 命令参数列表，不启动进程。"""
-    return [
-        str(python),
-        "-m",
-        "streamlit",
-        "run",
-        str(PROJECT_ROOT / "frontend" / "streamlit_app.py"),
-        "--server.address",
-        FRONTEND_HOST,
-        "--server.port",
-        str(FRONTEND_PORT),
-        "--server.headless",
-        "true",
-    ]
+    """兼容旧调用方的命令构造；默认启动流程仅调用一次应用命令。"""
+    return build_backend_command(python, development=False)
 
 
 def _process_creation_flags() -> int:
@@ -533,7 +522,7 @@ def _backend_is_ready() -> bool:
 
 
 def _frontend_is_ready() -> bool:
-    """请求 Streamlit 根页面，返回是否已能得到 HTTP 200。"""
+    """请求新前端根页面，返回是否已能得到 HTTP 200。"""
     try:
         with urllib.request.urlopen(FRONTEND_URL, timeout=1.0) as response:
             return response.status == 200
@@ -603,12 +592,10 @@ def _terminate_process(managed: ManagedProcess) -> None:
 
 
 def _verify_ports_are_free() -> None:
-    """检查后端和前端固定端口；冲突时拒绝自动杀死未知进程并抛 LauncherError。"""
+    """检查应用端口；冲突时拒绝自动杀死未知进程并抛 LauncherError。"""
     conflicts = []
     if not _port_is_available(BACKEND_HOST, BACKEND_PORT):
         conflicts.append(str(BACKEND_PORT))
-    if not _port_is_available(FRONTEND_HOST, FRONTEND_PORT):
-        conflicts.append(str(FRONTEND_PORT))
     if conflicts:
         joined = "、".join(conflicts)
         raise LauncherError(
@@ -651,7 +638,7 @@ def start(*, development: bool, open_browser: bool = True) -> int:
 
     ``development`` 决定后端是否开启 reload；``open_browser`` 决定全部就绪后是否
     打开页面，二者均为仅限关键字参数。函数处理重复启动、状态文件、控制服务器、
-    后端/前端顺序就绪、信号和意外退出；finally 反向清理全部资源。成功返回 0，
+    API/网页顺序就绪、信号和意外退出；finally 反向清理全部资源。成功返回 0，
     可操作失败抛 LauncherError 交给 main 转换退出码。
     """
     _configure_logging()
@@ -711,15 +698,7 @@ def start(*, development: bool, open_browser: bool = True) -> int:
         _wait_until_ready("后端", backend.process, _backend_is_ready)
         _print(f"后端已就绪：{BACKEND_HEALTH_URL}")
 
-        frontend = _start_process(
-            "frontend",
-            build_frontend_command(python),
-            FRONTEND_LOG,
-            ownership_job=ownership_job,
-        )
-        processes.append(frontend)
-        _print("正在等待前端页面……")
-        _wait_until_ready("前端", frontend.process, _frontend_is_ready)
+        _wait_until_ready("网页", backend.process, _frontend_is_ready)
 
         control_server.launcher_status = "ready"
         _save_state(
@@ -728,7 +707,7 @@ def start(*, development: bool, open_browser: bool = True) -> int:
             development=development,
             status="ready",
             backend_pid=backend.process.pid,
-            frontend_pid=frontend.process.pid,
+            frontend_pid=backend.process.pid,
         )
         _print(f"NovelMind 已启动：{FRONTEND_URL}")
         _print("按 Ctrl+C，或双击“停止 NovelMind”即可安全停止。")

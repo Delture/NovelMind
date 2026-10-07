@@ -1,0 +1,191 @@
+"""新前端的本机状态、统一任务列表和真实任务链。"""
+
+import logging
+from uuid import uuid4
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel, Field, StrictBool, ConfigDict
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from backend.app.api.novels import get_novel_or_404
+from backend.app.core.database import get_db, SessionLocal
+from backend.app.services.workflows import run_workflow, WorkflowExecution, get_workflow_execution
+from backend.app.core.time import utc_now
+from backend.app.core.config import Settings, get_settings, privacy_scope
+from backend.app.models.workspace import WorkspaceSetting, ReadingState, Workflow
+from backend.app.models.analysis import AnalysisJob
+from backend.app.models.rag import RagQuestion
+from backend.app.models.novel import Novel
+
+router = APIRouter(tags=["workspace"])
+logger = logging.getLogger(__name__)
+
+
+class Privacy(BaseModel):
+    """本机授权选择；默认关闭，前端仍向业务接口传递明确确认字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+    decided: StrictBool = False
+    external: StrictBool = False
+    rights: StrictBool = False
+
+
+class Position(BaseModel):
+    """逻辑阅读锚点，不依赖屏幕尺寸和滚动像素。"""
+
+    chapter: int = Field(default=1, ge=1, le=10000)
+    paragraph: int = Field(default=-1, ge=-1, le=2000000)
+    offset: int = Field(default=0, ge=0, le=20000000)
+
+
+class Bookmark(Position):
+    """一个具有短摘录的阅读锚点。"""
+
+    id: str = Field(max_length=80)
+    snippet: str = Field(default="", max_length=100)
+    label: str = Field(default="", max_length=80)
+    note: str = Field(default="", max_length=500)
+
+
+class Preferences(BaseModel):
+    """仅接受阅读器实际支持的主题和排版范围。"""
+
+    theme: Literal["paper", "sepia", "dark"] = "paper"
+    font: Literal["serif", "sans"] = "serif"
+    size: float = Field(default=18, ge=16, le=28)
+    line: float = Field(default=1.9, ge=1.6, le=2.2)
+    width: float = Field(default=720, ge=560, le=880)
+    gap: float = Field(default=22, ge=12, le=36)
+    sidebar: bool = True
+
+
+class ReaderState(BaseModel):
+    """有界的阅读状态请求，防止任意大 JSON 写入数据库。"""
+
+    prefs: Preferences = Field(default_factory=Preferences)
+    position: Position = Field(default_factory=Position)
+    bookmarks: list[Bookmark] = Field(default_factory=list, max_length=500)
+
+
+@router.get("/workspace/privacy", response_model=Privacy)
+def get_privacy(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """读取本机统一授权，缺少记录时默认仅本地阅读。"""
+    row = db.get(WorkspaceSetting, "privacy")
+    if row is None or row.value.get("scope") != privacy_scope(settings):
+        return Privacy()
+    return Privacy.model_validate({k: row.value[k] for k in ("decided", "external", "rights")})
+
+
+@router.put("/workspace/privacy", response_model=Privacy)
+def save_privacy(value: Privacy, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
+    """保存明确的授权选择，不生成文本或触发任何付费调用。"""
+    db.merge(WorkspaceSetting(key="privacy", value={**value.model_dump(), "scope": privacy_scope(settings)}))
+    db.commit()
+    return value
+
+
+@router.get("/novels/{novel_id}/reading", response_model=ReaderState)
+def get_reading(novel_id: int, db: Session = Depends(get_db)):
+    """加载小说的阅读状态，不存在时返回第一章默认状态。"""
+    get_novel_or_404(db, novel_id)
+    row = db.get(ReadingState, novel_id)
+    return row.value if row else ReaderState()
+
+
+@router.put("/novels/{novel_id}/reading", response_model=ReaderState)
+def save_reading(novel_id: int, value: ReaderState, db: Session = Depends(get_db)):
+    """校验章节边界后原子写入阅读状态，包括偏好和全部书签。"""
+    novel = get_novel_or_404(db, novel_id)
+    if any(p.chapter > novel.chapter_count for p in [value.position, *value.bookmarks]):
+        raise HTTPException(422, "阅读位置超出章节范围。")
+    db.merge(ReadingState(novel_id=novel_id, value=value.model_dump()))
+    db.commit()
+    return value
+
+
+def workflow_data(row):
+    """把任务链转换为公开字段，问题正文不进入任务列表。"""
+    return {k: getattr(row, k) for k in
+            ("id", "novel_id", "kind", "status", "phase", "error_message", "created_at")}
+
+
+@router.get("/workspace/tasks")
+def tasks(db: Session = Depends(get_db)):
+    """统一展示全资料库最近任务；后端持续执行，浏览器只轮询记录。"""
+    names = dict(db.query(Novel.id, Novel.filename).all())
+    rows = []
+    for job in db.query(AnalysisJob).order_by(AnalysisJob.created_at.desc()).limit(100):
+        rows.append(dict(id=job.id, novel_id=job.novel_id, kind=job.job_type,
+                         status=job.status, progress_current=job.progress_current,
+                         progress_total=job.progress_total, error_message=job.error_message,
+                         created_at=job.created_at.isoformat()))
+    for question in db.query(RagQuestion).order_by(RagQuestion.created_at.desc()).limit(30):
+        rows.append(dict(id=question.id, novel_id=question.novel_id, kind="question",
+                         status=question.status, error_message=question.error_message,
+                         created_at=question.created_at.isoformat()))
+    for row in db.query(Workflow).order_by(Workflow.created_at.desc()).limit(30):
+        rows.append(workflow_data(row))
+    for row in rows:
+        row["filename"] = names.get(row["novel_id"], "")
+    return sorted(rows, key=lambda r: r["created_at"], reverse=True)
+
+
+class WorkflowRequest(BaseModel):
+    """用户一次批准的工作范围，报告或索引后提问。"""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["report", "ask"]
+    question: str = Field(default="", max_length=2000)
+    confirm_external_processing: StrictBool
+    confirm_content_rights: StrictBool
+
+
+def get_workflow_session_factory():
+    """提供可替换的会话工厂，测试无需访问开发数据库。"""
+    return SessionLocal
+
+
+def fail_interrupted_workflows(factory):
+    """重启后将未完成任务链明确标为失败，避免意外恢复付费操作。"""
+    with factory() as db:
+        for row in db.query(Workflow).filter(Workflow.status.in_(["queued", "running"])):
+            row.status = "failed"
+            row.error_message = "服务已重启；可重新发起操作，已完成的摘要和索引会被复用。"
+        db.commit()
+
+
+@router.post("/novels/{novel_id}/workflows", status_code=202)
+def start_workflow(novel_id: int, value: WorkflowRequest, background: BackgroundTasks,
+                   db: Session = Depends(get_db), factory=Depends(get_workflow_session_factory),
+                   execution: WorkflowExecution = Depends(get_workflow_execution)):
+    """检查双授权和小说后持久化并派发任务链，数据库唯一索引阻止重复启动。
+
+    本接口只接受明确的用户请求，不从阅读或页面加载中隐式触发；每步仍经过共享
+    业务服务门禁。异常中断不会自动续跑，用户可以检查错误后复用缓存重新发起。
+    """
+    get_novel_or_404(db, novel_id)
+    if not value.confirm_external_processing or not value.confirm_content_rights:
+        raise HTTPException(400, "请先确认外部处理和内容处理权利。")
+    if value.kind == "ask" and not value.question.strip():
+        raise HTTPException(422, "请输入问题。")
+    row = Workflow(id=str(uuid4()), novel_id=novel_id, kind=value.kind,
+                   question=value.question.strip(), created_at=utc_now().isoformat())
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "这本书已有任务链正在运行，请等待完成。") from None
+    db.refresh(row)
+    result = workflow_data(row)
+    try:
+        background.add_task(run_workflow, row.id, factory, execution,
+                            value.confirm_external_processing, value.confirm_content_rights)
+    except Exception:
+        row.status = "failed"
+        row.error_message = "任务链未能加入后台队列，请重试。"
+        db.commit()
+        raise
+    return result

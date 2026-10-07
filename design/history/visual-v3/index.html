@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NovelMind · Claude × Apple · 精修版</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#e9e3da;color:#302d29;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}header{padding:18px 26px;background:#faf8f4cc;backdrop-filter:blur(20px);border-bottom:1px solid #e0d8cd;display:flex;gap:20px;align-items:center;flex-wrap:wrap}h1{font-size:17px;margin:0}small{color:#78736c}nav{display:flex;gap:6px;flex-wrap:wrap}button{font:inherit;font-size:12px;border:0;border-radius:12px;padding:9px 12px;background:transparent;color:#75695c;cursor:pointer}button{transition:background-color .2s,transform .2s}button:hover{transform:translateY(-1px)}button:active{transform:scale(.97)}@media(prefers-reduced-motion:reduce){button{transition:none}button:hover,button:active{transform:none}}button[aria-pressed=true]{background:#9d583e;color:white}button:focus-visible{outline:2px solid #9d583e;outline-offset:3px}main{padding:24px;overflow:auto}#stage{position:relative;margin:auto;box-shadow:0 12px 40px #20282012;border-radius:16px;overflow:hidden}iframe{border:0;width:1440px;height:900px;transform-origin:top left;background:#faf8f4}footer{text-align:center;font-size:12px;color:#78736c;padding:0 20px 18px}a{color:#9d583e}
+</style>
+<div style="padding:12px 26px;background:#39342e;color:#fff;font:14px system-ui">已推出完整信息架构重构版 · <a style="color:#f2d3bc" href="rebuild/library.html">打开新版本 →</a></div><header><h1>NovelMind</h1><small>连续章节目录</small><nav aria-label="设计页面"></nav></header>
+<main><div id="stage"><iframe title="NovelMind 设计预览" src="bi8Au.html"></iframe></div></main>
+<footer>桌面端 1440 × 900 · 虚构演示数据 · 可体验连续章节目录、搜索和字号浮层；不发送业务请求 · <a href="README.md">设计说明</a></footer>
+<script>
+const screens=[['bi8Au','资料库'],['GXXh7','正文阅读'],['lX21L','章节摘要'],['qpClT','人物'],['V9YZY','原文问答'],['b4HLy','全书报告'],['ULIfr','导入小说'],['ElfMF','模型与密钥']];
+const nav=document.querySelector('nav'),frame=document.querySelector('iframe'),stage=document.querySelector('#stage');
+screens.forEach(([id,name],i)=>{const b=document.createElement('button');b.textContent=name;b.setAttribute('aria-pressed',i===0);b.onclick=()=>{if(frame.contentWindow.NovelMindPreview){frame.contentWindow.NovelMindPreview.go(id)}else{frame.src=id+'.html'};frame.title='NovelMind · '+name;nav.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));};nav.append(b)});
+addEventListener('message',e=>{if(e.source!==frame.contentWindow||e.data?.type!=='novelmind-page')return;const i=screens.findIndex(x=>x[0]===e.data.id);nav.querySelectorAll('button').forEach((b,j)=>b.setAttribute('aria-pressed',j===i));});
+function resize(){const scale=Math.min(1,(innerWidth-48)/1440);frame.style.transform=`scale(${scale})`;stage.style.width=1440*scale+'px';stage.style.height=900*scale+'px'}resize();addEventListener('resize',resize);
+</script>
+</html>

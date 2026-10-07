@@ -473,3 +473,18 @@ def delete_novel(
                 collection_name,
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{novel_id}/search")
+def search_novel_text(novel_id: int = PathParameter(..., ge=1),
+                      q: str = Query(..., min_length=1, max_length=200),
+                      offset: int = Query(0, ge=0, le=10000),
+                      limit: int = Query(20, ge=1, le=50),
+                      db: Session = Depends(get_db)) -> dict:
+    """返回有界本机原文片段和 UTF-16 锚点；不调用外部模型或写阅读状态。"""
+    from backend.app.services.text_search import search_text
+    get_novel_or_404(db, novel_id)
+    query = q.strip()
+    if not query or any(character in q for character in ("\r", "\n", "\x00")):
+        raise HTTPException(422, "请输入1至200个字符的单行搜索内容。")
+    return search_text(db, novel_id, query, offset, limit)

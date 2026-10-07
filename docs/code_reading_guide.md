@@ -17,7 +17,7 @@ NovelMind 是 Windows 本机单用户应用，但仍采用前后端分离：
 ```text
 用户
   ↓ 浏览器
-Streamlit 前端
+原生 HTML/CSS/JavaScript 网页
   ↓ HTTP/JSON
 FastAPI 后端
   ├─ SQLite 主数据库
@@ -51,7 +51,7 @@ FastAPI 后端
 
 - `uvicorn backend.app.main:app` 怎样找到 FastAPI 对象？
 - 为什么数据库初始化必须发生在接收请求前？
-- 为什么后端就绪后才启动前端？
+- 为什么单个应用仍要分别检查 API 健康和网页就绪？
 - 为什么进程存在不等于服务已经就绪？
 - 异常退出时谁负责结束子进程、修正遗留任务？
 
@@ -62,8 +62,8 @@ FastAPI 后端
 1. `backend/app/parser/chapter_splitter.py`
 2. `backend/app/models/novel.py`
 3. `backend/app/api/novels.py`
-4. `frontend/api_client.py` 的上传和资料库函数
-5. `frontend/streamlit_app.py` 的上传、资料库和阅读器部分
+4. `frontend/web/api.js` 的上传和资料库函数
+5. `frontend/web/pages.js` 的上传、资料库和阅读器部分
 
 跟踪一份 TXT：原始字节怎样经过大小/扩展名/编码/乱码检查，怎样切成章节，
 怎样在一个事务中写入小说与章节，再怎样经 JSON 返回并显示。这个闭环包含了
@@ -206,7 +206,7 @@ RAG 不是“把全文发给模型”。本项目的流程是：
 
 ### 第 9 站：读前端时记住 rerun 模型
 
-Streamlit 的按钮点击、选择变化会让脚本重新从上到下运行。普通局部变量会消失，
+历史兼容界面 Streamlit 的按钮点击、选择变化会让脚本重新从上到下运行（代码位于 legacy/streamlit/）。普通局部变量会消失，
 `st.session_state` 才能保存当前页面、小说 ID 和分页位置。长期业务状态不应塞入
 session_state，而应从后端重新读取，这样刷新浏览器和重启前端仍能恢复。
 
@@ -229,7 +229,7 @@ session_state，而应从后端重新读取，这样刷新浏览器和重启前�
 
 ### 2. 建目录和最小可运行入口
 
-先让 `/health` 能返回，Streamlit 能显示，测试能导入模块。最小入口验证 Python
+先让 `/health` 能返回，网页能显示，测试能导入模块。最小入口验证 Python
 版本、依赖、包路径和启动命令；此时不要急着实现最复杂的 RAG。
 
 ### 3. 完成一个不依赖外部 API 的垂直切片
@@ -310,7 +310,7 @@ session_state，而应从后端重新读取，这样刷新浏览器和重启前�
 2. 判断它是计算值还是必须持久化；
 3. 若持久化，修改模型并追加迁移；
 4. 修改 API 响应模型；
-5. 修改 `frontend/api_client.py`（如端点变化）；
+5. 修改 `frontend/web/api.js`（如端点变化）；
 6. 在 UI 严格验证并展示；
 7. 增加模型、API 和前端测试；
 8. 运行相关测试，再运行完整回归；
@@ -341,3 +341,20 @@ session_state，而应从后端重新读取，这样刷新浏览器和重启前�
 最后再通读 `docs/architecture.md`，你会发现架构文档描述“当前系统是什么”，
 本文描述“为什么会形成这些结构以及怎样继续演进”。两者结合，再回到代码逐函数
 阅读，会比一开始从四千行前端文件硬读更高效。
+
+## 当前实现阅读补充
+
+先读 `frontend/web/app.js` 的路由与生命周期，再读 `pages.js` 的页面数据接入、`tasks.js` 的处理计划与轮询。
+原生网页使用事件回调和异步 HTTP；持久任务、阅读偏好、锚点、书签保存在后端，DOM 只是当前显示。
+旧 Streamlit 的 rerun/session_state 教学仍适用于兼容目录，不能直接当作新网页执行模型。
+
+`api/summaries.py`、`api/reports.py`、`api/rag.py` 的路由委托 `services/` 同名模块。
+观察 `services/workflows.py` 怎样冻结配置并按顺序调用同一服务，不必为流程模拟一次 HTTP 请求。
+人物大文件现为稳定导出入口，按 `character_pipeline` 的 payloads → extraction → merge → persistence → worker 阅读。
+迁移从 `core/migrations.py` 的账本开始，再看 migration_steps 的历史版本；v10 管网页状态，v11 移除旧归属触发器。
+
+### 阅读跨模块集成验收
+
+`tests/integration/` 集中保存端点密钥生命周期、任务链配置冻结、历史库升级和真实启动器测试。
+先读 `run_isolated.py` 如何隔离数据库、向量目录和配置，再读 `test_launcher_lifecycle.py` 与 `launcher_probe.py` 如何观察实际进程。
+默认 pytest 包含该组；旧界面测试单独在 `tests/legacy/`，完整运行 `python -m pytest tests -q` 时一并执行。

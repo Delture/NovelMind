@@ -10,7 +10,6 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
-    DDL,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -20,7 +19,6 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    event,
     text,
 )
 from sqlalchemy.ext.mutable import MutableDict, MutableList
@@ -350,12 +348,10 @@ class CharacterAppearance(Base):
     analysis_id = Column(
         Integer,
         nullable=False,
-        server_default=text("0"),
     )
     novel_id = Column(
         Integer,
         nullable=False,
-        server_default=text("0"),
     )
     character_id = Column(Integer, nullable=False)
     chapter_id = Column(Integer, nullable=False)
@@ -444,7 +440,6 @@ class CharacterRelationship(Base):
     directed = Column(
         Boolean,
         default=False,
-        server_default=text("0"),
         nullable=False,
     )
     relation_type = Column(String(100), nullable=False)
@@ -494,44 +489,3 @@ class CharacterRelationship(Base):
             "source_character"
         ),
     )
-
-
-# 这个 SQLite 触发器兼顾 ORM 插入顺序与严格归属约束：部分 ORM 关系在 flush
-# 初期只能先写占位归属，触发器随即从人物记录补齐真实 analysis_id/novel_id。
-# 迁移中还会校验触发器定义，避免旧数据库悄悄缺少这条一致性规则。
-CHARACTER_APPEARANCE_OWNERSHIP_TRIGGER_SQL = """
-CREATE TRIGGER IF NOT EXISTS trg_character_appearances_fill_ownership
-AFTER INSERT ON character_appearances
-WHEN NEW.analysis_id = 0 OR NEW.novel_id = 0
-BEGIN
-    UPDATE character_appearances
-    SET
-        analysis_id = CASE
-            WHEN NEW.analysis_id = 0 THEN (
-                SELECT characters.analysis_id
-                FROM characters
-                WHERE characters.id = NEW.character_id
-            )
-            ELSE NEW.analysis_id
-        END,
-        novel_id = CASE
-            WHEN NEW.novel_id = 0 THEN (
-                SELECT character_analyses.novel_id
-                FROM characters
-                JOIN character_analyses
-                  ON character_analyses.id = characters.analysis_id
-                WHERE characters.id = NEW.character_id
-            )
-            ELSE NEW.novel_id
-        END
-    WHERE id = NEW.id;
-END
-"""
-
-event.listen(
-    CharacterAppearance.__table__,
-    "after_create",
-    DDL(
-        CHARACTER_APPEARANCE_OWNERSHIP_TRIGGER_SQL
-    ).execute_if(dialect="sqlite"),
-)

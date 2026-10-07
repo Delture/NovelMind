@@ -1,3 +1,4 @@
+from backend.app.services.tasks import _close_provider, fail_dispatch
 """人物分析估算/启动，以及当前人物快照的本地查询接口。
 
 写路径会调用外部模型，必须确认数据范围和内容权利；读路径只查询本地 SQLite。
@@ -35,22 +36,15 @@ from backend.app.analyzer.characters import (
     run_character_job,
 )
 from backend.app.analyzer.deepseek import MAX_JSON_GENERATION_ATTEMPTS
-from backend.app.analyzer.jobs import (
-    mark_analysis_job_failed_with_sqlite_lock_retry,
-)
 from backend.app.analyzer.llm import LLMProvider
-from backend.app.api.summaries import (
+from backend.app.services.tasks import (
     AnalysisJobResponse,
     ProviderFactory,
     _job_response,
     get_sync_llm_provider_factory,
     get_session_factory,
 )
-from backend.app.core.config import (
-    GENERATION_PROVIDERS,
-    Settings,
-    get_settings,
-)
+from backend.app.core.config import GENERATION_PROVIDERS, Settings, get_settings
 from backend.app.core.database import get_db
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.character import (
@@ -189,17 +183,6 @@ class CharacterRelationshipListResponse(BaseModel):
     limit: int
 
 
-def _close_provider(provider: LLMProvider) -> None:
-    """调用可选 ``close`` 释放 HTTP 连接池；兼容没有 close 的测试假对象。"""
-    close = getattr(provider, "close", None)
-    if not callable(close):
-        return
-    try:
-        close()
-    except Exception:
-        logger.exception("Could not close an unused character provider.")
-
-
 def _active_character_job(
     db: Session,
     novel_id: int,
@@ -223,27 +206,8 @@ def _mark_committed_character_job_failed(
     db: Session,
     session_factory: Callable[[], Session],
 ) -> bool:
-    """派发失败后用新会话把已提交任务补偿为 failed。
-
-    返回 True 表示任务已终结或已不在 queued，False 表示补偿本身失败。``db`` 是
-    原请求会话，只用于回滚；真正终结使用 ``session_factory`` 的短事务。
-    """
-    try:
-        db.rollback()
-    except Exception:
-        logger.exception(
-            "Could not reset the request session before terminalizing "
-            "undispatched character job %s.",
-            job_id,
-        )
-    return mark_analysis_job_failed_with_sqlite_lock_retry(
-        session_factory,
-        job_id,
-        "characters",
-        "人物分析任务未能加入后台队列，请重试。",
-        expected_status="queued",
-        failure_context="background dispatch failure",
-    )
+    """通过共享补偿结束未派发任务。"""
+    return fail_dispatch(db=db, session_factory=session_factory, job_id=job_id, job_type="characters", message="人物分析任务未能加入后台队列，请重试。")
 
 
 # 保证“已经持久化”与“确实交给执行器”之间的窗口可被补偿，而非永久排队。
