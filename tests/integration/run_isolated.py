@@ -56,6 +56,9 @@ def main():
     for name, value in (("run",summary),("source-before",before),("source-after",after)):
         (artifact/(name+".json")).write_text(json.dumps(value, ensure_ascii=False, indent=2),encoding="utf-8")
     print(json.dumps(summary,ensure_ascii=False),flush=True)
+    if result.returncode:
+        tail = (artifact/"pytest.log").read_text(encoding="utf-8", errors="replace").splitlines()[-400:]
+        print("\n".join(tail), flush=True)
     return result.returncode
 
 

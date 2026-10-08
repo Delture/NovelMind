@@ -51,6 +51,8 @@ FRONTEND_HOST = "127.0.0.1"
 FRONTEND_PORT = BACKEND_PORT
 BACKEND_HEALTH_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}/health"
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
+# 本机探测不经过系统代理（macOS urllib 会读取系统代理设置）。
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 STARTUP_TIMEOUT_SECONDS = 45.0
 SHUTDOWN_TIMEOUT_SECONDS = 10.0
 
@@ -317,7 +319,7 @@ def _json_request(
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _LOCAL_OPENER.open(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (
         OSError,
@@ -543,7 +545,7 @@ def _backend_is_ready() -> bool:
 def _frontend_is_ready() -> bool:
     """请求新前端根页面，返回是否已能得到 HTTP 200。"""
     try:
-        with urllib.request.urlopen(FRONTEND_URL, timeout=1.0) as response:
+        with _LOCAL_OPENER.open(FRONTEND_URL, timeout=1.0) as response:
             return response.status == 200
     except (OSError, urllib.error.URLError):
         return False
@@ -594,7 +596,10 @@ def _terminate_process(managed: ManagedProcess) -> None:
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
         else:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
         process.wait(timeout=5)
     finally:
         if managed.guard_pipe is not None:
