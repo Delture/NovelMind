@@ -99,9 +99,10 @@ body[data-reader-theme=dark],
   --cover-ink: #66523d;
   --cover-spine: #ffffff35;
 
-  --font-ui: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-  --font-serif: "Noto Serif SC", "SimSun", serif;
-  --font-sans: "Noto Sans SC", system-ui, sans-serif;
+  --font-ui: "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", serif;
+  --font-sans: "Noto Sans SC", sans-serif;
+  --font-pingfang: "PingFang SC", "Noto Sans SC", sans-serif;
   --font-brand: Georgia, serif;
   /* Reader preferences override these inline on .reader-app. */
   --font-reading: var(--font-serif);

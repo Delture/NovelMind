@@ -1,0 +1,32 @@
+/* Self-hosted Source Han / Noto, simplified-Chinese subset. PingFang is not bundled. */
+@font-face {
+  font-family: "Noto Serif SC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/noto-serif-sc-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Serif SC";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/noto-serif-sc-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/noto-sans-sc-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/noto-sans-sc-500.woff2") format("woff2");
+}
