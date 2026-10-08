@@ -45,8 +45,8 @@ def test_frontend_readiness_requires_exact_success_page(
             return None
 
     monkeypatch.setattr(
-        launcher.urllib.request,
-        "urlopen",
+        launcher._LOCAL_OPENER,
+        "open",
         lambda *_args, **_kwargs: FakeResponse(),
     )
 

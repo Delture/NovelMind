@@ -17,7 +17,7 @@ def reap_group(pipe: int, group: int) -> None:
             os.killpg(group, 0)
             time.sleep(0.1)
         os.killpg(group, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return
 
 

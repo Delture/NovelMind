@@ -17,9 +17,23 @@ pytestmark = pytest.mark.skipif(
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def wait_for(predicate, timeout=20):
+def log_tails(tmp_path, lines=40):
+    paths = [tmp_path / "launcher-console.log", *sorted((tmp_path / "logs").glob("*.log"))]
+    return "".join(
+        f"\n--- {path.name}\n"
+        + "\n".join(path.read_text(errors="replace").splitlines()[-lines:])
+        for path in paths
+        if path.exists()
+    )
+
+
+def wait_for(predicate, tmp_path, child=None, timeout=20):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if child is not None and child.poll() is not None:
+            raise AssertionError(
+                f"launcher exited with {child.returncode}" + log_tails(tmp_path)
+            )
         try:
             result = predicate()
             if result:
@@ -27,7 +41,7 @@ def wait_for(predicate, timeout=20):
         except (OSError, ValueError):
             pass
         time.sleep(0.1)
-    raise AssertionError("POSIX launcher condition timed out")
+    raise AssertionError("POSIX launcher condition timed out" + log_tails(tmp_path))
 
 
 def alive(pid):
@@ -91,7 +105,10 @@ def test_posix_launcher_lifecycle(tmp_path, development, abrupt):
                 if state_file.exists()
                 and json.loads(state_file.read_text()).get("status") == "ready"
                 else None
-            )
+            ),
+            tmp_path,
+            child,
+            timeout=60,
         )
         assert json.loads(probe("/health"))["status"] == "ok"
         assert b"app.js" in probe("/")
@@ -116,9 +133,11 @@ def test_posix_launcher_lifecycle(tmp_path, development, abrupt):
                         if (value := json.loads(probe("/api/review/process"))["pid"])
                         != worker
                         else None
-                    )
+                    ),
+                    tmp_path,
+                    child,
                 )
-                wait_for(lambda: not alive(worker))
+                wait_for(lambda: not alive(worker), tmp_path, child)
                 worker = replacement
             finally:
                 watched.unlink(missing_ok=True)
@@ -132,7 +151,9 @@ def test_posix_launcher_lifecycle(tmp_path, development, abrupt):
             assert stop.returncode == 0
             assert child.wait(timeout=15) == 0
             assert not state_file.exists()
-        wait_for(lambda: not alive(worker) and not alive(state["backend_pid"]))
+        wait_for(
+            lambda: not alive(worker) and not alive(state["backend_pid"]), tmp_path
+        )
         with socket.socket() as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("127.0.0.1", port))
