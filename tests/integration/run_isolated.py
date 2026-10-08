@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     root = Path(__file__).resolve().parents[2]
     artifact = Path(tempfile.mkdtemp(prefix="novelmind-acceptance-"))
     env = os.environ.copy()
