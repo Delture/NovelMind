@@ -155,7 +155,9 @@
       root.style.setProperty('--reading-line', prefs.line);
       root.style.setProperty('--reading-width', prefs.width + 'px');
       root.style.setProperty('--reading-gap', prefs.gap + 'px');
-      root.style.setProperty('--font-reading', prefs.font === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)');
+      const readingFonts = {serif: 'var(--font-serif)', sans: 'var(--font-sans)', pingfang: 'var(--font-pingfang)'};
+      if (!readingFonts[prefs.font]) prefs.font = 'serif';
+      root.style.setProperty('--font-reading', readingFonts[prefs.font]);
       const open = sidebarOpen();
       $('.r-sidebar').hidden = !open;
       $('[data-r-action="sidebar"]').setAttribute('aria-expanded', String(open));
@@ -381,7 +383,7 @@
     }
     function settings() {
       wake();
-      const d = modal('阅读设置', '<p class="r-setting-label">主题</p><div class="r-theme-options"><button data-theme="paper">纸白</button><button data-theme="sepia">暖纸</button><button data-theme="dark">夜间</button></div><p class="r-setting-label">字体</p><div class="r-font-options"><button data-font="serif">宋体</button><button data-font="sans">黑体</button></div><div data-sliders></div><p class="muted">即时生效 · 自动保存到本机资料库</p>');
+      const d = modal('阅读设置', '<p class="r-setting-label">主题</p><div class="r-theme-options"><button data-theme="paper">纸白</button><button data-theme="sepia">暖纸</button><button data-theme="dark">夜间</button></div><p class="r-setting-label">字体</p><div class="r-font-options"><button data-font="serif">思源宋体</button><button data-font="sans">黑体</button><button data-font="pingfang">苹方</button></div><div data-sliders></div><p class="muted">即时生效 · 自动保存到本机资料库</p>');
       d.classList.add('reader-settings');
       const appearance = document.createElement('section');d.querySelector('.sheet-content').append(appearance);ctx.appearanceControls?.(appearance);
       for (const [name, label, min, max, step, unit] of [['size', '字号', 16, 28, 1, ' px'], ['line', '行距', 1.6, 2.2, .1, ''], ['width', '正文宽度', 560, 880, 20, ' px'], ['gap', '段间距', 12, 36, 2, ' px']]) {

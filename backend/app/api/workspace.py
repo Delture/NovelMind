@@ -6,7 +6,7 @@ from uuid import uuid4
 from typing import Literal, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field, StrictBool, ConfigDict
+from pydantic import BaseModel, Field, StrictBool, ConfigDict, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert
@@ -56,12 +56,18 @@ class Preferences(BaseModel):
     """仅接受阅读器实际支持的主题和排版范围。"""
 
     theme: Literal["paper", "sepia", "dark"] = "paper"
-    font: Literal["serif", "sans"] = "serif"
+    font: Literal["serif", "sans", "pingfang"] = "serif"
     size: float = Field(default=18, ge=16, le=28)
     line: float = Field(default=1.9, ge=1.6, le=2.2)
     width: float = Field(default=720, ge=560, le=880)
     gap: float = Field(default=22, ge=12, le=36)
     sidebar: bool = True
+
+    @field_validator("font", mode="before")
+    @classmethod
+    def normalize_font(cls, value):
+        # Older clients only stored serif (宋体) and sans (黑体). Anything else reads as 思源宋体.
+        return value if value in {"serif", "sans", "pingfang"} else "serif"
 
 
 class ReaderState(BaseModel):
