@@ -35,6 +35,7 @@
       loaded = false;
     let chapter = position.chapter,
       focus = false,
+      compactDrawer = false,
       restoring = false,
       disposed = false,
       saveTimer,
@@ -143,6 +144,10 @@
       mark.setAttribute('aria-label', exists ? '移除书签' : '添加书签');
       mark.title = exists ? '移除当前位置的书签' : '添加当前位置的书签';
     }
+    const compactReader = () => innerWidth <= 760;
+    function sidebarOpen() {
+      return !focus && (compactReader() ? compactDrawer : prefs.sidebar);
+    }
     function applyPrefs() {
       root.dataset.theme = prefs.theme;
       document.body.dataset.readerTheme = prefs.theme;
@@ -151,8 +156,9 @@
       root.style.setProperty('--reading-width', prefs.width + 'px');
       root.style.setProperty('--reading-gap', prefs.gap + 'px');
       root.style.setProperty('--font-reading', prefs.font === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)');
-      $('.r-sidebar').hidden = !prefs.sidebar || focus;
-      $('[data-r-action="sidebar"]').setAttribute('aria-expanded', String(prefs.sidebar && !focus));
+      const open = sidebarOpen();
+      $('.r-sidebar').hidden = !open;
+      $('[data-r-action="sidebar"]').setAttribute('aria-expanded', String(open));
       root.classList.toggle('is-focus', focus);
       $('[data-r-action="focus"]').setAttribute('aria-pressed', String(focus));
       $('[data-r-action="focus"] span').textContent = focus ? '退出专注' : '专注';
@@ -257,10 +263,9 @@
       b.append(number, text);
       on(b, 'click', () => {
         showChapter(n);
-        if (innerWidth <= 760) {
-          prefs.sidebar = false;
+        if (compactReader()) {
+          compactDrawer = false;
           applyPrefs();
-          persist();
         }
       });
       on(b, 'keydown', e => {
@@ -466,14 +471,14 @@
       tasks: ctx.tasks,
       sidebar: () => {
         const a = anchor();
-        if (focus) {
-          focus = false;
-          prefs.sidebar = true;
-        } else prefs.sidebar = !prefs.sidebar;
+        const wasFocus = focus;
+        if (wasFocus) focus = false;
+        if (compactReader()) compactDrawer = wasFocus || !compactDrawer;
+        else prefs.sidebar = wasFocus || !prefs.sidebar;
         applyPrefs();
         restore(a);
-        persist();
-        if (prefs.sidebar) reveal();
+        if (!compactReader()) persist();
+        if (sidebarOpen()) reveal();
       },
       focus: () => toggleFocus(),
       prev: () => showChapter(requestedChapter - 1),

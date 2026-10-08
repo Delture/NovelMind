@@ -186,7 +186,10 @@ runSuite('materials',async ({page,context,api,url,upload,select,shot,check,event
   await stableShot('mobile-reader-reduced');
   assert.equal((await material('.r-sidebar')).blur,'none');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
-  // On narrow screens the directory intentionally overlays the reading controls.
+  // Narrow screens start with the directory closed so it does not cover the text.
+  assert(await page.locator('.r-sidebar').isHidden());
+  await page.getByRole('button',{name:'切换目录',exact:true}).click();
+  await page.locator('.r-sidebar').waitFor({state:'visible'});
   await page.getByRole('button',{name:'切换目录',exact:true}).click();
   await page.locator('.r-sidebar').waitFor({state:'hidden'});
   await stableShot('mobile-reader-reduced-body');
