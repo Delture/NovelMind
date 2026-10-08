@@ -27,7 +27,7 @@ def main():
 
     def manifest():
         files = [root/"pytest.ini"]
-        for folder in ("backend", "tests", "scripts", "frontend", "legacy"):
+        for folder in ("backend", "tests", "scripts", "frontend"):
             for pattern in ("*.py", "*.js", "*.cjs", "*.css", "*.html"):
                 files.extend((root/folder).rglob(pattern))
         return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.is_file()}

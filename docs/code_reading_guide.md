@@ -206,7 +206,7 @@ RAG 不是“把全文发给模型”。本项目的流程是：
 
 ### 第 9 站：读前端时记住 rerun 模型
 
-历史兼容界面 Streamlit 的按钮点击、选择变化会让脚本重新从上到下运行（代码位于 legacy/streamlit/）。普通局部变量会消失，
+旧版 Streamlit 界面（已删除）的按钮点击、选择变化会让脚本重新从上到下运行。普通局部变量会消失，
 `st.session_state` 才能保存当前页面、小说 ID 和分页位置。长期业务状态不应塞入
 session_state，而应从后端重新读取，这样刷新浏览器和重启前端仍能恢复。
 
@@ -346,7 +346,7 @@ session_state，而应从后端重新读取，这样刷新浏览器和重启前�
 
 先读 `frontend/web/app.js` 的路由与生命周期，再读 `pages.js` 的页面数据接入、`tasks.js` 的处理计划与轮询。
 原生网页使用事件回调和异步 HTTP；持久任务、阅读偏好、锚点、书签保存在后端，DOM 只是当前显示。
-旧 Streamlit 的 rerun/session_state 教学仍适用于兼容目录，不能直接当作新网页执行模型。
+旧 Streamlit 的 rerun/session_state 模型不能直接当作新网页执行模型。
 
 `api/summaries.py`、`api/reports.py`、`api/rag.py` 的路由委托 `services/` 同名模块。
 观察 `services/workflows.py` 怎样冻结配置并按顺序调用同一服务，不必为流程模拟一次 HTTP 请求。
@@ -357,4 +357,4 @@ session_state，而应从后端重新读取，这样刷新浏览器和重启前�
 
 `tests/integration/` 集中保存端点密钥生命周期、任务链配置冻结、历史库升级和真实启动器测试。
 先读 `run_isolated.py` 如何隔离数据库、向量目录和配置，再读 `test_launcher_lifecycle.py` 与 `launcher_probe.py` 如何观察实际进程。
-默认 pytest 包含该组；旧界面测试单独在 `tests/legacy/`，完整运行 `python -m pytest tests -q` 时一并执行。
+默认 pytest 包含该组。

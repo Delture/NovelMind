@@ -18,9 +18,9 @@
 - `backend/app/api/`：HTTP 声明；`services/`：共享请求处理、派发与明确的两种任务链。
 - `analyzer/character_pipeline/`：人物结构、抽取、归并、持久化与 worker。
 - `core/migrations.py`：版本账本；`core/migration_steps/`：按历史版本分组。
-- `frontend/web/`：原生模块；`legacy/streamlit/`：可选旧界面。
-- `tests/{backend,web,launcher,legacy,integration,support}/`：功能分组和共享替身。
-- `design/current/`：有效设计参考；`design/history/`、`design/artifacts/`：历史与验收。
+- `frontend/web/`：原生模块。
+- `tests/{backend,web,launcher,integration,support}/`：功能分组和共享替身。
+- `design/current/`：有效设计参考；`design/artifacts/current/`：验收产物。
 
 ## 命令和文档
 

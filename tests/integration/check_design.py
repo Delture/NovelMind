@@ -29,14 +29,14 @@ def main():
     port=server.server_address[1]
     results=[]
     try:
-        for route in ("/index.html","/current/library.html","/history/visual-v3/index.html","/history/visual-v3/preview.html"):
+        for route in ("/index.html","/current/library.html"):
             with urlopen(f"http://127.0.0.1:{port}{route}",timeout=2) as response:
                 assert response.status==200
-        for relative in ("current/enhance.py","history/visual-v3/enhance-preview.py"):
+        for relative in ("current/enhance.py",):
             # Enhancers run only on disposable copies; check their relocated inputs.
             result=subprocess.run([str(root/".venv/Scripts/python.exe"),str(copy/relative)],capture_output=True,timeout=15)
             results.append(dict(script=relative,exit_code=result.returncode))
-        scripts=sorted((copy/"current").glob("check*.cjs"))+sorted((copy/"history/visual-v3").glob("check*.cjs"))
+        scripts=sorted((copy/"current").glob("check*.cjs"))
         for script in scripts:
             original=script.read_text(encoding="utf-8")
             script.write_text(original.replace("http://127.0.0.1:8768",f"http://127.0.0.1:{port}"),encoding="utf-8")
@@ -54,8 +54,8 @@ def main():
     finally:
         server.shutdown();server.server_close()
     broken=[]
-    for path in [root/"README.md",root/"Codex.md",*(root/"docs").rglob("*.md"),*(root/"design").rglob("*.md"),root/"legacy/streamlit/README.md"]:
-        if "archive" in path.parts or "history" in path.parts:
+    for path in [root/"README.md",root/"Codex.md",*(root/"docs").rglob("*.md"),*(root/"design").rglob("*.md")]:
+        if "archive" in path.parts:
             continue
         text=path.read_text(encoding="utf-8")
         for label,target in re.findall(r'\[([^\]]+)\]\(([^)]+)\)',text):

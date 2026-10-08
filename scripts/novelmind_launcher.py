@@ -6,7 +6,7 @@
 误触发停止。Windows Job Object 确保启动器异常退出时子进程树不会变成孤儿。
 
 本模块刻意只用 Python 标准库：只要虚拟环境存在，依赖损坏时仍能输出可读日志，
-而不会因导入 FastAPI/Streamlit 失败导致启动管理器本身也无法运行。
+而不会因导入 FastAPI 失败导致启动管理器本身也无法运行。
 """
 
 from __future__ import annotations
@@ -494,7 +494,6 @@ def _start_process(
     )
     environment = os.environ.copy()
     environment["PYTHONUNBUFFERED"] = "1"
-    environment["BACKEND_URL"] = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
     try:
         process = subprocess.Popen(
             list(command),

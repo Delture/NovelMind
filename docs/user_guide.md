@@ -214,7 +214,6 @@ EMBEDDING_MAX_ATTEMPTS=3
 ```dotenv
 APP_NAME=NovelMind
 DATABASE_URL=sqlite:///./data/novelmind.db
-BACKEND_URL=http://127.0.0.1:8501
 
 GENERATION_PROVIDER=deepseek
 DEEPSEEK_API_KEY=sk-替换为DeepSeek真实密钥
@@ -242,10 +241,9 @@ VECTOR_STORE_PATH=./vector_store
 - `DATABASE_URL`：本地 SQLite 数据库位置。
 - `VECTOR_STORE_PATH`：本地派生向量目录。
 - `APP_NAME`：后端应用名称。
-- `BACKEND_URL`：Streamlit 连接的后端地址。
 
 直接修改 `.env` 后必须停止并重新启动后端；通过“模型与设置”弹窗修改供应商、
-模型、端点或密钥会立即生效。`BACKEND_URL` 仅影响旧版兼容界面，默认网页使用同源 API。
+模型、端点或密钥会立即生效。网页使用同源 API。
 
 ### macOS 安装与启动
 
@@ -259,7 +257,7 @@ python3.12 -m venv .venv
 .venv/bin/python scripts/novelmind_launcher.py --dev
 ```
 
-macOS 双击入口使用 `.command`。开发与测试可安装 `requirements-dev.txt`；旧版 Streamlit 另需 `legacy/streamlit/requirements.txt`。
+macOS 双击入口使用 `.command`。开发与测试可安装 `requirements-dev.txt`。
 前端滚动保存只写阅读位置与偏好；书签按条保存、编辑或删除，可避免其他标签页的位置更新吞掉书签。
 任务浮层可取消任务。任务在下一安全检查后不再提交新模型请求；已经发出的网络请求可能需要等待返回，已生成的数据保留。
 
@@ -279,7 +277,6 @@ macOS 双击入口使用 `.command`。开发与测试可安装 `requirements-dev
 健康响应为 `{"status":"ok","project":"NovelMind"}`。上传与阅读无需密钥。
 默认不需要第二个前端进程；`frontend.web_server:app` 兼容命令也指向同一应用。
 若旧工具需要 8000，可手动将上面端口改为 8000；不必同时运行两套应用。
-[旧 Streamlit 使用方式](../legacy/streamlit/README.md) 单独维护，默认依赖不包含它。
 
 ## 5. 网页操作
 
