@@ -60,7 +60,7 @@ def descendants(pid):
     """Read process ancestry; never enumerate candidates for global termination."""
     result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
                              "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress"],
-                            capture_output=True,text=True,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW)
+                            capture_output=True,text=True,timeout=60,creationflags=subprocess.CREATE_NO_WINDOW)
     assert result.returncode==0, result.stderr
     rows = json.loads(result.stdout)
     found = {pid}
