@@ -190,7 +190,7 @@ def add_dependency(path, kind):
                 return "analysis_jobs"
             if kind.startswith("workflow-"):
                 db.execute(Workflow.__table__.insert().values(id="dependency", novel_id=1, kind="report",
-                    status=kind.split("-", 1)[1], created_at="2026-09-27"))
+                    status=kind.split("-", 1)[1], created_at=__import__("datetime").datetime(2026, 9, 27)))
                 return "workflows"
             if kind == "summary":
                 db.execute(ChapterSummary.__table__.insert().values(chapter_id=12, summary="派生摘要", key_events=[],

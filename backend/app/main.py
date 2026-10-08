@@ -34,6 +34,7 @@ from backend.app.rag.answering import fail_interrupted_rag_questions
 from backend.app.rag.maintenance import cleanup_orphan_rag_collections
 from backend.app.core.config import settings
 from backend.app.core.database import SessionLocal, init_db
+from backend.app.services.execution import executor
 
 
 @asynccontextmanager
@@ -46,6 +47,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     界面永远显示“处理中”。孤立向量集合也在这里清理。
     """
     # 建表与迁移必须先完成，后面的恢复查询才能安全访问最新表结构。
+    executor.start()
     init_db()
     # 每项恢复都使用新的数据库会话；这里只传会话工厂，不长期持有会话。
     fail_interrupted_jobs(SessionLocal)
@@ -55,11 +57,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         SessionLocal,
         settings.vector_store_path,
     )
-    yield
+    try:
+        yield
+    finally:
+        await executor.shutdown()
 
 
 # ``app`` 是 ``uvicorn backend.app.main:app`` 中冒号右侧所指的对象。
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+
+
 app.add_middleware(LocalOriginMiddleware)
 # 路由模块只声明各自的相对路径；总入口统一添加 ``/api``，可以避免每个模块
 # 重复约定公共前缀，也使健康检查继续保留在更简短的 ``/health``。

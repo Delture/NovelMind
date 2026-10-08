@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from dotenv import load_dotenv
 
@@ -501,17 +502,12 @@ def _atomic_write_runtime_payload(
 ) -> None:
     """Atomically write recognized model settings with restricted access."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_name(f".{path.name}.tmp")
+    temporary_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
-        temporary_path.write_text(
-            json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        descriptor = os.open(temporary_path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(dict(payload), ensure_ascii=False, indent=2) + "\n")
         os.replace(temporary_path, path)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
     except OSError as error:
         try:
             temporary_path.unlink(missing_ok=True)

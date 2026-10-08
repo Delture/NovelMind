@@ -48,9 +48,11 @@ def isolated_config(tmp_path, monkeypatch):
     from backend.app.api import system
 
     config.save_runtime_model_settings(config.load_settings(values))
+    from backend.app.core.local_web import LocalOriginMiddleware
     app = FastAPI()
+    app.add_middleware(LocalOriginMiddleware)
     app.include_router(system.router, prefix="/api")
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     payload = {
         "generation": {
             "provider": "openai_compatible", "model": values["DEEPSEEK_MODEL"],

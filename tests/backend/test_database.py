@@ -163,6 +163,7 @@ def test_init_db_builds_and_versions_fresh_schema_idempotently() -> None:
                 (9, "allow configurable embedding models"),
         (10, "add workspace reading and workflows"),
         (11, "explicit character appearance ownership"),
+        (12, "normalize workflow timestamps"),
             ]
 
 
@@ -219,7 +220,7 @@ def test_migration_adds_unique_index_to_legacy_database() -> None:
         and index["unique"]
         for index in indexes
     )
-    assert version_count == 11
+    assert version_count == 12
 
 
 def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
@@ -287,7 +288,7 @@ def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
     assert job_indexes[
         "ix_analysis_jobs_novel_type_created"
     ]["column_names"] == ["novel_id", "job_type", "created_at"]
-    assert versions == list(range(1, 12))
+    assert versions == list(range(1, 13))
 
 
 def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
@@ -403,7 +404,7 @@ def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
     assert indexes["ux_analysis_jobs_active_novel_type"]["unique"]
     assert columns["force_refresh"]["nullable"] is False
     assert str(columns["force_refresh"]["default"]).strip("()'") == "0"
-    assert versions == list(range(1, 12))
+    assert versions == list(range(1, 13))
 
 
 def test_active_job_migration_rejects_duplicate_active_jobs() -> None:
@@ -1183,8 +1184,8 @@ def test_v5_upgrades_v4_with_strict_character_snapshot_schema() -> None:
         False,
     )
     assert (5, "add character analysis snapshots") in versions
-    assert versions[-1] == (11, "explicit character appearance ownership")
-    assert len(versions) == 11
+    assert versions[-1] == (12, "normalize workflow timestamps")
+    assert len(versions) == 12
     assert legacy_rows == {
         "novels": 1,
         "chapters": 1,
@@ -1515,3 +1516,31 @@ def test_v5_rejects_wrong_named_undirected_canonical_check() -> None:
         engine.dispose()
 
     assert recorded == 0
+
+
+def test_v12_preserves_legacy_workflow_timestamp_and_active_uniqueness(tmp_path):
+    """升级实际 VARCHAR 历史表，保留时间精度、任务与索引。"""
+    from datetime import datetime
+    engine = database.create_db_engine("sqlite:///" + str(tmp_path / "legacy-time.db"))
+    database.init_db(engine)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("INSERT INTO novels(id,filename,encoding,chapter_count,created_at) VALUES (1,'original.txt','utf-8',1,'2026-10-08')"))
+            connection.exec_driver_sql("DROP TABLE workflows")
+            connection.exec_driver_sql("""CREATE TABLE workflows (
+                id VARCHAR(36) PRIMARY KEY, novel_id INTEGER NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
+                kind VARCHAR(20) NOT NULL, status VARCHAR(20) NOT NULL, phase VARCHAR(80) NOT NULL,
+                question TEXT NOT NULL, error_message TEXT, created_at VARCHAR(40) NOT NULL)""")
+            connection.execute(text("""INSERT INTO workflows VALUES ('legacy',1,'report','queued','等待处理','','',
+                '2026-09-27T08:00:00.123456+08:00')"""))
+            connection.execute(text("DELETE FROM schema_migrations WHERE version=12"))
+        database.init_db(engine)
+        from backend.app.models.workspace import Workflow
+        from sqlalchemy.orm import Session
+        with Session(engine) as db:
+            row = db.get(Workflow, "legacy")
+            assert row.created_at == datetime(2026, 9, 27, 0, 0, 0, 123456)
+            assert row.status == "queued"
+        assert "uq_active_workflow" in {i["name"] for i in inspect(engine).get_indexes("workflows")}
+    finally:
+        engine.dispose()

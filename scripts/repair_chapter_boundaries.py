@@ -92,6 +92,7 @@ def split_existing(row):
     sections = []
     cursor = 0
     title = row["title"]
+    previous_heading = None
     for start, end, next_title in boundaries:
         sections.append({"title": title, "content": content[cursor:start], "start": cursor,
                          "end": start, "heading": None if cursor == 0 else previous_heading})

@@ -127,12 +127,19 @@ export function createTasks({
   function taskHTML() {
     if (taskError) return `<p role="alert">${e(taskError)}</p><p class="muted">正在自动重连…</p>`;
     if (!lastTasks.length) return '<p class="empty">目前没有后台任务。</p>';
-    return lastTasks.map(t => `<section class="task"><div class="task-heading"><strong>${e(t.phase ? t.kind === 'report' ? '摘要与报告' : labels[t.kind] : labels[t.kind] || t.kind)}</strong><span>${statuses[t.status] || e(t.status)}</span></div><p>${e(t.filename)}</p>${t.phase ? `<p class="muted">${e(t.phase)}</p>` : ''}${t.progress_total ? `<progress value="${t.progress_current}" max="${t.progress_total}"></progress><small>${t.progress_current} / ${t.progress_total}</small>` : ''}${t.error_message ? `<p class="error">${e(t.error_message)}</p>` : ''}<button class="link" data-task-book="${t.novel_id}" data-task-page="${t.kind === 'report' ? 'report' : t.kind === 'ask' || t.kind === 'question' || t.kind === 'rag_index' ? 'ask' : t.kind === 'characters' ? 'characters' : 'summary'}">查看结果${t.status === 'failed' ? ' / 重新发起' : ''}</button></section>`).join('');
+    return lastTasks.map(t => `<section class="task"><div class="task-heading"><strong>${e(t.phase ? t.kind === 'report' ? '摘要与报告' : labels[t.kind] : labels[t.kind] || t.kind)}</strong><span>${statuses[t.status] || e(t.status)}</span></div><p>${e(t.filename)}</p>${t.phase ? `<p class="muted">${e(t.phase)}</p>` : ''}${t.progress_total ? `<progress value="${t.progress_current}" max="${t.progress_total}"></progress><small>${t.progress_current} / ${t.progress_total}</small>` : ''}${t.error_message ? `<p class="error">${e(t.error_message)}</p>` : ''}${["queued", "running"].includes(t.status) ? `<button class="link" data-task-cancel="${e(t.id)}">取消任务</button>` : ""}<button class="link" data-task-book="${t.novel_id}" data-task-page="${t.kind === 'report' ? 'report' : t.kind === 'ask' || t.kind === 'question' || t.kind === 'rag_index' ? 'ask' : t.kind === 'characters' ? 'characters' : 'summary'}">查看结果${t.status === 'failed' ? ' / 重新发起' : ''}</button></section>`).join('');
   }
   function drawTasks() {
     const panel = document.querySelector('[data-tasks]');
     if (!panel) return;
     panel.innerHTML = taskHTML();
+    panel.querySelectorAll('[data-task-cancel]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api('/workspace/tasks/' + encodeURIComponent(b.dataset.taskCancel) + '/cancel', {method:'POST'});
+        await pollTasks();
+      } catch (error) {b.disabled = false;toast(error.message);}
+    });
     panel.querySelectorAll('[data-task-book]').forEach(b => b.onclick = () => {
       document.querySelector('dialog')?.closeSheet();
       go(b.dataset.taskPage, Number(b.dataset.taskBook));

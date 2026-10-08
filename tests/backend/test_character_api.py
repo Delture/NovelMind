@@ -6,7 +6,7 @@ from typing import Callable, Generator
 from unittest.mock import Mock
 
 import pytest
-from fastapi import HTTPException
+from backend.app.services.errors import ServiceError as HTTPException
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -19,7 +19,7 @@ from backend.app.analyzer.characters import (
     character_analysis_source_hash,
     character_chapter_source_hash,
 )
-from backend.app.api.characters import (
+from backend.app.services.characters import (
     StartCharacterAnalysisRequest,
     _schedule_character_job,
     get_character,

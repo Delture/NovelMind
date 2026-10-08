@@ -19,6 +19,19 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8501
 ```
 
+macOS 使用 Python 3.12：
+
+```sh
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python scripts/novelmind_launcher.py
+# 开发模式：追加 --dev；停止：在另一终端追加 --stop
+```
+
+也可双击 `启动 NovelMind.command`、`开发模式启动 NovelMind.command` 或 `停止 NovelMind.command`。
+启动器只管理自己创建的进程；macOS 使用独立进程组和管道看护，Windows 使用 Job Object。
+任务浮层提供“取消任务”：等待中的任务立即取消，已执行任务在下一安全点停止，已完成结果保留。
+
 导入与阅读无需密钥。在“设置”填写生成/向量服务；`.env` 可提供初始默认值，页面设置保存到本机 `data/model_settings.json`。
 DeepSeek 与硅基流动是预设，也支持 OpenAI 兼容服务。更换供应商或服务地址需新密钥或明确清除，并重新确认外部处理目的地。
 点击处理计划中的“开始处理”才发送内容。关闭页面任务继续，停止服务后未完成任务会在重启时标记失败。
@@ -39,6 +52,8 @@ DeepSeek 与硅基流动是预设，也支持 OpenAI 兼容服务。更换供应
 | 开发约束与历史记录 | [Codex.md](Codex.md)、[开发日志](docs/dev_log.md) |
 
 ## 验证
+
+开发与测试时，将上面的安装文件替换为 `requirements-dev.txt`（内含运行依赖、pytest、Ruff 和 mypy）。运行时依赖不包含测试工具。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q

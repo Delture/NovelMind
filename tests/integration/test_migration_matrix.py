@@ -72,12 +72,12 @@ def test_v1_through_v9_upgrade_preserves_data_and_cascade(isolated_config, versi
         assert rows(engine) == upgraded
         assert schema(engine) == first_schema
         with engine.begin() as connection:
-            assert connection.exec_driver_sql("SELECT version FROM schema_migrations ORDER BY version").scalars().all() == list(range(1,12))
+            assert connection.exec_driver_sql("SELECT version FROM schema_migrations ORDER BY version").scalars().all() == list(range(1,13))
             assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
             assert connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_character_appearances_fill_ownership'").all() == []
             for key in (1,2):
                 connection.execute(ReadingState.__table__.insert().values(novel_id=key, value={"bookmark":"kept"}))
-                connection.execute(Workflow.__table__.insert().values(id=f"workflow-{key}",novel_id=key,kind="report",created_at="2026-09-27"))
+                connection.execute(Workflow.__table__.insert().values(id=f"workflow-{key}",novel_id=key,kind="report",created_at=__import__("datetime").datetime(2026, 9, 27)))
             connection.execute(WorkspaceSetting.__table__.insert().values(key="privacy",value={"external":False}))
             connection.exec_driver_sql("DELETE FROM novels WHERE id=1")
         after = rows(engine)
@@ -104,7 +104,7 @@ def test_new_v11_database_reinitializes_without_schema_changes(isolated_config):
         assert columns["analysis_id"]["default"] is None
         assert columns["novel_id"]["default"] is None
         with engine.connect() as connection:
-            assert connection.exec_driver_sql("SELECT max(version),count(*) FROM schema_migrations").one() == (11,11)
+            assert connection.exec_driver_sql("SELECT max(version),count(*) FROM schema_migrations").one() == (12,12)
     finally:
         engine.dispose()
 

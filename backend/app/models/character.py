@@ -6,10 +6,13 @@
 和同一快照，而不是只验证某个整数 ID 恰好存在。
 """
 
+from __future__ import annotations
+from datetime import datetime
+from typing import Any, TYPE_CHECKING
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Column,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
@@ -19,13 +22,17 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    text,
 )
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import relationship
 
 from backend.app.core.database import Base
 from backend.app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from backend.app.models.novel import Chapter
+    from backend.app.models.novel import Novel
+
 
 
 class ChapterCharacterExtraction(Base):
@@ -57,29 +64,29 @@ class ChapterCharacterExtraction(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
-    chapter_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chapter_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("chapters.id", ondelete="CASCADE"),
         nullable=False,
     )
-    extraction_data = Column(
+    extraction_data: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSON),
         default=dict,
         nullable=False,
     )
-    source_hash = Column(String(64), nullable=False)
-    model = Column(String(100), nullable=False)
-    prompt_version = Column(String(50), nullable=False)
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
 
-    chapter = relationship(
+    chapter: Mapped["Chapter"] = relationship(
         "Chapter",
         back_populates="character_extraction",
     )
@@ -126,38 +133,38 @@ class CharacterAnalysis(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
-    novel_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    novel_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("novels.id", ondelete="CASCADE"),
         nullable=False,
     )
-    source_hash = Column(String(64), nullable=False)
-    model = Column(String(100), nullable=False)
-    extraction_prompt_version = Column(String(50), nullable=False)
-    merge_prompt_version = Column(String(50), nullable=False)
-    relationship_prompt_version = Column(String(50), nullable=False)
-    chapter_count = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    extraction_prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    merge_prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    relationship_prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    chapter_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
 
-    novel = relationship(
+    novel: Mapped["Novel"] = relationship(
         "Novel",
         back_populates="character_analysis",
     )
-    characters = relationship(
+    characters: Mapped[list["Character"]] = relationship(
         "Character",
         back_populates="analysis",
         cascade="all, delete-orphan",
         order_by="Character.id",
         passive_deletes=True,
     )
-    relationships = relationship(
+    relationships: Mapped[list["CharacterRelationship"]] = relationship(
         "CharacterRelationship",
         back_populates="analysis",
         cascade="all, delete-orphan",
@@ -227,36 +234,36 @@ class Character(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
-    analysis_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("character_analyses.id", ondelete="CASCADE"),
         nullable=False,
     )
-    canonical_name = Column(String(255), nullable=False)
-    aliases = Column(
+    canonical_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    aliases: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(JSON),
         default=list,
         nullable=False,
     )
-    short_description = Column(Text, nullable=False)
-    first_chapter_index = Column(Integer, nullable=False)
-    last_chapter_index = Column(Integer, nullable=False)
-    chapter_count = Column(Integer, nullable=False)
-    mention_count = Column(Integer, nullable=False)
+    short_description: Mapped[str] = mapped_column(Text, nullable=False)
+    first_chapter_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_chapter_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    chapter_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    mention_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    analysis = relationship(
+    analysis: Mapped["CharacterAnalysis"] = relationship(
         "CharacterAnalysis",
         back_populates="characters",
     )
-    appearances = relationship(
+    appearances: Mapped[list["CharacterAppearance"]] = relationship(
         "CharacterAppearance",
         back_populates="character",
         cascade="all, delete-orphan",
         order_by="CharacterAppearance.id",
         passive_deletes=True,
     )
-    outgoing_relationships = relationship(
+    outgoing_relationships: Mapped[list["CharacterRelationship"]] = relationship(
         "CharacterRelationship",
         primaryjoin=(
             "and_("
@@ -276,7 +283,7 @@ class Character(Base):
             "target_character"
         ),
     )
-    incoming_relationships = relationship(
+    incoming_relationships: Mapped[list["CharacterRelationship"]] = relationship(
         "CharacterRelationship",
         primaryjoin=(
             "and_("
@@ -344,25 +351,25 @@ class CharacterAppearance(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
-    analysis_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
     )
-    novel_id = Column(
+    novel_id: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
     )
-    character_id = Column(Integer, nullable=False)
-    chapter_id = Column(Integer, nullable=False)
-    mention_count = Column(Integer, nullable=False)
-    summary = Column(Text, nullable=False)
+    character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    chapter_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    mention_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
 
-    character = relationship(
+    character: Mapped["Character"] = relationship(
         "Character",
         back_populates="appearances",
     )
-    chapter = relationship(
+    chapter: Mapped["Chapter"] = relationship(
         "Chapter",
         back_populates="character_appearances",
     )
@@ -433,24 +440,24 @@ class CharacterRelationship(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
-    analysis_id = Column(Integer, nullable=False)
-    source_character_id = Column(Integer, nullable=False)
-    target_character_id = Column(Integer, nullable=False)
-    directed = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analysis_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_character_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    directed: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
         nullable=False,
     )
-    relation_type = Column(String(100), nullable=False)
-    description = Column(Text, nullable=False)
-    evidence_chapter_indices = Column(
+    relation_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_chapter_indices: Mapped[list[int]] = mapped_column(
         MutableList.as_mutable(JSON),
         default=list,
         nullable=False,
     )
 
-    analysis = relationship(
+    analysis: Mapped["CharacterAnalysis"] = relationship(
         "CharacterAnalysis",
         back_populates="relationships",
         foreign_keys=[analysis_id],
@@ -459,7 +466,7 @@ class CharacterRelationship(Base):
             "source_character,target_character"
         ),
     )
-    source_character = relationship(
+    source_character: Mapped["Character"] = relationship(
         "Character",
         primaryjoin=(
             "and_("
@@ -474,7 +481,7 @@ class CharacterRelationship(Base):
             "target_character"
         ),
     )
-    target_character = relationship(
+    target_character: Mapped["Character"] = relationship(
         "Character",
         primaryjoin=(
             "and_("

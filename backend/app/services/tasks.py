@@ -2,14 +2,9 @@
 import logging
 from datetime import datetime
 from typing import Callable, Optional
-from fastapi import Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-from backend.app.analyzer.deepseek import DeepSeekProvider, AsyncDeepSeekProvider
 from backend.app.analyzer.llm import LLMProvider
 from backend.app.analyzer.jobs import mark_analysis_job_failed_with_sqlite_lock_retry
-from backend.app.core.config import Settings, get_settings
-from backend.app.core.database import SessionLocal
 from backend.app.models.analysis import AnalysisJob
 logger = logging.getLogger(__name__)
 ProviderFactory = Callable[[], LLMProvider]
@@ -32,53 +27,14 @@ class AnalysisJobResponse(BaseModel):
     completed_at: Optional[datetime]
 
 
-def get_session_factory() -> Callable[[], Session]:
-    """以依赖形式提供会话工厂，便于测试替换为隔离数据库。"""
-    return SessionLocal
 
 
-def get_llm_provider(
-    settings: Settings = Depends(get_settings),
-) -> LLMProvider:
-    """Build the synchronous provider used by non-summary analyzers."""
-    if not settings.deepseek_configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "尚未配置生成模型 API 密钥，请前往“模型与密钥”设置"
-                "（也可设置 DEEPSEEK_API_KEY）。"
-            ),
-        )
-    return DeepSeekProvider(settings)
 
 
-def get_summary_llm_provider(
-    settings: Settings = Depends(get_settings),
-) -> LLMProvider:
-    """Build the async-capable provider used by summary workers."""
-    if not settings.deepseek_configured:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "尚未配置生成模型 API 密钥，请前往“模型与密钥”设置"
-                "（也可设置 DEEPSEEK_API_KEY）。"
-            ),
-        )
-    return AsyncDeepSeekProvider(settings)
 
 
-def get_llm_provider_factory(
-    settings: Settings = Depends(get_settings),
-) -> ProviderFactory:
-    """Defer async summary-client construction until consent succeeds."""
-    return lambda: get_summary_llm_provider(settings)
 
 
-def get_sync_llm_provider_factory(
-    settings: Settings = Depends(get_settings),
-) -> ProviderFactory:
-    """Defer synchronous analysis-client construction until consent."""
-    return lambda: get_llm_provider(settings)
 
 
 def _job_response(job: AnalysisJob) -> AnalysisJobResponse:
@@ -119,3 +75,5 @@ def fail_dispatch(*, db, session_factory, job_id, job_type, message):
     return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory, job_id, job_type, message, expected_status="queued",
         failure_context="background dispatch failure")
+
+from backend.app.services.dependencies import get_session_factory as get_session_factory, get_llm_provider as get_llm_provider, get_summary_llm_provider as get_summary_llm_provider, get_llm_provider_factory as get_llm_provider_factory, get_sync_llm_provider_factory as get_sync_llm_provider_factory

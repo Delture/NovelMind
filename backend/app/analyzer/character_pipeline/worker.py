@@ -1,37 +1,30 @@
 """人物分析 worker 阶段；保留有界抽取、确定性统计与失败原子性。"""
 import logging
-import time
 from datetime import datetime
 from functools import partial
 from typing import Callable, Optional
-from sqlalchemy import case
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from backend.app.analyzer.jobs import (
+    claim_analysis_job,
+    advance_analysis_job,
     is_sqlite_lock_error,
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
 from backend.app.analyzer.llm import LLMProvider, LLMProviderError
+from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Novel
 from .payloads import (
     _CharacterJobCancelled,
-    CHARACTER_JOB_SQLITE_MAX_ATTEMPTS,
-    CHARACTER_JOB_SQLITE_RETRY_BASE_SECONDS,
-    logger,
 )
 from .extraction import _planned_character_generation_steps
 from .persistence import analyze_novel_characters
 
 logger = logging.getLogger(__name__)
 
-def _sleep_before_claim_retry(failed_attempt: int) -> None:
-    """领取人物任务遇 SQLite 写锁后按次数执行短退避。"""
-    time.sleep(
-        CHARACTER_JOB_SQLITE_RETRY_BASE_SECONDS
-        * (2 ** (failed_attempt - 1))
-    )
+from backend.app.core.sqlite_retry import sleep_before_retry as _sleep_before_claim_retry
 
 
 def _claim_character_job(
@@ -39,50 +32,8 @@ def _claim_character_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
-    """有界 SQLite 锁重试地领取人物任务。
-
-    db 是 worker 会话，job_id 定位任务，claimed_at 写入开始时间。条件 UPDATE 只
-    接受 queued，因此重复派发仅一个 worker 得到返回 1；已被领取/结束返回 0，
-    非锁数据库错误继续抛出。
-    """
-    for attempt in range(1, CHARACTER_JOB_SQLITE_MAX_ATTEMPTS + 1):
-        try:
-            claimed = (
-                db.query(AnalysisJob)
-                .filter(
-                    AnalysisJob.id == job_id,
-                    AnalysisJob.job_type == "characters",
-                    AnalysisJob.status == "queued",
-                )
-                .update(
-                    {
-                        AnalysisJob.status: "running",
-                        AnalysisJob.progress_current: 0,
-                        AnalysisJob.error_message: None,
-                        AnalysisJob.started_at: claimed_at,
-                        AnalysisJob.completed_at: None,
-                    },
-                    synchronize_session=False,
-                )
-            )
-            db.commit()
-            return int(claimed)
-        except OperationalError as error:
-            db.rollback()
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == CHARACTER_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                raise
-            logger.warning(
-                "Character job %s claim hit a SQLite write lock "
-                "(attempt %s/%s).",
-                job_id,
-                attempt,
-                CHARACTER_JOB_SQLITE_MAX_ATTEMPTS,
-            )
-            _sleep_before_claim_retry(attempt)
-    return 0
+    """使用共享条件领取与 SQLite 写锁策略。"""
+    return claim_analysis_job(db, job_id, "characters", claimed_at, sleep=_sleep_before_claim_retry)
 
 
 def _character_job_has_live_source(
@@ -229,57 +180,12 @@ def _run_character_job(
                 return
 
             def record_generation_step() -> None:
-                """模型每完成一步便以独立短事务推进任务进度。
-
-                若人物消歧产生估算外步骤，先增加 progress_total 再增加 current，
-                始终满足数据库 ``current <= total``。SQLite 锁按有界策略重试；任务
-                已取消或删除时抛内部取消异常。
-                """
-                for attempt in range(
-                    1, CHARACTER_JOB_SQLITE_MAX_ATTEMPTS + 1
-                ):
-                    try:
-                        with session_factory() as progress_db:
-                            next_progress = (
-                                AnalysisJob.progress_current + 1
-                            )
-                            progressed = (
-                                progress_db.query(AnalysisJob)
-                                .filter(
-                                    AnalysisJob.id == job_id,
-                                    AnalysisJob.status == "running",
-                                )
-                                .update(
-                                    {
-                                        AnalysisJob.progress_current: (
-                                            next_progress
-                                        ),
-                                        AnalysisJob.progress_total: case(
-                                            (
-                                                AnalysisJob.progress_total
-                                                < next_progress,
-                                                next_progress,
-                                            ),
-                                            else_=(
-                                                AnalysisJob.progress_total
-                                            ),
-                                        ),
-                                    },
-                                    synchronize_session=False,
-                                )
-                            )
-                            progress_db.commit()
-                        if progressed != 1:
+                """独立短会话推进进度，复用生命周期与写锁策略。"""
+                def progress_step():
+                    with session_factory() as progress_db:
+                        if not advance_analysis_job(progress_db, job_id, expand_total=True):
                             raise _CharacterJobCancelled()
-                        return
-                    except OperationalError as error:
-                        if (
-                            not is_sqlite_lock_error(error)
-                            or attempt
-                            == CHARACTER_JOB_SQLITE_MAX_ATTEMPTS
-                        ):
-                            raise
-                        _sleep_before_claim_retry(attempt)
+                retry_sqlite(progress_step, sleep=_sleep_before_claim_retry)
 
             analyze_novel_characters(
                 db,

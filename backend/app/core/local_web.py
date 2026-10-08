@@ -1,6 +1,7 @@
 """本机网页的来源校验；防止其他网站借浏览器调用写接口。"""
 
 from urllib.parse import urlsplit
+from ipaddress import ip_address
 from starlette.responses import JSONResponse
 from starlette.requests import Request
 
@@ -28,7 +29,11 @@ def origin_error(request):
     命令行和内部 ASGI 请求没有 Origin，仍可使用现有 API；浏览器跨站写请求和
     DNS 重绑定请求会被拒绝。本地部署保持回环监听，不增加公开服务入口。
     """
-    if request.url.hostname not in {"localhost", "127.0.0.1", "::1", "testserver"}:
+    try:
+        local_client = request.client is not None and ip_address(request.client.host).is_loopback
+    except ValueError:
+        local_client = False
+    if not local_client or request.url.hostname not in {"localhost", "127.0.0.1", "::1"}:
         return "仅允许本机访问。"
     origin = request.headers.get("origin")
     if request.method not in {"GET", "HEAD", "OPTIONS"} and origin:
@@ -36,7 +41,7 @@ def origin_error(request):
             parsed = urlsplit(origin)
             own = urlsplit(str(request.base_url))
             allowed = (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-                       and parsed.port in {8000, 8501, own.port})
+                       and (parsed.port or 80) == (own.port or 80))
         except ValueError:
             allowed = False
         if not allowed:

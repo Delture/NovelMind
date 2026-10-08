@@ -34,7 +34,7 @@ NovelMind 在本机完成 TXT 解析、SQLite 存储、任务编排、向量检�
 
 ### 2.1 环境要求
 
-- Windows 10/11。
+- Windows 10/11 或 macOS（Apple Silicon 已验证）。
 - Python 3.12。
 - Git（从 GitHub 获取或更新项目时需要）。
 - 可访问 DeepSeek 和硅基流动 API 的网络。
@@ -42,7 +42,7 @@ NovelMind 在本机完成 TXT 解析、SQLite 存储、任务编排、向量检�
 项目目录示例：
 
 ```text
-C:\Users\delt2\Documents\Projects\CodexPro\NovelMind
+C:\Users\<用户名>\Documents\Projects\CodexPro\NovelMind
 ```
 
 如果尚未下载项目：
@@ -246,6 +246,22 @@ VECTOR_STORE_PATH=./vector_store
 
 直接修改 `.env` 后必须停止并重新启动后端；通过“模型与设置”弹窗修改供应商、
 模型、端点或密钥会立即生效。`BACKEND_URL` 仅影响旧版兼容界面，默认网页使用同源 API。
+
+### macOS 安装与启动
+
+```sh
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python scripts/novelmind_launcher.py
+# 独立终端安全停止
+.venv/bin/python scripts/novelmind_launcher.py --stop
+# 开发热重载
+.venv/bin/python scripts/novelmind_launcher.py --dev
+```
+
+macOS 双击入口使用 `.command`。开发与测试可安装 `requirements-dev.txt`；旧版 Streamlit 另需 `legacy/streamlit/requirements.txt`。
+前端滚动保存只写阅读位置与偏好；书签按条保存、编辑或删除，可避免其他标签页的位置更新吞掉书签。
+任务浮层可取消任务。任务在下一安全检查后不再提交新模型请求；已经发出的网络请求可能需要等待返回，已生成的数据保留。
 
 ## 4. 启动与检查
 
@@ -529,3 +545,13 @@ python -m compileall -q backend frontend
 任务、偏好、锚点和书签保存到本机数据库。多窗口同时修改遵循最后保存覆盖。
 万章目录虚拟化、分页排版、划线批注和跨设备同步尚未实现。全文搜索当前按每章前3处、分页offset上限10000提供有界片段，不能作为全文词频统计；本地预读限下一章。
 真实收费 API、账户余额和模型质量不在隔离验收范围内。
+
+
+### 阅读状态与任务取消接口
+
+- `PUT /api/novels/{id}/reading/position`：仅提交 `prefs` 与 `position`。
+- `PUT /api/novels/{id}/reading/bookmarks/{bookmark_id}`：新增或替换一条书签，请求的 `id` 必须与路径一致。
+- `DELETE /api/novels/{id}/reading/bookmarks/{bookmark_id}`：删除单条书签，成功返回 204。
+- `POST /api/workspace/tasks/{task_id}/cancel`：取消活动任务，成功返回 204。为兼容既有数据库约束，取消记录的状态为 `failed`，原因明确写“用户已取消”。
+
+原 `PUT /reading` 保留为旧客户端整份状态导入接口；网页已改用上述细粒度接口。旧客户端整份导入仍应自行协调并发修改。

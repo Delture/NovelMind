@@ -10,11 +10,10 @@ import hashlib
 import json
 import logging
 import math
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import Callable, Optional
+from typing import Callable, Optional, cast
 
 from pydantic import (
     BaseModel,
@@ -37,6 +36,8 @@ from backend.app.analyzer.characters import (
     character_chapter_source_hash,
 )
 from backend.app.analyzer.jobs import (
+    claim_analysis_job,
+    advance_analysis_job,
     is_sqlite_lock_error,
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
@@ -50,6 +51,7 @@ from backend.app.analyzer.summaries import (
     chapter_summary_source_hash,
 )
 from backend.app.analyzer.prompting import novelmind_system_prompt
+from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob, ChapterSummary
 from backend.app.models.character import (
@@ -612,7 +614,7 @@ def generate_report_payload(
     generation_steps = 0
     for summaries in _summary_batches(source.summary_data):
         allowed = {
-            int(summary["chapter_index"]) for summary in summaries
+            int(cast(int, summary["chapter_index"])) for summary in summaries
         }
         _ensure_can_continue(should_continue)
         result = provider.generate_json(
@@ -687,7 +689,7 @@ def generate_report_payload(
         note_payloads = reduced
 
     allowed_indices = {
-        int(summary["chapter_index"]) for summary in source.summary_data
+        int(cast(int, summary["chapter_index"])) for summary in source.summary_data
     }
     final_input = {
         "filename": source.filename,
@@ -708,7 +710,7 @@ def generate_report_payload(
             "请减少过长的人物别名或重新生成更精简的分析数据。"
         )
     _ensure_can_continue(should_continue)
-    result = provider.generate_json(
+    report_result = provider.generate_json(
         system_prompt=_system_prompt(),
         user_prompt=(
             "执行全书报告的最终编辑步骤。结论先行，并按影响作者决策的"
@@ -738,19 +740,14 @@ def generate_report_payload(
             should_continue,
         ),
     )
-    _validate_report_citations(result.value, allowed_indices)
+    _validate_report_citations(report_result.value, allowed_indices)
     generation_steps += 1
     if on_generation_step is not None:
         on_generation_step()
-    return result.value, generation_steps
+    return report_result.value, generation_steps
 
 
-def _sleep_before_sqlite_retry(failed_attempt: int) -> None:
-    """报告状态写锁冲突后按次数执行有上限短退避。"""
-    time.sleep(
-        REPORT_JOB_SQLITE_RETRY_BASE_SECONDS
-        * (2 ** (failed_attempt - 1))
-    )
+from backend.app.core.sqlite_retry import sleep_before_retry as _sleep_before_sqlite_retry
 
 
 def _claim_report_job(
@@ -758,49 +755,8 @@ def _claim_report_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
-    """有界 SQLite 锁重试地领取 queued 报告任务。
-
-    ``db`` 是 worker 会话，``job_id`` 定位任务，``claimed_at`` 写开始时间。条件
-    UPDATE 保证重复派发只一个 worker 返回 1；任务已被领取或终结返回 0。
-    """
-    for attempt in range(1, REPORT_JOB_SQLITE_MAX_ATTEMPTS + 1):
-        try:
-            claimed = (
-                db.query(AnalysisJob)
-                .filter(
-                    AnalysisJob.id == job_id,
-                    AnalysisJob.job_type == "report",
-                    AnalysisJob.status == "queued",
-                )
-                .update(
-                    {
-                        AnalysisJob.status: "running",
-                        AnalysisJob.progress_current: 0,
-                        AnalysisJob.error_message: None,
-                        AnalysisJob.started_at: claimed_at,
-                        AnalysisJob.completed_at: None,
-                    },
-                    synchronize_session=False,
-                )
-            )
-            db.commit()
-            return int(claimed)
-        except OperationalError as error:
-            db.rollback()
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == REPORT_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                raise
-            logger.warning(
-                "Report job %s claim hit a SQLite write lock "
-                "(attempt %s/%s).",
-                job_id,
-                attempt,
-                REPORT_JOB_SQLITE_MAX_ATTEMPTS,
-            )
-            _sleep_before_sqlite_retry(attempt)
-    return 0
+    """使用共享条件领取与 SQLite 写锁策略。"""
+    return claim_analysis_job(db, job_id, "report", claimed_at, sleep=_sleep_before_sqlite_retry)
 
 
 def _report_job_has_live_source(
@@ -1031,40 +987,12 @@ def _run_report_job(
                 return
 
             def advance_progress() -> None:
-                """以独立短会话推进一步；锁冲突有界重试，任务失效则取消。"""
-                for attempt in range(
-                    1, REPORT_JOB_SQLITE_MAX_ATTEMPTS + 1
-                ):
-                    try:
-                        with session_factory() as progress_db:
-                            updated = (
-                                progress_db.query(AnalysisJob)
-                                .filter(
-                                    AnalysisJob.id == job_id,
-                                    AnalysisJob.status == "running",
-                                    AnalysisJob.progress_current
-                                    < AnalysisJob.progress_total,
-                                )
-                                .update(
-                                    {
-                                        AnalysisJob.progress_current: (
-                                            AnalysisJob.progress_current + 1
-                                        )
-                                    },
-                                    synchronize_session=False,
-                                )
-                            )
-                            progress_db.commit()
-                        if updated != 1:
+                """独立短会话推进进度，复用生命周期与写锁策略。"""
+                def progress_step():
+                    with session_factory() as progress_db:
+                        if not advance_analysis_job(progress_db, job_id, expand_total=False):
                             raise _ReportJobCancelled()
-                        return
-                    except OperationalError as error:
-                        if (
-                            not is_sqlite_lock_error(error)
-                            or attempt == REPORT_JOB_SQLITE_MAX_ATTEMPTS
-                        ):
-                            raise
-                        _sleep_before_sqlite_retry(attempt)
+                retry_sqlite(progress_step, sleep=_sleep_before_sqlite_retry)
 
             payload, generation_steps = generate_report_payload(
                 source,

@@ -49,7 +49,8 @@ def main():
                                for c in xml.iter("testcase") for f in list(c.findall("failure"))+list(c.findall("error"))]
         groups = {}
         for case in xml.iter("testcase"):
-            group = case.get("classname", "").split(".")[1]
+            parts = case.get("classname", "").split(".")
+            group = parts[1] if len(parts) > 1 else "external"
             groups[group] = groups.get(group,0)+1
         summary["groups"] = groups
     for name, value in (("run",summary),("source-before",before),("source-after",after)):

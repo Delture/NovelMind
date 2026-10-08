@@ -1,4 +1,5 @@
 """HTTP 声明；任务链直接调用 services 中同一业务入口。"""
+from backend.app.api.service_route import ServiceRoute
 from backend.app.services.tasks import (
     AnalysisJobResponse,
     ProviderFactory,
@@ -10,9 +11,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Path as PathParameter, 
 from sqlalchemy.orm import Session
 from backend.app.core.config import Settings, get_settings
 from backend.app.core.database import get_db
+from backend.app.services.execution import JobTasks
 from backend.app.services import reports as service
 from backend.app.services.reports import StartReportRequest, ReportEstimateResponse, ReportResponse
-router = APIRouter()
+router = APIRouter(route_class=ServiceRoute)
 
 @router.get(
     "/novels/{novel_id}/report/estimate",
@@ -45,7 +47,7 @@ def start_report(
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
     """委托共享业务服务处理校验、缓存和派发。"""
-    return service.start_report(request=request, background_tasks=background_tasks, novel_id=novel_id, settings=settings, db=db, provider_factory=provider_factory, session_factory=session_factory)
+    return service.start_report(request=request, background_tasks=JobTasks(background_tasks), novel_id=novel_id, settings=settings, db=db, provider_factory=provider_factory, session_factory=session_factory)
 
 
 @router.get(

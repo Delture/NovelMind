@@ -11,7 +11,6 @@ import hashlib
 import json
 import logging
 import math
-import time
 from collections import deque
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -28,11 +27,14 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.analyzer.jobs import (
+    claim_analysis_job,
+    advance_analysis_job,
     is_sqlite_lock_error,
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
 from backend.app.analyzer.llm import LLMProvider, LLMProviderError
 from backend.app.analyzer.prompting import novelmind_system_prompt
+from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob, ChapterSummary
 from backend.app.models.novel import Chapter, Novel
@@ -303,7 +305,7 @@ async def _provider_generate_json_async(
     generate_async = getattr(provider, "generate_json_async", None)
     if callable(generate_async):
         return await generate_async(**kwargs)
-    return await asyncio.to_thread(provider.generate_json, **kwargs)
+    return await asyncio.to_thread(partial(provider.generate_json, **kwargs))
 
 
 async def _summarize_text_async(
@@ -478,12 +480,7 @@ def generate_chapter_summary(
     return stored, True
 
 
-def _sleep_before_sqlite_retry(failed_attempt: int) -> None:
-    """按失败次数短暂退避，让并发 SQLite 写事务释放锁。"""
-    time.sleep(
-        SUMMARY_JOB_SQLITE_RETRY_BASE_SECONDS
-        * (2 ** (failed_attempt - 1))
-    )
+from backend.app.core.sqlite_retry import sleep_before_retry as _sleep_before_sqlite_retry
 
 
 def _claim_summary_job(
@@ -491,49 +488,8 @@ def _claim_summary_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
-    """有界 SQLite 锁重试地领取 queued 摘要任务。
-
-    ``db`` 是 worker 会话，``job_id`` 定位任务，``claimed_at`` 写入开始时间。条件
-    UPDATE 使重复派发只有一个 worker 返回 1；任务已改变时返回 0。
-    """
-    for attempt in range(1, SUMMARY_JOB_SQLITE_MAX_ATTEMPTS + 1):
-        try:
-            claimed = (
-                db.query(AnalysisJob)
-                .filter(
-                    AnalysisJob.id == job_id,
-                    AnalysisJob.job_type == "chapter_summaries",
-                    AnalysisJob.status == "queued",
-                )
-                .update(
-                    {
-                        AnalysisJob.status: "running",
-                        AnalysisJob.progress_current: 0,
-                        AnalysisJob.error_message: None,
-                        AnalysisJob.started_at: claimed_at,
-                        AnalysisJob.completed_at: None,
-                    },
-                    synchronize_session=False,
-                )
-            )
-            db.commit()
-            return int(claimed)
-        except OperationalError as error:
-            db.rollback()
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == SUMMARY_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                raise
-            logger.warning(
-                "Summary job %s claim hit a SQLite write lock "
-                "(attempt %s/%s).",
-                job_id,
-                attempt,
-                SUMMARY_JOB_SQLITE_MAX_ATTEMPTS,
-            )
-            _sleep_before_sqlite_retry(attempt)
-    return 0
+    """使用共享条件领取与 SQLite 写锁策略。"""
+    return claim_analysis_job(db, job_id, "chapter_summaries", claimed_at, sleep=_sleep_before_sqlite_retry)
 
 
 def _mark_queued_job_failed_after_claim_error(
@@ -632,27 +588,8 @@ async def _run_summary_job_and_close(
 
 
 def _advance_summary_job(db: Session, job_id: str) -> bool:
-    """将 progress_current 原子加一且不超过 total，返回是否推进成功。"""
-    progressed = (
-        db.query(AnalysisJob)
-        .filter(
-            AnalysisJob.id == job_id,
-            AnalysisJob.status == "running",
-        )
-        .update(
-            {
-                AnalysisJob.progress_current: (
-                    AnalysisJob.progress_current + 1
-                ),
-            },
-            synchronize_session=False,
-        )
-    )
-    if progressed != 1:
-        db.rollback()
-        return False
-    db.commit()
-    return True
+    """与章节摘要同事务推进进度，保留统一生命周期语义。"""
+    return advance_analysis_job(db, job_id)
 
 
 async def _cancel_summary_tasks(
@@ -764,28 +701,17 @@ async def _run_concurrent_summary_generation(
 
                 if db.get(Chapter, item.chapter_id) is None:
                     raise _SummaryJobCancelled()
-                for attempt in range(
-                    1, SUMMARY_JOB_SQLITE_MAX_ATTEMPTS + 1
-                ):
+                def persist_step(item=item, payload=payload):
+                    """短事务失败后回滚，由共享写锁策略重试。"""
                     try:
-                        _persist_summary_payload(
-                            db,
-                            chapter_id=item.chapter_id,
-                            source_hash=item.source_hash,
-                            payload=payload,
-                            provider_model=provider.model,
-                        )
+                        _persist_summary_payload(db, chapter_id=item.chapter_id, source_hash=item.source_hash, payload=payload, provider_model=provider.model)
                         if not _advance_summary_job(db, job_id):
                             raise _SummaryJobCancelled()
-                        break
-                    except OperationalError as error:
+                        return
+                    except OperationalError:
                         db.rollback()
-                        if (
-                            not is_sqlite_lock_error(error)
-                            or attempt == SUMMARY_JOB_SQLITE_MAX_ATTEMPTS
-                        ):
-                            raise
-                        _sleep_before_sqlite_retry(attempt)
+                        raise
+                retry_sqlite(persist_step, sleep=_sleep_before_sqlite_retry)
 
                 if mode == "auto" and current_concurrency < max_concurrency:
                     successes_since_ramp += 1

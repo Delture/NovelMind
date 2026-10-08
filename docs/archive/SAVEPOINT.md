@@ -31,7 +31,7 @@ python -m http.server 8768 --bind 127.0.0.1 --directory design
 
 pen.dev 当前源文档：
 
-`C:/Users/delt2/.pencil/documents/0879471c-3db3-4a87-8c72-34c3be8e79c0/pencil-new.pen`
+`C:/Users/<用户名>/.pencil/documents/0879471c-3db3-4a87-8c72-34c3be8e79c0/pencil-new.pen`
 
 另外通过 pen.dev MCP 读取并保存了完整结构快照：`design/pen-canvas-snapshot.json`，包含 19 个顶层画板/组件及设计变量。该文件是可版本管理的结构快照，不是加密 `.pen` 文件，不能仅修改扩展名后作为 `.pen` 打开。需要恢复到新画布时，应通过 MCP 重新创建图层，并重建组件引用的 ID 映射。
 

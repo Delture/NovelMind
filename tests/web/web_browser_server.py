@@ -1,5 +1,6 @@
 """仅由隔离浏览器检查器启动：真实服务与数据库，确定性假模型提供商。"""
 
+from backend.app.services import dependencies
 import os
 import time
 import tempfile
@@ -90,7 +91,7 @@ def answer_factory():
 app.dependency_overrides.update({
     system.get_model_probe_transport: probe_fixture.transport,
     summaries.get_llm_provider_factory: lambda: SlowSummaryProvider,
-    summaries.get_sync_llm_provider_factory: lambda: FakeReportProvider,
+    dependencies.get_sync_llm_provider_factory: lambda: FakeReportProvider,
     rag.get_embedding_factory: lambda: embedding_factory,
     rag.get_generation_factory: lambda: answer_factory,
     rag.get_vector_store_factory: lambda: lambda: LocalVectorStore(test_settings.vector_store_path),

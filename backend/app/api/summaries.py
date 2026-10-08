@@ -1,16 +1,17 @@
 """HTTP 声明；任务链直接调用 services 中同一业务入口。"""
+from backend.app.api.service_route import ServiceRoute
 from backend.app.services.tasks import (
     AnalysisJobResponse,
     ProviderFactory,
     get_session_factory,
     get_llm_provider_factory,
-    get_sync_llm_provider_factory,
 )
 from typing import Callable, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Path as PathParameter, Query, status
 from sqlalchemy.orm import Session
 from backend.app.core.config import Settings, get_settings
 from backend.app.core.database import get_db
+from backend.app.services.execution import JobTasks
 from backend.app.services import summaries as service
 from backend.app.services.summaries import (
     StartSummariesRequest,
@@ -19,7 +20,7 @@ from backend.app.services.summaries import (
     SummaryEstimateResponse,
     AnalysisJobListResponse,
 )
-router = APIRouter()
+router = APIRouter(route_class=ServiceRoute)
 
 @router.post(
     "/novels/{novel_id}/summaries",
@@ -36,7 +37,7 @@ def start_chapter_summaries(
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
     """委托共享业务服务处理校验、缓存和派发。"""
-    return service.start_chapter_summaries(request=request, background_tasks=background_tasks, novel_id=novel_id, db=db, provider_factory=provider_factory, session_factory=session_factory)
+    return service.start_chapter_summaries(request=request, background_tasks=JobTasks(background_tasks), novel_id=novel_id, db=db, provider_factory=provider_factory, session_factory=session_factory)
 
 
 @router.post(
@@ -54,7 +55,7 @@ def start_single_chapter_summary(
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
     """委托共享业务服务处理校验、缓存和派发。"""
-    return service.start_single_chapter_summary(request=request, background_tasks=background_tasks, novel_id=novel_id, chapter_index=chapter_index, db=db, provider_factory=provider_factory, session_factory=session_factory)
+    return service.start_single_chapter_summary(request=request, background_tasks=JobTasks(background_tasks), novel_id=novel_id, chapter_index=chapter_index, db=db, provider_factory=provider_factory, session_factory=session_factory)
 
 
 @router.get(

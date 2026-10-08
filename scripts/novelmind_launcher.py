@@ -37,7 +37,7 @@ from ctypes import wintypes
 # 所有路径都从脚本真实位置推导，而不是依赖用户当前工作目录；双击 cmd 和终端
 # 启动因此具有相同行为。
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+VENV_PYTHON = PROJECT_ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 RUNTIME_DIR = Path(os.environ.get("NOVELMIND_RUNTIME_DIR", str(PROJECT_ROOT / "data" / "runtime")))
 STATE_FILE = RUNTIME_DIR / "launcher.json"
 LOG_DIR = Path(os.environ.get("NOVELMIND_LOG_DIR", str(PROJECT_ROOT / "logs")))
@@ -65,6 +65,8 @@ class ManagedProcess:
     name: str
     process: subprocess.Popen[bytes]
     log_handle: IO[bytes]
+    guard: subprocess.Popen | None = None
+    guard_pipe: int | None = None
 
 
 class _JobBasicLimitInformation(ctypes.Structure):
@@ -432,7 +434,7 @@ def _python_executable() -> Path:
     if VENV_PYTHON.is_file():
         return VENV_PYTHON
     raise LauncherError(
-        "未找到 .venv\\Scripts\\python.exe。请先按照 README 完成一次环境安装。"
+        f"未找到 {VENV_PYTHON}。请先按照 README 完成一次环境安装。"
     )
 
 
@@ -502,13 +504,31 @@ def _start_process(
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             creationflags=_process_creation_flags(),
+            start_new_session=os.name != "nt",
         )
     except Exception:
         log_handle.close()
         raise
     if ownership_job is not None:
         ownership_job.assign(process)
-    return ManagedProcess(name=name, process=process, log_handle=log_handle)
+    guard = None
+    guard_pipe = None
+    if os.name != "nt":
+        read_pipe, guard_pipe = os.pipe()
+        try:
+            guard = subprocess.Popen([str(_python_executable()), "-m", "scripts.novelmind_watchdog",
+                                      str(read_pipe), str(process.pid)], cwd=PROJECT_ROOT,
+                                     pass_fds=(read_pipe,), start_new_session=True,
+                                     stdout=log_handle, stderr=subprocess.STDOUT)
+        except Exception:
+            os.close(guard_pipe)
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS)
+            log_handle.close()
+            raise
+        finally:
+            os.close(read_pipe)
+    return ManagedProcess(name=name, process=process, log_handle=log_handle, guard=guard, guard_pipe=guard_pipe)
 
 
 def _backend_is_ready() -> bool:
@@ -562,32 +582,26 @@ def _terminate_process(managed: ManagedProcess) -> None:
     参数是 start 阶段返回的 ``ManagedProcess``。函数可重复面对已退出进程。
     """
     process = managed.process
-    if process.poll() is not None:
-        managed.log_handle.close()
-        return
     try:
-        if os.name == "nt":
-            process.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
-        else:
-            process.terminate()
-        process.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS)
+        if process.poll() is None:
+            if os.name == "nt":
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
         logging.warning("%s did not stop gracefully; forcing termination", managed.name)
-        try:
-            if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=10,
-                )
-            else:
-                process.kill()
-            process.wait(timeout=5)
-        except (OSError, subprocess.TimeoutExpired):
-            logging.exception("Unable to force-stop %s", managed.name)
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
     finally:
+        if managed.guard_pipe is not None:
+            os.close(managed.guard_pipe)
+        if managed.guard is not None:
+            managed.guard.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS + 2)
         managed.log_handle.close()
 
 

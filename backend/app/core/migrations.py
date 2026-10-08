@@ -1,5 +1,6 @@
 """迁移账本与原子执行入口。历史步骤按版本保留，新增版本只在末尾追加。"""
-from typing import Callable
+from typing import Callable, cast
+import sqlite3
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from .migration_steps.v01_analysis import _add_unique_chapter_index, _add_analysis_tables, _add_unique_active_job_index, _add_analysis_force_scope
@@ -7,6 +8,7 @@ from .migration_steps.v05_characters import _add_character_analysis_tables
 from .migration_steps.v06_rag import _add_rag_index_tables, _add_rag_question_table, _allow_configurable_embedding_models
 from .migration_steps.v08_reports import _add_novel_report_table
 from .migration_steps.v10_workspace import add_workspace_tables, explicit_appearance_ownership
+from .migration_steps.v12_workflow_time import workflow_datetime
 MigrationFunction = Callable[[Connection], None]
 
 MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
@@ -45,6 +47,7 @@ MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
     ),
     (10, "add workspace reading and workflows", add_workspace_tables),
     (11, "explicit character appearance ownership", explicit_appearance_ownership),
+    (12, "normalize workflow timestamps", workflow_datetime),
 )
 
 
@@ -56,7 +59,7 @@ def run_migrations(engine: Engine) -> None:
     """
     with engine.begin() as connection:
         # sqlite3 legacy transaction control does not BEGIN for DDL by itself.
-        if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+        if connection.dialect.name == "sqlite" and not cast(sqlite3.Connection, connection.connection.driver_connection).in_transaction:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
         connection.execute(
             text(

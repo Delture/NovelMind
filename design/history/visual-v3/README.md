@@ -12,7 +12,7 @@
 
 可编辑源稿保存在当前 pen.dev 文档：
 
-`C:/Users/delt2/.pencil/documents/0879471c-3db3-4a87-8c72-34c3be8e79c0/pencil-new.pen`
+`C:/Users/<用户名>/.pencil/documents/0879471c-3db3-4a87-8c72-34c3be8e79c0/pencil-new.pen`
 
 请通过 pen.dev 打开编辑；它是加密格式。源稿尚未另存到项目目录。
 

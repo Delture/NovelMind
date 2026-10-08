@@ -1,0 +1,31 @@
+name: Tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Isolated tests and correctness checks
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            novelmind_python=".venv/Scripts/python.exe"
+          else
+            novelmind_python=".venv/bin/python"
+          fi
+          "$novelmind_python" -m pip install -r requirements-dev.txt
+          "$novelmind_python" tests/integration/run_isolated.py -q
+          "$novelmind_python" -m ruff check backend scripts
+          "$novelmind_python" -m mypy backend

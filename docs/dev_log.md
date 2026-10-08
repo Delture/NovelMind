@@ -42,7 +42,7 @@
 - 修复解析器将独占标题末尾全角问号/叹号当作正文句子排除的问题；相同章号重复数字加分隔符的明确标题允许句号结尾。保留“第十章发生的事情，让他久久不能忘怀。”式直接叙述句防误切。
 - 真实用户库仅以 sqlite3 URI mode=ro 清点，并使用只读源连接的 SQLite backup 保存到系统临时目录。已确认一部书 10 条旧记录内有 13 个遗漏标题边界，368 条应拆为 381 条；所有派生分析/任务依赖为 0，有 1 条阅读状态、0 个书签。
 - 新增 `scripts/repair_chapter_boundaries.py`，通过 `python -m scripts.repair_chapter_boundaries --database <本机库路径> --novel-id <ID>` 生成备份、完整映射计划及临时预演副本。此入口没有真实库 apply 功能，不能因运行计划工具自动修改用户库。
-- 成功预演证据在 `C:\Users\delt2\AppData\Local\Temp\novelmind-chapter-repair-luykshha`：before.sqlite3 为只读备份，plan.json 记录旧→新映射与来源指纹，rehearsal.sqlite3/rehearsal.json 为副本和校验结果。新增13条，保留368个旧ID，正文连同提升为标题的字符逐字可重建，阅读锚点精确映射，foreign_key_check/quick_check 通过。
+- 成功预演证据在 `C:\Users\<用户名>\AppData\Local\Temp\novelmind-chapter-repair-luykshha`：before.sqlite3 为只读备份，plan.json 记录旧→新映射与来源指纹，rehearsal.sqlite3/rehearsal.json 为副本和校验结果。新增13条，保留368个旧ID，正文连同提升为标题的字符逐字可重建，阅读锚点精确映射，foreign_key_check/quick_check 通过。
 - 实施前约束已履行：取得明确授权并确认关闭阅读页，重取最新备份/计划，核对源内容、边界和零依赖，精确映射最新阅读状态后在短事务内修复。全过程没有删除小说、重导入、清理分析或书签。
 - 诊断/预演阶段真实库保持只读；随后先完成49项独立回归，再按授权修复真实库，结果见本节顶部。测试文件由独立代理维护，实施未接触密钥或收费服务。
 
@@ -54,13 +54,13 @@
 - 仅在 `frontend/web/reader.css` 的 `.r-chapter` 显式添加 `justify-content:flex-start`。保留现有垂直对齐、长标题自然换行、章节数据、解析、点击和键盘行为。
 - 定向几何复核：9 个长短标题含一条两行标题，修复前序号 x 为 48–96.3 px，修复后全部为 48 px，标题全部从 85 px 起排，零 pageerror。独立测试代理已完成桌面/窄屏、选中态和交互复验；没有重跑大规模测试。
 - `reader.js` 左侧序号来自当前记录顺序 n（补足两位）；右侧标题来自 `pages.js` 提供的已保存章节原标题。解析器按识别到的标题顺序生成连续 index，保留原标题。截图中的 03/第4章不足以认定漏章或正文丢失，本轮未修改数据或解析。
-- 复现证据：`C:\Users\delt2\AppData\Local\Temp\novelmind-reader-alignment-YULOZJ`，包含 before/after JSON 几何与截图。此前全量验收数字属于前一快照，本次 CSS 补丁的独立回归已通过，结果如下。
+- 复现证据：`C:\Users\<用户名>\AppData\Local\Temp\novelmind-reader-alignment-YULOZJ`，包含 before/after JSON 几何与截图。此前全量验收数字属于前一快照，本次 CSS 补丁的独立回归已通过，结果如下。
 
 
 - 独立定向回归：复用隔离 `scripts/check_web.py --reader-alignment` 入口，运行 `scripts/check_reader_alignment.cjs`，12 项通过、0 失败、零 pageerror、零模型任务。使用真实网页与临时原创章节，未读取用户小说、真实配置或浏览器存储。浏览器脚本耗时 0.797 秒（不含服务启动与清理）。
 - 9 个长短标题包含实际两行标题；桌面 1440×1000 下所有序号/标题首字 x 均为 48/85 px，窄屏 390×844 下为 32/69 px。点击切章、选中态和现有 Tab/Enter 激活后起点保持不变，无横向溢出。
 - 临时页面仅作测试的旧居中负向对照使序号 x 回到 48–106.25 px，证明几何断言能发现本次回归；生产文件未被测试改写。03 对应原始“第4章”的合成样例只验证顺序编号与原标题映射，不能据此推断用户文本漏章。
-- 独立证据：`C:\Users\delt2\AppData\Local\Temp\novelmind-web-qa-ts0td4wa`，包含一份 `reader-alignment-results.json` 和桌面/窄屏截图。运行前设置与既有浏览器验收相同的 NODE_PATH。本轮仅专项回归，未重跑此前 584 项全量。
+- 独立证据：`C:\Users\<用户名>\AppData\Local\Temp\novelmind-web-qa-ts0td4wa`，包含一份 `reader-alignment-results.json` 和桌面/窄屏截图。运行前设置与既有浏览器验收相同的 NODE_PATH。本轮仅专项回归，未重跑此前 584 项全量。
 
 ## 2026-09-27：全量审查修复与验收（当前）
 
@@ -73,7 +73,7 @@
 - 集成验收包括端点 26、任务链 10、迁移 12、独立服务 2、真实启动器 5；实际观察 worker PID 替换、旧 worker 退出、网页/API 恢复、安全停止，以及日常/开发模式强杀 supervisor 后所属进程全部回收。
 - 真实 Windows 开发热重载暴露控制台信号等待停滞。新增窄范围开发入口，用进程间事件请求 worker 退出并设置等待上限，保留所属进程回收与监听 socket。
 - Windows 热重载修复已通过真实行为复验。最终收尾仅修正文档控件名、摘要逐章持久化说明、旧 Streamlit 配置归属与模型文件 EOF 空白，未改变已验收业务逻辑或测试。
-- 最终证据汇总：`C:\Users\delt2\AppData\Local\Temp\novelmind-final-evidence-cefbe4a9\STATUS.md`；pytest：`novelmind-acceptance-0yvkd01t`；网页：`novelmind-web-qa-m3_khj7w`（后二者均位于同一系统临时目录）。
+- 最终证据汇总：`C:\Users\<用户名>\AppData\Local\Temp\novelmind-final-evidence-cefbe4a9\STATUS.md`；pytest：`novelmind-acceptance-0yvkd01t`；网页：`novelmind-web-qa-m3_khj7w`（后二者均位于同一系统临时目录）。
 - 本轮审查 1–10 项全部完成，无已知遗留修复项。验收使用临时数据和假提供商，真实收费 API 与模型生成质量不在本轮验收范围内。
 - 使用指南修正为“模型与设置”弹窗及任务面板自动更新。以下按时间保留历史实现记录，旧双服务与旧测试数字不代表当前状态。
 
@@ -383,3 +383,18 @@
 - 确认 clear key 保留已校验端点是有意设计：仅撤销凭据，角色成为未配置且密钥不回显。
 - 确认 run_migrations 整体事务回滚是有意设计：原结构/数据/版本保持；原先无账本时失败后仍无账本。
 - 使用指南和架构已补充这两项语义。测试及验收脚本由独立测试代理维护，本轮未修改。
+
+## 2026-10-08：macOS 本地环境与 Issue #3 复核
+
+- 在 Apple Silicon 上建立 Python 3.12.14 `.venv`，保持 requirements 固定版本，补齐 pip；不修改业务代码，不调用真实模型。
+- 默认隔离 pytest：558 通过、6 个 Windows 专用测试失败；Edge 网页验收 16 项通过。实际应用健康/网页/API 均 200，临时服务已关闭。
+- 复现任务链活动子任务失败、领取异常保持 queued、双标签页覆盖书签、跨本机端口写入与密钥临时文件权限问题；上传探针确认同步处理阻塞事件循环。
+- 修正 Issue 的 busy_timeout 描述：当前实测 5000ms，但 journal_mode 为 delete。完整结果与 macOS 手动启动方法见 `mac_environment_review_2026-10-08.md`；原启动器仍固定 Windows 虚拟环境路径。
+
+## 2026-10-08：Issue #3 修复与 macOS 验收
+
+- 按 grokbot 评审修复任务链活动任务冲突、领取/终态边界、SQLite WAL/共享写锁策略、阅读位置与单条书签保存、全局回环 IP/同端口来源门禁、上传线程调度和密钥临时文件初始权限。
+- 长任务接入有界专用线程池并提供取消入口；派发与取消交错时也不执行新模型请求。人物业务移入服务层，依赖集中，服务错误由 HTTP 边界统一映射。
+- ORM 迁移到 DeclarativeBase/Mapped；v12 规范历史任务链时间并保留索引、微秒和时区语义。新增 macOS 双击入口、进程组/管道看护及真实生命周期测试。
+- 整理开发依赖、平台测试、文案、个人路径与 output 忽略，新增三平台 CI。最终全量：717 个、711 通过、6 个 Windows 专用跳过；Edge 通用16/阅读专项9项通过；Ruff F 类与 mypy backend 63文件无错误。
+- 未调用真实模型，未修改用户数据，未提交/推送或关闭 Issue；CI尚未在远端执行。完整清单和边界见 `issue_3_fixes_2026-10-08.md`。

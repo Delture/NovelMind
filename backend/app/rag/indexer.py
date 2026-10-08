@@ -7,7 +7,6 @@ RagIndex/RagChunkRecord。失败会删除未启用集合并保留旧快照。
 
 import logging
 import math
-import time
 from collections.abc import Callable, Sequence
 from typing import Optional, Protocol
 
@@ -15,11 +14,11 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.analyzer.jobs import (
-    ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS,
-    ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS,
+    claim_analysis_job,
     is_sqlite_lock_error,
     mark_analysis_job_failed_with_sqlite_lock_retry,
 )
+from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Chapter, Novel
@@ -162,41 +161,8 @@ def _ensure_job_running(
 
 
 def _claim_job(db: Session, job_id: str) -> bool:
-    """有界锁重试地把索引任务从 queued 原子领取为 running。"""
-    for attempt in range(1, ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS + 1):
-        try:
-            claimed = (
-                db.query(AnalysisJob)
-                .filter(
-                    AnalysisJob.id == job_id,
-                    AnalysisJob.job_type == "rag_index",
-                    AnalysisJob.status == "queued",
-                )
-                .update(
-                    {
-                        AnalysisJob.status: "running",
-                        AnalysisJob.progress_current: 0,
-                        AnalysisJob.error_message: None,
-                        AnalysisJob.started_at: utc_now(),
-                        AnalysisJob.completed_at: None,
-                    },
-                    synchronize_session=False,
-                )
-            )
-            db.commit()
-            return claimed == 1
-        except OperationalError as error:
-            db.rollback()
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                raise
-            time.sleep(
-                ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
-                * (2 ** (attempt - 1))
-            )
-    return False
+    """使用统一领取与 SQLite 重试机制。"""
+    return claim_analysis_job(db, job_id, "rag_index", utc_now()) == 1
 
 
 # 模型、维度、分块协议和内容哈希全部一致时，旧向量才可安全复用。
@@ -284,7 +250,8 @@ def _persist_progress(
     ``db`` 是当前会话，``job_id`` 定位任务，``current/total`` 是要写入的绝对值。
     只更新 running 任务并验证边界；SQLite 写锁执行有界退避，失败继续抛出。
     """
-    for attempt in range(1, ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS + 1):
+
+    def write_status():
         try:
             updated = (
                 db.query(AnalysisJob)
@@ -305,17 +272,11 @@ def _persist_progress(
             if updated != 1:
                 raise _RagIndexJobCancelled()
             return
-        except OperationalError as error:
+        except OperationalError:
             db.rollback()
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                raise
-            time.sleep(
-                ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
-                * (2 ** (attempt - 1))
-            )
+            raise
+
+    return retry_sqlite(write_status)
 
 
 def _collection_name(

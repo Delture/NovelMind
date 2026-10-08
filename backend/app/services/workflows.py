@@ -1,103 +1,188 @@
 """两个明确的任务链；受理时冻结目的地与授权，重启不会自动重新发送正文。"""
-from dataclasses import dataclass
-from typing import Callable
-from fastapi import BackgroundTasks, Depends
+
+import asyncio
+import time
+from backend.app.core.sqlite_retry import retry_sqlite
+from backend.app.services.execution import JobTasks, executor
 from starlette.concurrency import run_in_threadpool
-from backend.app.core.config import Settings, get_settings
 from backend.app.models.workspace import Workflow
+from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.rag import RagQuestion
 from backend.app.services import summaries, reports, rag
-from backend.app.services.tasks import get_llm_provider_factory, get_sync_llm_provider_factory
 
 
-@dataclass(frozen=True)
-class WorkflowExecution:
-    """仅驻留内存的已批准执行环境；配置含密钥，绝不写入任务记录或响应。"""
-    settings: Settings
-    summary_factory: Callable
-    report_factory: Callable
-    embedding_factory: Callable
-    generation_factory: Callable
-    vector_store_factory: Callable
+WORKFLOW_STEP_TIMEOUT = 3600
 
 
-def get_workflow_execution(
-    settings: Settings = Depends(get_settings),
-    summary_factory: Callable = Depends(get_llm_provider_factory),
-    report_factory: Callable = Depends(get_sync_llm_provider_factory),
-    embedding_factory: Callable = Depends(rag.get_embedding_factory),
-    generation_factory: Callable = Depends(rag.get_generation_factory),
-    vector_store_factory: Callable = Depends(rag.get_vector_store_factory),
-) -> WorkflowExecution:
-    """依赖仅创建绑定同一 Settings 的惰性工厂，校验授权前不创建外部客户端。"""
-    return WorkflowExecution(settings, summary_factory, report_factory,
-                             embedding_factory, generation_factory, vector_store_factory)
+def _update_workflow(factory, workflow_id, values, states=("queued", "running")):
+    def update():
+        with factory() as db:
+            count = (
+                db.query(Workflow)
+                .filter(Workflow.id == workflow_id, Workflow.status.in_(states))
+                .update(values)
+            )
+            db.commit()
+            return count
+
+    return retry_sqlite(update)
+
+
+async def _wait_for_child(factory, model, child_id, workflow_id):
+    def status():
+        with factory() as db:
+            row = db.get(model, child_id)
+            parent = db.get(Workflow, workflow_id)
+            if parent is None or parent.status != "running":
+                raise ValueError("任务链已停止。")
+            return row.status if row else "failed"
+
+    deadline = time.monotonic() + WORKFLOW_STEP_TIMEOUT
+    while True:
+        state = await run_in_threadpool(status)
+        if state not in {"queued", "running"}:
+            if state != "succeeded":
+                raise ValueError("前一步未成功完成。")
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError("等待子任务超时。")
+        await asyncio.sleep(0.2)
+
+
+def _cancel_late_child(factory, workflow_id, model, child_id):
+    """取消可能在派发事务间到达；新创建的子任务不能在父任务停止后开始。"""
+    with factory() as db:
+        parent = db.get(Workflow, workflow_id)
+        if parent is not None and parent.status == "running":
+            return
+        db.query(model).filter(
+            model.id == child_id, model.status.in_(("queued", "running"))
+        ).update(
+            {
+                "status": "failed",
+                "error_message": "所属任务链已停止，已完成结果已保留。",
+                "completed_at": utc_now(),
+            }
+        )
+        db.commit()
+    executor.cancel(child_id)
 
 
 async def run_workflow(workflow_id, factory, execution, external, rights):
-    """原子领取并顺序执行任务；等待每个 worker 完成后才检查下一步。
-
-    普通服务与 HTTP 路由共享缓存、授权、冲突校验。数据库会话在派发之后释放，
-    整条链保留受理时的配置和双授权。失败保留已有结果，重复 worker 无法再次领取。
-    """
-    with factory() as db:
-        claimed = db.query(Workflow).filter(Workflow.id == workflow_id, Workflow.status == "queued").update({"status": "running"})
-        db.commit()
+    """领取、派发和终态落盘共享同一异常边界；迟到异常不覆盖终态。"""
+    claimed = False
+    try:
+        claimed = await run_in_threadpool(
+            _update_workflow, factory, workflow_id, {"status": "running"}, ("queued",)
+        )
         if not claimed:
             return
-        row = db.get(Workflow, workflow_id)
-        novel_id, kind, question = row.novel_id, row.kind, row.question
-    consent = dict(confirm_external_processing=external, confirm_content_rights=rights)
-    if kind == "report":
-        steps = [
-            ("补齐摘要", summaries.start_chapter_summaries,
-             dict(request=summaries.StartSummariesRequest(**consent), provider_factory=execution.summary_factory), AnalysisJob),
-            ("更新报告", reports.start_report,
-             dict(request=reports.StartReportRequest(**consent), settings=execution.settings, provider_factory=execution.report_factory), AnalysisJob),
-        ]
-    else:
-        shared = dict(settings=execution.settings, embedding_factory=execution.embedding_factory,
-                      vector_store_factory=execution.vector_store_factory)
-        steps = [
-            ("准备原文", rag.start_rag_index,
-             dict(**shared, request=rag.StartRagIndexRequest(**consent)), AnalysisJob),
-            ("回答问题", rag.start_rag_question,
-             dict(**shared, generation_factory=execution.generation_factory,
-                  request=rag.StartRagQuestionRequest(question=question,
-                  confirm_embedding_processing=external, confirm_generation_processing=external,
-                  confirm_content_rights=rights)), RagQuestion),
-        ]
-    try:
+        with factory() as db:
+            row = db.get(Workflow, workflow_id)
+            novel_id, kind, question = row.novel_id, row.kind, row.question
+        consent = dict(
+            confirm_external_processing=external, confirm_content_rights=rights
+        )
+        if kind == "report":
+            steps = [
+                (
+                    "补齐摘要",
+                    summaries.start_chapter_summaries,
+                    dict(
+                        request=summaries.StartSummariesRequest(**consent),
+                        provider_factory=execution.summary_factory,
+                    ),
+                    AnalysisJob,
+                ),
+                (
+                    "更新报告",
+                    reports.start_report,
+                    dict(
+                        request=reports.StartReportRequest(**consent),
+                        settings=execution.settings,
+                        provider_factory=execution.report_factory,
+                    ),
+                    AnalysisJob,
+                ),
+            ]
+        else:
+            shared = dict(
+                settings=execution.settings,
+                embedding_factory=execution.embedding_factory,
+                vector_store_factory=execution.vector_store_factory,
+            )
+            steps = [
+                (
+                    "准备原文",
+                    rag.start_rag_index,
+                    dict(**shared, request=rag.StartRagIndexRequest(**consent)),
+                    AnalysisJob,
+                ),
+                (
+                    "回答问题",
+                    rag.start_rag_question,
+                    dict(
+                        **shared,
+                        generation_factory=execution.generation_factory,
+                        request=rag.StartRagQuestionRequest(
+                            question=question,
+                            confirm_embedding_processing=external,
+                            confirm_generation_processing=external,
+                            confirm_content_rights=rights,
+                        ),
+                    ),
+                    RagQuestion,
+                ),
+            ]
         for phase, start, arguments, model in steps:
-            background = BackgroundTasks()
-            # Session creation, use and closing all happen in the same thread.
-            def dispatch():
-                """每一步独立事务，服务函数负责提交任务与补偿派发失败。"""
+            background = JobTasks(parent_id=workflow_id)
+
+            def dispatch(
+                phase=phase, start=start, arguments=arguments, background=background
+            ):
                 with factory() as db:
                     row = db.get(Workflow, workflow_id)
                     if row is None or row.status != "running":
                         raise ValueError("任务链已停止。")
                     row.phase = phase
                     db.commit()
-                    return start(novel_id=novel_id, db=db, background_tasks=background,
-                                 session_factory=factory, **arguments)
+                    return start(
+                        novel_id=novel_id,
+                        db=db,
+                        background_tasks=background,
+                        session_factory=factory,
+                        **arguments,
+                    )
+
             child = await run_in_threadpool(dispatch)
+            if background.handles:
+                await run_in_threadpool(
+                    _cancel_late_child, factory, workflow_id, model, child.id
+                )
             await background()
-            with factory() as db:
-                saved = db.get(model, child.id)
-                if saved is None or saved.status != "succeeded":
-                    raise ValueError("前一步未成功完成；请检查子任务状态后重试。")
-        with factory() as db:
-            row = db.get(Workflow, workflow_id)
-            if row and row.status == "running":
-                row.status, row.phase = "succeeded", "已完成"
-                db.commit()
-    except Exception:
-        # 供应商异常可能含请求头、正文或密钥，任务链不持久化异常原文。
-        with factory() as db:
-            row = db.get(Workflow, workflow_id)
-            if row:
-                row.status = "failed"
-                row.error_message = "任务链未完成，请检查配置及子任务状态后重试。已完成结果已保留。"
-                db.commit()
+            await _wait_for_child(factory, model, child.id, workflow_id)
+        await run_in_threadpool(
+            _update_workflow,
+            factory,
+            workflow_id,
+            {"status": "succeeded", "phase": "已完成"},
+            ("running",),
+        )
+    except (Exception, asyncio.CancelledError):
+        await run_in_threadpool(
+            _update_workflow,
+            factory,
+            workflow_id,
+            {
+                "status": "failed",
+                "error_message": "任务链未完成，请检查配置及子任务状态后重试。已完成结果已保留。",
+            },
+            ("running",) if claimed else ("queued",),
+        )
+
+
+from backend.app.services.dependencies import (
+    WorkflowExecution as WorkflowExecution,
+    get_workflow_execution as get_workflow_execution,
+)

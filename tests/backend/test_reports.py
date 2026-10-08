@@ -6,7 +6,8 @@ from typing import Callable, Generator, Optional, Type
 from unittest.mock import Mock
 
 import pytest
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks
+from backend.app.services.errors import ServiceError as HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool

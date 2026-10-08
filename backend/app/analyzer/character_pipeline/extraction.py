@@ -30,7 +30,6 @@ from .payloads import (
     MAX_CHARACTER_PROFILE_GROUP_ITEMS,
     MAX_CHARACTER_RELATIONSHIP_EVIDENCE_ITEMS,
     T,
-    logger,
 )
 
 logger = logging.getLogger(__name__)
@@ -388,7 +387,7 @@ def _extract_chapter(
             1,
             MAX_CHARACTER_EXTRACTION_PAGES + 1,
         ):
-            history = [
+            history: list[dict[str, object]] = [
                 {
                     "observation_id": observation.observation_id,
                     "name": _bounded_text(observation.name, 64),
@@ -569,7 +568,7 @@ def _prepare_chapters(
                 should_continue=should_continue,
                 on_generation_step=on_generation_step,
             )
-            if changed
+            if cached is None
             else cached
         )
         prepared_chapter = _PreparedChapter(

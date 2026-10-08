@@ -2,6 +2,7 @@ from __future__ import annotations
 """Tests for the local one-click process supervisor."""
 
 
+import os
 import signal
 import subprocess
 import threading
@@ -159,6 +160,7 @@ def test_terminate_process_closes_log_for_finished_process() -> None:
     process.send_signal.assert_not_called()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows CTRL_BREAK_EVENT")
 def test_terminate_process_requests_graceful_windows_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

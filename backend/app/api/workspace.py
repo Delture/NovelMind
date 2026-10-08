@@ -1,16 +1,19 @@
 """新前端的本机状态、统一任务列表和真实任务链。"""
 
+from backend.app.api.service_route import ServiceRoute
 import logging
 from uuid import uuid4
-from typing import Literal
+from typing import Literal, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, StrictBool, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.sqlite import insert
+from backend.app.services.execution import executor
 
 from backend.app.api.novels import get_novel_or_404
-from backend.app.core.database import get_db, SessionLocal
+from backend.app.core.database import get_db
 from backend.app.services.workflows import run_workflow, WorkflowExecution, get_workflow_execution
 from backend.app.core.time import utc_now
 from backend.app.core.config import Settings, get_settings, privacy_scope
@@ -19,7 +22,7 @@ from backend.app.models.analysis import AnalysisJob
 from backend.app.models.rag import RagQuestion
 from backend.app.models.novel import Novel
 
-router = APIRouter(tags=["workspace"])
+router = APIRouter(route_class=ServiceRoute, tags=["workspace"])
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +72,54 @@ class ReaderState(BaseModel):
     bookmarks: list[Bookmark] = Field(default_factory=list, max_length=500)
 
 
+class ReadingPosition(BaseModel):
+    """小体积位置与偏好更新，不携带或覆盖其他标签页的书签。"""
+    prefs: Preferences
+    position: Position
+
+
+def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState]:
+    """先获取 SQLite 写锁再读 JSON，串行合并不同条目的修改。"""
+    novel = get_novel_or_404(db, novel_id)
+    db.execute(insert(ReadingState).values(novel_id=novel_id, value=ReaderState().model_dump())
+               .on_conflict_do_nothing(index_elements=["novel_id"]))
+    row = db.query(ReadingState).filter(ReadingState.novel_id == novel_id).populate_existing().one()
+    return novel, row
+
+
+@router.put("/novels/{novel_id}/reading/position", response_model=ReadingPosition)
+def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(get_db)):
+    """只合并位置和偏好，保留资料库里的现有书签。"""
+    novel, row = _reading_for_update(db, novel_id)
+    if value.position.chapter > novel.chapter_count:
+        raise HTTPException(422, "阅读位置超出章节范围。")
+    row.value = {**row.value, **value.model_dump()}
+    db.commit()
+    return value
+
+
+@router.put("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", response_model=Bookmark)
+def save_bookmark(novel_id: int, bookmark_id: str, value: Bookmark, db: Session = Depends(get_db)):
+    """在短写事务中新增或替换一条书签，保留其他条目。"""
+    novel, row = _reading_for_update(db, novel_id)
+    if value.id != bookmark_id or value.chapter > novel.chapter_count:
+        raise HTTPException(422, "书签标识或位置无效。")
+    bookmarks = [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]
+    if len(bookmarks) >= 500:
+        raise HTTPException(422, "最多保存500个书签。")
+    row.value = {**row.value, "bookmarks": [*bookmarks, value.model_dump()]}
+    db.commit()
+    return value
+
+
+@router.delete("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", status_code=204)
+def delete_bookmark(novel_id: int, bookmark_id: str, db: Session = Depends(get_db)):
+    """按标识删除单条书签，重复删除仍然成功。"""
+    novel, row = _reading_for_update(db, novel_id)
+    row.value = {**row.value, "bookmarks": [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]}
+    db.commit()
+
+
 @router.get("/workspace/privacy", response_model=Privacy)
 def get_privacy(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
     """读取本机统一授权，缺少记录时默认仅本地阅读。"""
@@ -107,14 +158,14 @@ def save_reading(novel_id: int, value: ReaderState, db: Session = Depends(get_db
 
 def workflow_data(row):
     """把任务链转换为公开字段，问题正文不进入任务列表。"""
-    return {k: getattr(row, k) for k in
-            ("id", "novel_id", "kind", "status", "phase", "error_message", "created_at")}
+    return {**{k: getattr(row, k) for k in
+            ("id", "novel_id", "kind", "status", "phase", "error_message")}, "created_at": row.created_at.isoformat()}
 
 
 @router.get("/workspace/tasks")
 def tasks(db: Session = Depends(get_db)):
     """统一展示全资料库最近任务；后端持续执行，浏览器只轮询记录。"""
-    names = dict(db.query(Novel.id, Novel.filename).all())
+    names = {key: name for key, name in db.query(Novel.id, Novel.filename).all()}
     rows = []
     for job in db.query(AnalysisJob).order_by(AnalysisJob.created_at.desc()).limit(100):
         rows.append(dict(id=job.id, novel_id=job.novel_id, kind=job.job_type,
@@ -127,9 +178,26 @@ def tasks(db: Session = Depends(get_db)):
                          created_at=question.created_at.isoformat()))
     for row in db.query(Workflow).order_by(Workflow.created_at.desc()).limit(30):
         rows.append(workflow_data(row))
-    for row in rows:
-        row["filename"] = names.get(row["novel_id"], "")
+    for task in rows:
+        task["filename"] = names.get(task["novel_id"], "")
     return sorted(rows, key=lambda r: r["created_at"], reverse=True)
+
+
+@router.post("/workspace/tasks/{task_id}/cancel", status_code=204)
+def cancel_task(task_id: str, db: Session = Depends(get_db)):
+    """结束活动状态并取消等待中的 Future；运行中 worker 在下一安全点停止。"""
+    row = next((value for model in (AnalysisJob, RagQuestion, Workflow)
+                if (value := db.get(model, task_id)) is not None), None)
+    if row is None:
+        raise HTTPException(404, "未找到指定任务。")
+    ids = [task_id, *executor.child_ids(task_id)]
+    for model in (AnalysisJob, RagQuestion, Workflow):
+        values: dict[Any, Any] = {"status": "failed", "error_message": "用户已取消任务，已完成结果已保留。"}
+        if model is not Workflow:
+            values["completed_at"] = utc_now()
+        db.query(model).filter(model.id.in_(ids), model.status.in_(("queued", "running"))).update({**values})
+    db.commit()
+    executor.cancel(task_id)
 
 
 class WorkflowRequest(BaseModel):
@@ -142,9 +210,7 @@ class WorkflowRequest(BaseModel):
     confirm_content_rights: StrictBool
 
 
-def get_workflow_session_factory():
-    """提供可替换的会话工厂，测试无需访问开发数据库。"""
-    return SessionLocal
+from backend.app.services.dependencies import get_session_factory as get_workflow_session_factory
 
 
 def fail_interrupted_workflows(factory):
@@ -170,8 +236,14 @@ def start_workflow(novel_id: int, value: WorkflowRequest, background: Background
         raise HTTPException(400, "请先确认外部处理和内容处理权利。")
     if value.kind == "ask" and not value.question.strip():
         raise HTTPException(422, "请输入问题。")
+    job_types = ("chapter_summaries", "report", "characters") if value.kind == "report" else ("rag_index",)
+    conflict = db.query(AnalysisJob.id).filter(AnalysisJob.novel_id == novel_id,
+        AnalysisJob.job_type.in_(job_types), AnalysisJob.status.in_(("queued", "running"))).first()
+    if conflict or (value.kind == "ask" and db.query(RagQuestion.id).filter(
+            RagQuestion.novel_id == novel_id, RagQuestion.status.in_(("queued", "running"))).first()):
+        raise HTTPException(409, "这本书已有相关任务正在运行，请等待完成后再开始任务链。")
     row = Workflow(id=str(uuid4()), novel_id=novel_id, kind=value.kind,
-                   question=value.question.strip(), created_at=utc_now().isoformat())
+                   question=value.question.strip(), created_at=utc_now())
     db.add(row)
     try:
         db.commit()

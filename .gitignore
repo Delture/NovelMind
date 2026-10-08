@@ -22,3 +22,4 @@ data/model_settings.json
 data/runtime/
 logs/
 .idea/
+output/

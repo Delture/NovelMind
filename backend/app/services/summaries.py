@@ -1,19 +1,16 @@
 """章节摘要的估算、启动、结果分页和任务状态接口。
 
-路由层只处理 HTTP 协议和任务调度，不实现摘要算法。标准顺序是：验证小说与
-双重授权、计算范围、创建 queued 任务、提交事务、再交给 BackgroundTasks。
+服务负责校验与任务派发，不实现摘要算法。标准顺序是：验证小说与
+双重授权、计算范围、创建 queued 任务、提交事务、再交给任务派发器。
 先提交保证后台线程能查到任务；派发失败则用独立会话补偿成 failed。数据库
-局部唯一索引处理并发竞态，冲突转换为 HTTP 409。
+局部唯一索引处理并发竞态，冲突以领域错误交还 HTTP 边界。
 """
 
+from backend.app.services.execution import TaskDispatcher
+from backend.app.services.errors import ServiceError
 from backend.app.services.tasks import (
     AnalysisJobResponse,
     ProviderFactory,
-    get_session_factory,
-    get_llm_provider,
-    get_summary_llm_provider,
-    get_llm_provider_factory,
-    get_sync_llm_provider_factory,
     _job_response,
     _close_provider,
     fail_dispatch,
@@ -24,7 +21,7 @@ from datetime import datetime
 from typing import Callable, Optional
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, HTTPException, status
+from starlette import status
 from pydantic import BaseModel, ConfigDict, StrictBool
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -45,7 +42,6 @@ from backend.app.models.novel import Chapter, Novel
 
 
 logger = logging.getLogger(__name__)
-ProviderFactory = Callable[[], LLMProvider]
 
 
 # 请求只承载用户选择；任务状态由服务端决定，不能相信浏览器提交内部状态。
@@ -127,7 +123,7 @@ def _ensure_no_active_report(db: Session, novel_id: int) -> None:
         .first()
     )
     if active_report is not None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_409_CONFLICT,
             detail="报告生成期间不能更新摘要，请等待报告任务完成。",
         )
@@ -167,7 +163,7 @@ def _schedule_summary_job(
     novel_id: int,
     progress_total: int,
     request: StartSummariesRequest,
-    background_tasks: BackgroundTasks,
+    background_tasks: TaskDispatcher,
     db: Session,
     provider: LLMProvider,
     session_factory: Callable[[], Session],
@@ -185,7 +181,7 @@ def _schedule_summary_job(
             active_job.target_chapter_index != target_chapter_index
             or bool(active_job.force_refresh) != request.force
         ):
-            raise HTTPException(
+            raise ServiceError(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     "该小说已有不同范围或刷新模式的摘要任务正在运行，"
@@ -212,7 +208,7 @@ def _schedule_summary_job(
         db.rollback()
         _close_provider(provider)
         if db.get(Novel, novel_id) is None:
-            raise HTTPException(
+            raise ServiceError(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="未找到指定小说。",
             ) from error
@@ -229,13 +225,13 @@ def _schedule_summary_job(
             active_job.target_chapter_index != target_chapter_index
             or bool(active_job.force_refresh) != request.force
         ):
-            raise HTTPException(
+            raise ServiceError(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     "该小说已有不同范围或刷新模式的摘要任务正在运行，"
                     "请等待其完成后重试。"
                 ),
-            )
+            ) from error
         return _job_response(active_job)
     except Exception:
         db.rollback()
@@ -281,16 +277,16 @@ def _schedule_summary_job(
     return response
 
 
-def start_chapter_summaries(request: StartSummariesRequest, background_tasks: BackgroundTasks, novel_id: int, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
+def start_chapter_summaries(request: StartSummariesRequest, background_tasks: TaskDispatcher, novel_id: int, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
     """Start an idempotent background job for all chapter summaries."""
     novel = db.get(Novel, novel_id)
     if novel is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
     if not request.confirm_external_processing:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "生成摘要会把小说正文发送至外部生成模型 API，"
@@ -298,7 +294,7 @@ def start_chapter_summaries(request: StartSummariesRequest, background_tasks: Ba
             ),
         )
     if not request.confirm_content_rights:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "请确认你有权把小说标题和正文提交给外部生成模型 API，"
@@ -325,7 +321,7 @@ def start_chapter_summaries(request: StartSummariesRequest, background_tasks: Ba
     )
 
 
-def start_single_chapter_summary(request: StartSummariesRequest, background_tasks: BackgroundTasks, novel_id: int, chapter_index: int, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
+def start_single_chapter_summary(request: StartSummariesRequest, background_tasks: TaskDispatcher, novel_id: int, chapter_index: int, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
     """Start summary generation for one selected chapter."""
     chapter_exists = (
         db.query(Chapter.id)
@@ -340,12 +336,12 @@ def start_single_chapter_summary(request: StartSummariesRequest, background_task
             detail = "未找到指定小说。"
         else:
             detail = "未找到指定章节。"
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=detail,
         )
     if not request.confirm_external_processing:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "生成摘要会把小说正文发送至外部生成模型 API，"
@@ -353,7 +349,7 @@ def start_single_chapter_summary(request: StartSummariesRequest, background_task
             ),
         )
     if not request.confirm_content_rights:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "请确认你有权把小说标题和正文提交给外部生成模型 API，"
@@ -378,7 +374,7 @@ def list_chapter_summaries(novel_id: int, offset: int, limit: int, db: Session) 
     """Return completed summaries without loading chapter bodies."""
     novel = db.get(Novel, novel_id)
     if novel is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
@@ -461,12 +457,12 @@ def get_chapter_summary(novel_id: int, chapter_index: int, db: Session) -> Chapt
             detail = "未找到指定小说。"
         else:
             detail = "未找到指定章节。"
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=detail,
         )
     if row.summary is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="该章节尚未生成摘要。",
         )
@@ -487,7 +483,7 @@ def get_summary_estimate(novel_id: int, settings: Settings, db: Session) -> Summ
     """Estimate work and disclosure before starting external generation."""
     novel = db.get(Novel, novel_id)
     if novel is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
@@ -589,7 +585,7 @@ def get_summary_estimate(novel_id: int, settings: Settings, db: Session) -> Summ
 def list_analysis_jobs(novel_id: int, job_type: Optional[str], limit: int, db: Session) -> AnalysisJobListResponse:
     """Return recent persisted jobs so a refreshed UI can recover."""
     if db.get(Novel, novel_id) is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
@@ -617,7 +613,7 @@ def get_analysis_job(job_id: str, db: Session) -> AnalysisJobResponse:
     """Return current progress for one analysis job."""
     job = db.get(AnalysisJob, job_id)
     if job is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定分析任务。",
         )

@@ -75,8 +75,8 @@ def send_request(
         "raw_path": path.encode(),
         "query_string": urlencode(query or {}).encode(),
         "headers": [],
-        "client": ("testclient", 50000),
-        "server": ("testserver", 80),
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 80),
     }
 
     asyncio.run(app(scope, receive, send))

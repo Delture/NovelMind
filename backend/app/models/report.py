@@ -5,10 +5,13 @@
 时旧报告继续可读。来源哈希、模型和提示版本共同决定缓存是否仍然有效。
 """
 
+from __future__ import annotations
+from datetime import datetime
+from typing import Any, TYPE_CHECKING
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Column,
     DateTime,
     ForeignKey,
     Integer,
@@ -22,6 +25,10 @@ from sqlalchemy.orm import relationship
 
 from backend.app.core.database import Base
 from backend.app.core.time import utc_now
+
+if TYPE_CHECKING:
+    from backend.app.models.novel import Novel
+
 
 
 class NovelReport(Base):
@@ -69,35 +76,35 @@ class NovelReport(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True)
-    novel_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    novel_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("novels.id", ondelete="CASCADE"),
         nullable=False,
     )
-    source_hash = Column(String(64), nullable=False)
-    report_data = Column(
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_data: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSON),
         default=dict,
         nullable=False,
     )
-    model = Column(String(100), nullable=False)
-    prompt_version = Column(String(50), nullable=False)
-    summary_count = Column(Integer, nullable=False)
-    character_count = Column(Integer, nullable=False)
-    generation_steps = Column(Integer, nullable=False)
-    includes_character_analysis = Column(
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    summary_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    character_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    generation_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    includes_character_analysis: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
         server_default=text("0"),
         nullable=False,
     )
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
 
-    novel = relationship("Novel", back_populates="report")
+    novel: Mapped["Novel"] = relationship("Novel", back_populates="report")

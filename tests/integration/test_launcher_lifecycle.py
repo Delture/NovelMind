@@ -15,6 +15,8 @@ import urllib.request
 import pytest
 
 
+pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows Job Object and console lifecycle")
+
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "scripts" / "novelmind_launcher.py"
 

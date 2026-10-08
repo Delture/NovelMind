@@ -12,7 +12,7 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from backend.app.services.errors import ServiceError as HTTPException
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,7 +24,7 @@ from backend.app.analyzer.llm import (
 )
 from backend.app.analyzer import summaries as summaries_service
 from backend.app.analyzer import jobs as jobs_service
-from backend.app.services import tasks as summaries_api
+from backend.app.services import dependencies as summaries_api
 from backend.app.analyzer.summaries import (
     ChapterSummaryPayload,
     fail_interrupted_jobs,
@@ -35,15 +35,13 @@ from backend.app.services.summaries import (
     StartSummariesRequest,
     get_chapter_summary,
     get_analysis_job,
-    get_llm_provider,
-    get_llm_provider_factory,
-    get_session_factory,
     get_summary_estimate,
     list_analysis_jobs,
     list_chapter_summaries,
     start_chapter_summaries,
     start_single_chapter_summary,
 )
+from backend.app.services.dependencies import get_llm_provider, get_llm_provider_factory, get_session_factory
 from backend.app.core.config import load_settings
 from backend.app.core.database import Base, create_db_engine, get_db
 from backend.app.core.time import utc_now
@@ -1547,7 +1545,7 @@ def test_summary_http_flow_runs_without_live_api(
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport,
-            base_url="http://testserver",
+            base_url="http://127.0.0.1",
         ) as client:
             estimate = await client.get(
                 f"/api/novels/{novel_id}/summaries/estimate"

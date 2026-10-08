@@ -10,7 +10,7 @@ from typing import Any, Generator
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.orm import Session, DeclarativeBase, sessionmaker
 
 from backend.app.core.config import settings
 
@@ -26,6 +26,7 @@ def create_db_engine(database_url: str, **kwargs: Any) -> Engine:
         connect_args = dict(kwargs.pop("connect_args", {}))
         connect_args.setdefault("check_same_thread", False)
         kwargs["connect_args"] = connect_args
+        busy_timeout_ms = round(connect_args.get("timeout", 5.0) * 1000)
 
     db_engine = create_engine(database_url, **kwargs)
 
@@ -43,6 +44,8 @@ def create_db_engine(database_url: str, **kwargs: Any) -> Engine:
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
+                cursor.execute("PRAGMA journal_mode=WAL")
             finally:
                 cursor.close()
 
@@ -56,7 +59,8 @@ SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
 )
-Base = declarative_base()
+class Base(DeclarativeBase):
+    """所有模型共享的声明式类型与 metadata 注册入口。"""
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -86,5 +90,5 @@ def init_db(db_engine: Engine = engine) -> None:
     from backend.app.models import workspace  # noqa: F401
     from backend.app.core.migrations import run_migrations
 
-    Base.metadata.create_all(bind=db_engine, tables=[novel.Novel.__table__, novel.Chapter.__table__])
+    Base.metadata.create_all(bind=db_engine, tables=[Base.metadata.tables["novels"], Base.metadata.tables["chapters"]])
     run_migrations(db_engine)

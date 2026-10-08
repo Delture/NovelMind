@@ -11,12 +11,12 @@ import json
 import logging
 import random as random_module
 import time
-from typing import Awaitable, Callable, Dict, Optional, Type
+from typing import Any, Awaitable, Callable, Dict, Optional, Type
 
 import httpx
 import openai
 from openai import AsyncOpenAI, OpenAI
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from backend.app.analyzer.llm import (
     JsonGenerationResult,
@@ -151,7 +151,7 @@ class DeepSeekProvider:
             write=60.0,
             pool=10.0,
         )
-        client_options: Dict[str, object] = {
+        client_options: Dict[str, Any] = {
             "api_key": settings.deepseek_api_key,
             "base_url": settings.deepseek_base_url,
             "timeout": timeout,
@@ -233,7 +233,7 @@ class DeepSeekProvider:
         ``messages`` 是当前对话（可能含模式纠错反馈）；thinking/reasoning 控制供应商
         选项；``before_attempt`` 在每次真正发网前检查任务是否仍有效。
         """
-        request_options = {
+        request_options: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "stream": False,
@@ -423,7 +423,7 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
                     ),
                 ),
             )
-        self._client = AsyncOpenAI(
+        self._async_client = AsyncOpenAI(
             api_key=settings.deepseek_api_key,
             base_url=settings.deepseek_base_url,
             timeout=timeout,
@@ -497,7 +497,7 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
         参数与同步版本相同；每次 await 发网前执行取消回调。返回 SDK completion，
         认证/余额/限流/服务故障转换为项目统一异常。
         """
-        request_options = {
+        request_options: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
             "stream": False,
@@ -518,7 +518,7 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
                 before_attempt()
             try:
                 self._suppress_sensitive_sdk_debug_logs()
-                response = await self._client.chat.completions.create(
+                response = await self._async_client.chat.completions.create(
                     **request_options
                 )
             except openai.APIConnectionError:
@@ -563,7 +563,7 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
         if self._closed:
             return
         self._closed = True
-        await self._client.close()
+        await self._async_client.close()
 
     def close(self) -> None:
         """Allow unused instances to be released from synchronous routes."""

@@ -808,7 +808,7 @@ def _infer_relationships(
                 validated.append(relation)
                 continue
             existing = validated[existing_index]
-            evidence = list(
+            combined_evidence = list(
                 dict.fromkeys(
                     [
                         *existing.evidence_chapter_indices,
@@ -817,6 +817,6 @@ def _infer_relationships(
                 )
             )
             validated[existing_index] = existing.model_copy(
-                update={"evidence_chapter_indices": evidence}
+                update={"evidence_chapter_indices": combined_evidence}
             )
     return validated

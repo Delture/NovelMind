@@ -316,3 +316,27 @@ def test_official_default_https_port_is_equivalent(role):
         settings = load_settings({"EMBEDDING_BASE_URL": "https://API.SILICONFLOW.CN:443/v1/", "EMBEDDING_API_KEY": "fake-only"})
         assert settings.embedding_base_url == "https://api.siliconflow.cn/v1"
         assert settings.embedding_api_key == "fake-only"
+
+
+def test_model_settings_temporary_file_is_private_before_replace(tmp_path, monkeypatch):
+    """在原子替换前检查真实临时文件权限，使用假密钥。"""
+    import os
+    import stat
+    from pathlib import Path
+    from backend.app.core import config
+    if os.name == "nt":
+        pytest.skip("POSIX mode verification")
+    captured = []
+    original = os.replace
+    def replace(source, destination):
+        captured.append(stat.S_IMODE(Path(source).stat().st_mode))
+        return original(source, destination)
+    monkeypatch.setattr(config.os, "replace", replace)
+    mask = os.umask(0o022)
+    try:
+        path = tmp_path / "settings.json"
+        config._atomic_write_runtime_payload(path, {"DEEPSEEK_API_KEY": "test-only"})
+        assert captured == [0o600]
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    finally:
+        os.umask(mask)

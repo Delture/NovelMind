@@ -6,7 +6,7 @@ from typing import Callable
 from unittest.mock import Mock
 
 import pytest
-from fastapi import HTTPException
+from backend.app.services.errors import ServiceError as HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 

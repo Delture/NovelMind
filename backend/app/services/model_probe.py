@@ -1,12 +1,13 @@
 """用户主动请求的模型目录探测；仅 GET /models，不保存配置或发送小说。"""
 
+from backend.app.services.errors import ServiceError
 import asyncio
 import json
 import time
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import HTTPException
+
 
 from backend.app.core.config import (
     ConfigurationError, normalize_provider_url, service_destination,
@@ -47,11 +48,11 @@ MESSAGES = {
 def select_probe_credentials(payload, settings):
     """留空仅可复用同角色、同协议、同规范地址凭据；构造客户端前完成校验。"""
     if not payload.confirm_connection:
-        raise HTTPException(400, "请明确确认连接所填外部服务读取模型目录。")
+        raise ServiceError(400, "请明确确认连接所填外部服务读取模型目录。")
     try:
         base_url = normalize_provider_url(payload.role, payload.provider, payload.base_url)
     except (ConfigurationError, ValueError):
-        raise HTTPException(400, "服务地址或供应商无效，请检查设置。") from None
+        raise ServiceError(400, "服务地址或供应商无效，请检查设置。") from None
     if payload.role == "generation":
         old_provider, old_url, old_key = settings.generation_provider, settings.deepseek_base_url, settings.deepseek_api_key
     else:
@@ -59,12 +60,12 @@ def select_probe_credentials(payload, settings):
     key = (payload.api_key or "").strip()
     if not key and payload.use_saved_key:
         if service_destination(payload.provider, base_url) != service_destination(old_provider, old_url):
-            raise HTTPException(400, "新的服务地址需要输入对应的新密钥；不会发送原地址密钥。")
+            raise ServiceError(400, "新的服务地址需要输入对应的新密钥；不会发送原地址密钥。")
         key = old_key or ""
     if not key:
-        raise HTTPException(400, "请输入密钥，或使用同地址已保存的密钥。")
+        raise ServiceError(400, "请输入密钥，或使用同地址已保存的密钥。")
     if any(ord(char) < 32 or ord(char) > 126 for char in key):
-        raise HTTPException(400, "密钥格式无效。")
+        raise ServiceError(400, "密钥格式无效。")
     return base_url, key
 
 

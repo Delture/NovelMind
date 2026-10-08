@@ -125,15 +125,21 @@ export function createPages({
     if (!chapterCache.has(id)) chapterCache.set(id, await allPages(base(id) + '/chapters'));
     return chapterCache.get(id);
   }
-  function saveReading(id, value) {
+  function queueReading(id, write) {
     const previous = readingWrites.get(id) || Promise.resolve();
-    const next = previous.catch(() => {}).then(() => api(base(id) + '/reading', {
-      method: 'PUT',
-      json: value,
-      keepalive: true
-    }));
+    const next = previous.catch(() => {}).then(write);
     readingWrites.set(id, next);
     return next;
+  }
+  function saveReading(id, value, {keepalive = false} = {}) {
+    const write = () => api(base(id) + '/reading/position', {method:'PUT', json:value, keepalive});
+    // pagehide must start the request immediately, before the document is discarded.
+    return keepalive ? write() : queueReading(id, write);
+  }
+  function saveBookmark(id, bookmark, remove = false) {
+    return queueReading(id, () => api(base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id), {
+      method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : {json:bookmark})
+    }));
   }
   async function reader(fresh, query) {
     const book = state.novel,
@@ -171,7 +177,8 @@ export function createPages({
       appearanceControls,
       createSearch: options => createReaderSearch({...options, modal,
         request:(q, offset, signal) => api(base(id) + '/search?' + new URLSearchParams({q,offset,limit:20}), {signal})}),
-      save: value => saveReading(id, value)
+      save: (value, options) => saveReading(id, value, options),
+      saveBookmark: (bookmark, remove) => saveBookmark(id, bookmark, remove)
     });
     readerCleanup = () => {cleanup();loader.dispose();};
   }

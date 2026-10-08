@@ -25,7 +25,7 @@ from backend.app.core.config import get_settings
 from backend.app.core.database import create_db_engine, init_db
 from backend.app.models.novel import Novel, Chapter
 from backend.app.models.workspace import Workflow
-from backend.app.services import tasks, rag, workflows
+from backend.app.services import tasks, rag, workflows, dependencies
 from tests.integration.workflow_fakes import ProviderAudit
 
 settings = get_settings()
@@ -39,14 +39,14 @@ with factory() as db:
     db.add(novel)
     db.flush()
     db.add(Workflow(id="independent-workflow", novel_id=novel.id, kind=kind,
-                    question="主角收到什么？", created_at="2026-09-27T00:00:00"))
+                    question="主角收到什么？", created_at=__import__("datetime").datetime(2026, 9, 27)))
     db.commit()
 audit = ProviderAudit(factory)
 audit.release.set()
-with patch.object(tasks, "AsyncDeepSeekProvider", lambda s: audit.generation("summary", s)), \
-     patch.object(tasks, "DeepSeekProvider", lambda s: audit.generation("report", s)), \
-     patch.object(rag, "DeepSeekProvider", lambda s: audit.generation("answer", s)), \
-     patch.object(rag, "OpenAIEmbeddingProvider", audit.embedding):
+with patch.object(dependencies, "AsyncDeepSeekProvider", lambda s: audit.generation("summary", s)), \
+     patch.object(dependencies, "get_llm_provider", lambda s: audit.generation("report", s)), \
+     patch.object(dependencies, "DeepSeekProvider", lambda s: audit.generation("answer", s)), \
+     patch.object(dependencies, "OpenAIEmbeddingProvider", audit.embedding):
     execution = workflows.get_workflow_execution(settings,
         tasks.get_llm_provider_factory(settings), tasks.get_sync_llm_provider_factory(settings),
         rag.get_embedding_factory(settings), rag.get_generation_factory(settings), rag.get_vector_store_factory(settings))

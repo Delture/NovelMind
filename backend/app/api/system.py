@@ -5,6 +5,7 @@
 API 端点并诱导程序发送密钥。
 """
 
+from backend.app.api.service_route import ServiceRoute
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -23,7 +24,7 @@ from backend.app.core.config import (
 )
 
 
-router = APIRouter(prefix="/system", tags=["system"])
+router = APIRouter(route_class=ServiceRoute, prefix="/system", tags=["system"])
 
 
 # 状态模型与可编辑模型分开，避免为了编辑方便把 API Key 加入公开响应。
@@ -190,14 +191,6 @@ def _model_settings_response(
     )
 
 
-def _require_local_request(request: Request) -> None:
-    """拒绝非本机来源的配置变更请求，形成最小纵深防护。"""
-    host = request.client.host if request.client is not None else ""
-    if host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="模型配置只能从运行 NovelMind 的本机修改。",
-        )
 
 
 @router.get("/status", response_model=SystemStatusResponse)
@@ -249,7 +242,6 @@ def put_model_settings(
     request: Request,
 ) -> ModelSettingsResponse:
     """Validate and atomically save settings for subsequent model jobs."""
-    _require_local_request(request)
     current = get_settings()
     generation_api_key = (
         payload.generation.api_key.strip()
@@ -337,7 +329,6 @@ def put_model_settings(
 @router.delete("/model-settings", response_model=ModelSettingsResponse)
 def reset_model_settings(request: Request) -> ModelSettingsResponse:
     """Discard frontend overrides and restore environment configuration."""
-    _require_local_request(request)
     try:
         clear_runtime_model_settings()
         restored = get_settings()
@@ -378,5 +369,4 @@ async def post_model_probe(payload: ModelProbeRequest, request: Request,
                            transport=Depends(get_model_probe_transport)):
     """本机主动连接草稿目的地读取目录；不发送正文或生成请求。"""
     from backend.app.services.model_probe import probe_models
-    _require_local_request(request)
     return await probe_models(payload, settings, transport)

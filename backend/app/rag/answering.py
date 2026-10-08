@@ -9,9 +9,8 @@ import hashlib
 import json
 import logging
 import math
-import time
 from collections.abc import Callable
-from typing import Annotated, Optional
+from typing import Annotated
 
 from pydantic import (
     BaseModel,
@@ -25,13 +24,9 @@ from pydantic import (
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from backend.app.analyzer.jobs import (
-    ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS,
-    ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS,
-    is_sqlite_lock_error,
-)
 from backend.app.analyzer.llm import LLMProvider, LLMProviderError
 from backend.app.analyzer.prompting import novelmind_system_prompt
+from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.novel import Chapter, Novel
 from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
@@ -182,17 +177,15 @@ def _ensure_question_running(
 def _claim_question(db: Session, question_id: str) -> bool:
     """有界重试地把指定问题从 queued 原子更新为 running。
 
-    返回 True 表示当前 worker 获得执行权；False 表示任务不存在、已被领取或锁重试
-    耗尽。条件 UPDATE 避免重复派发造成双重外部调用。
+    返回 True 表示当前 worker 获得执行权；False 表示任务不存在或已被领取。
+    锁重试耗尽则上抛，由 worker 写失败终态；条件 UPDATE 避免重复外部调用。
     """
-    for attempt in range(1, ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS + 1):
+
+    def write_status():
         try:
             claimed = (
                 db.query(RagQuestion)
-                .filter(
-                    RagQuestion.id == question_id,
-                    RagQuestion.status == "queued",
-                )
+                .filter(RagQuestion.id == question_id, RagQuestion.status == "queued")
                 .update(
                     {
                         RagQuestion.status: "running",
@@ -205,18 +198,11 @@ def _claim_question(db: Session, question_id: str) -> bool:
             )
             db.commit()
             return claimed == 1
-        except OperationalError as error:
+        except OperationalError:
             db.rollback()
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                raise
-            time.sleep(
-                ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
-                * (2 ** (attempt - 1))
-            )
-    return False
+            raise
+
+    return retry_sqlite(write_status)
 
 
 def mark_rag_question_failed_with_sqlite_lock_retry(
@@ -232,53 +218,34 @@ def mark_rag_question_failed_with_sqlite_lock_retry(
     答案；``error_message`` 必须是不含正文/密钥的安全文字。返回 True 表示问题已
     离开预期状态，False 表示锁重试或数据库故障导致无法确认。
     """
-    for attempt in range(1, ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS + 1):
-        try:
-            with session_factory() as db:
-                updated = (
-                    db.query(RagQuestion)
-                    .filter(
-                        RagQuestion.id == question_id,
-                        RagQuestion.status == expected_status,
-                    )
-                    .update(
-                        {
-                            RagQuestion.status: "failed",
-                            RagQuestion.error_message: error_message,
-                            RagQuestion.completed_at: utc_now(),
-                        },
-                        synchronize_session=False,
-                    )
+
+    def write_status():
+        with session_factory() as db:
+            updated = (
+                db.query(RagQuestion)
+                .filter(
+                    RagQuestion.id == question_id, RagQuestion.status == expected_status
                 )
-                db.commit()
-                if updated == 1:
-                    return True
-                question = db.get(RagQuestion, question_id)
-                return (
-                    question is None
-                    or question.status != expected_status
+                .update(
+                    {
+                        RagQuestion.status: "failed",
+                        RagQuestion.error_message: error_message,
+                        RagQuestion.completed_at: utc_now(),
+                    },
+                    synchronize_session=False,
                 )
-        except OperationalError as error:
-            if (
-                not is_sqlite_lock_error(error)
-                or attempt == ANALYSIS_JOB_SQLITE_MAX_ATTEMPTS
-            ):
-                logger.error(
-                    "Could not terminalize RAG question %s.",
-                    question_id,
-                )
-                return False
-            time.sleep(
-                ANALYSIS_JOB_SQLITE_RETRY_BASE_SECONDS
-                * (2 ** (attempt - 1))
             )
-        except Exception:
-            logger.exception(
-                "Could not terminalize RAG question %s.",
-                question_id,
-            )
-            return False
-    return False
+            db.commit()
+            if updated == 1:
+                return True
+            question = db.get(RagQuestion, question_id)
+            return question is None or question.status != expected_status
+
+    try:
+        return retry_sqlite(write_status)
+    except Exception:
+        logger.error("Could not terminalize RAG question %s.", question_id)
+        return False
 
 
 def _validate_hit_metadata(

@@ -5,13 +5,9 @@
 索引可用性不仅检查 SQLite 指针，还要验证向量集合真实存在且数量匹配。
 """
 
+from backend.app.services.execution import TaskDispatcher
+from backend.app.services.errors import ServiceError
 from backend.app.services.tasks import (
-    ProviderFactory,
-    get_session_factory,
-    get_llm_provider,
-    get_summary_llm_provider,
-    get_llm_provider_factory,
-    get_sync_llm_provider_factory,
     fail_dispatch,
 )
 
@@ -22,21 +18,19 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, HTTPException, status
+from starlette import status
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.analyzer.deepseek import MAX_JSON_GENERATION_ATTEMPTS, DeepSeekProvider
+from backend.app.analyzer.deepseek import MAX_JSON_GENERATION_ATTEMPTS
 from backend.app.analyzer.llm import LLMProvider
 from backend.app.core.config import (
     EMBEDDING_PROVIDERS,
     GENERATION_PROVIDERS,
     Settings,
-    get_settings,
 )
-from backend.app.core.database import SessionLocal
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Chapter, Novel
 from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
@@ -50,10 +44,8 @@ from backend.app.rag.chunking import CHUNK_FORMAT_VERSION, build_rag_chunks, rag
 from backend.app.rag.embedding import (
     EmbeddingProvider,
     MAX_EMBEDDING_BATCH_SIZE,
-    OpenAIEmbeddingProvider,
 )
 from backend.app.rag.indexer import VectorStore, run_rag_index_job
-from backend.app.rag.vector_store import LocalVectorStore
 
 
 logger = logging.getLogger(__name__)
@@ -207,37 +199,19 @@ class RagQuestionListResponse(BaseModel):
     limit: int
 
 
-def get_session_factory() -> Callable[[], Session]:
-    """返回后台 RAG worker 创建独立数据库会话所用的全局工厂。"""
-    return SessionLocal
 
 
-def get_embedding_factory(
-    settings: Settings = Depends(get_settings),
-) -> EmbeddingFactory:
-    """Defer embedding-client construction until consent succeeds."""
-    return lambda: OpenAIEmbeddingProvider(settings)
 
 
-def get_generation_factory(
-    settings: Settings = Depends(get_settings),
-) -> LLMFactory:
-    """Defer DeepSeek-client construction until consent succeeds."""
-    return lambda: DeepSeekProvider(settings)
 
 
-def get_vector_store_factory(
-    settings: Settings = Depends(get_settings),
-) -> VectorStoreFactory:
-    """Defer local vector-store initialization until RAG needs it."""
-    return lambda: LocalVectorStore(settings.vector_store_path)
 
 
 def _get_novel(db: Session, novel_id: int) -> Novel:
     """按主键读取小说；不存在统一抛 HTTP 404。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
@@ -385,7 +359,7 @@ def _build_estimate(
         vector_store_factory,
     )
     reusable = 0
-    if not force and current_compatible and vector_collection_valid:
+    if not force and current is not None and current_compatible and vector_collection_valid:
         new_ids = {chunk.chunk_id for chunk in chunks}
         reusable = (
             db.query(func.count(RagChunkRecord.id))
@@ -406,6 +380,7 @@ def _build_estimate(
     index_current = bool(
         not force
         and current_compatible
+        and current is not None
         and current.source_hash == source_hash
         and current.chunk_count == len(chunks)
         and vector_collection_valid
@@ -504,7 +479,7 @@ def _schedule_index(
     novel_id: int,
     chunk_count: int,
     request: StartRagIndexRequest,
-    background_tasks: BackgroundTasks,
+    background_tasks: TaskDispatcher,
     db: Session,
     embedding_provider: EmbeddingProvider,
     vector_store: VectorStore,
@@ -519,7 +494,7 @@ def _schedule_index(
         active = _active_index_job(db, novel_id)
         if active is not None:
             if bool(active.force_refresh) != bool(request.force):
-                raise HTTPException(
+                raise ServiceError(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "该小说已有不同刷新模式的 RAG 索引任务正在运行。"
@@ -544,7 +519,7 @@ def _schedule_index(
         except IntegrityError as error:
             db.rollback()
             if db.get(Novel, novel_id) is None:
-                raise HTTPException(
+                raise ServiceError(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="未找到指定小说。",
                 ) from error
@@ -552,7 +527,7 @@ def _schedule_index(
             if active is None:
                 raise
             if bool(active.force_refresh) != bool(request.force):
-                raise HTTPException(
+                raise ServiceError(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="该小说已有不同刷新模式的 RAG 索引任务正在运行。",
                 ) from error
@@ -612,7 +587,7 @@ def _question_response(row: RagQuestion) -> RagQuestionResponse:
             for item in list(row.evidence or [])
         ]
     except ValidationError as error:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="本地 RAG 问答证据记录损坏，请删除并重新导入小说。",
         ) from error
@@ -621,7 +596,7 @@ def _question_response(row: RagQuestion) -> RagQuestionResponse:
     if len(set(citation_ids)) != len(citation_ids) or not (
         set(citation_ids) <= set(by_id)
     ):
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="本地 RAG 问答引用记录损坏，请删除并重新导入小说。",
         )
@@ -689,6 +664,7 @@ def get_rag_index_status(novel_id: int, db: Session, settings: Settings, vector_
     )
     is_current = bool(
         current is not None
+        and current is not None
         and current.source_hash == source_hash
         and current.embedding_provider == settings.embedding_provider
         and current.embedding_model == settings.embedding_model
@@ -727,12 +703,12 @@ def get_rag_index_status(novel_id: int, db: Session, settings: Settings, vector_
     )
 
 
-def start_rag_index(request: StartRagIndexRequest, background_tasks: BackgroundTasks, novel_id: int, db: Session, settings: Settings, embedding_factory: EmbeddingFactory, vector_store_factory: VectorStoreFactory, session_factory: Callable[[], Session]) -> RagJobResponse:
+def start_rag_index(request: StartRagIndexRequest, background_tasks: TaskDispatcher, novel_id: int, db: Session, settings: Settings, embedding_factory: EmbeddingFactory, vector_store_factory: VectorStoreFactory, session_factory: Callable[[], Session]) -> RagJobResponse:
     """Start external embedding only after every required confirmation."""
     _get_novel(db, novel_id)
     if not request.confirm_external_processing:
         embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "必须明确同意将章节标题和原文片段发送至"
@@ -740,26 +716,26 @@ def start_rag_index(request: StartRagIndexRequest, background_tasks: BackgroundT
             ),
         )
     if not request.confirm_content_rights:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="必须确认你有权将该小说内容交给外部服务处理。",
         )
     if request.force and not request.confirm_force_refresh:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="强制重建前必须再次确认会重新发送全部原文片段。",
         )
     active = _active_index_job(db, novel_id)
     if active is not None:
         if bool(active.force_refresh) != bool(request.force):
-            raise HTTPException(
+            raise ServiceError(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="该小说已有不同刷新模式的 RAG 索引任务正在运行。",
             )
         return _rag_job_response(active)
     if not settings.embedding_configured:
         embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 f"尚未配置 {embedding_label} embedding API，请设置 "
@@ -773,7 +749,7 @@ def start_rag_index(request: StartRagIndexRequest, background_tasks: BackgroundT
         settings=settings,
     )
     if estimate.chunk_count == 0:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="小说没有可建立 RAG 索引的正文。",
         )
@@ -782,7 +758,7 @@ def start_rag_index(request: StartRagIndexRequest, background_tasks: BackgroundT
         vector_store = vector_store_factory()
     except Exception as error:
         _close_unused(embedding_provider, "embedding provider")
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
                 "本地向量库初始化失败，请检查 VECTOR_STORE_PATH。"
@@ -819,12 +795,12 @@ def list_rag_index_jobs(novel_id: int, limit: int, db: Session) -> list[RagJobRe
     return [_rag_job_response(job) for job in jobs]
 
 
-def start_rag_question(request: StartRagQuestionRequest, background_tasks: BackgroundTasks, novel_id: int, db: Session, settings: Settings, embedding_factory: EmbeddingFactory, generation_factory: LLMFactory, vector_store_factory: VectorStoreFactory, session_factory: Callable[[], Session]) -> RagQuestionResponse:
+def start_rag_question(request: StartRagQuestionRequest, background_tasks: TaskDispatcher, novel_id: int, db: Session, settings: Settings, embedding_factory: EmbeddingFactory, generation_factory: LLMFactory, vector_store_factory: VectorStoreFactory, session_factory: Callable[[], Session]) -> RagQuestionResponse:
     """Create a recoverable RAG answer task after three confirmations."""
     _get_novel(db, novel_id)
     if not request.confirm_embedding_processing:
         embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"必须明确同意将问题发送至 {embedding_label}"
@@ -833,7 +809,7 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
         )
     if not request.confirm_generation_processing:
         generation_label = GENERATION_PROVIDERS[settings.generation_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "必须明确同意将问题和检索片段发送至"
@@ -841,7 +817,7 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
             ),
         )
     if not request.confirm_content_rights:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="必须确认你有权将相关小说内容交给外部服务处理。",
         )
@@ -851,20 +827,20 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
             active.question != request.question
             or active.top_k != request.top_k
         ):
-            raise HTTPException(
+            raise ServiceError(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="该小说已有另一个 RAG 问答任务正在运行。",
             )
         return _question_response(active)
     if not settings.embedding_configured:
         embedding_label = EMBEDDING_PROVIDERS[settings.embedding_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"尚未配置 {embedding_label} embedding API。",
         )
     if not settings.deepseek_configured:
         generation_label = GENERATION_PROVIDERS[settings.generation_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"尚未配置 {generation_label} API 密钥。",
         )
@@ -883,7 +859,7 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
         .one_or_none()
     )
     if index is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_409_CONFLICT,
             detail="RAG 索引尚未建立或已过期，请先完成索引。",
         )
@@ -899,7 +875,7 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
     except Exception as error:
         _close_unused(embedding_provider, "embedding provider")
         _close_unused(llm_provider, "generation provider")
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
                 "本地向量库初始化失败，请检查 VECTOR_STORE_PATH。"
@@ -912,7 +888,7 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
     if isinstance(vector_count, int) and vector_count != index.chunk_count:
         _close_unused(embedding_provider, "embedding provider")
         _close_unused(llm_provider, "generation provider")
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_409_CONFLICT,
             detail="本地向量索引缺失或不完整，请先重建 RAG 索引。",
         )
@@ -943,7 +919,7 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: Backg
                 active.question != request.question
                 or active.top_k != request.top_k
             ):
-                raise HTTPException(
+                raise ServiceError(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="该小说已有另一个 RAG 问答任务正在运行。",
                 ) from error
@@ -1036,8 +1012,10 @@ def get_rag_question(novel_id: int, question_id: str, db: Session) -> RagQuestio
         .one_or_none()
     )
     if row is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定 RAG 问答任务。",
         )
     return _question_response(row)
+
+from backend.app.services.dependencies import get_session_factory as get_session_factory, get_embedding_factory as get_embedding_factory, get_generation_factory as get_generation_factory, get_vector_store_factory as get_vector_store_factory

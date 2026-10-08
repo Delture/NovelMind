@@ -4,15 +4,12 @@
 披露和后台执行共享同一规则。成功才原子替换旧报告，刷新失败不清空已有结果。
 """
 
+from backend.app.services.execution import TaskDispatcher
+from backend.app.services.errors import ServiceError
 from backend.app.services.tasks import _close_provider, fail_dispatch
 from backend.app.services.tasks import (
     AnalysisJobResponse,
     ProviderFactory,
-    get_session_factory,
-    get_llm_provider,
-    get_summary_llm_provider,
-    get_llm_provider_factory,
-    get_sync_llm_provider_factory,
     _job_response,
 )
 
@@ -21,7 +18,7 @@ from datetime import datetime
 from typing import Callable, Optional
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, HTTPException, status
+from starlette import status
 from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -30,6 +27,7 @@ from backend.app.analyzer.deepseek import MAX_JSON_GENERATION_ATTEMPTS
 from backend.app.analyzer.llm import LLMProvider
 from backend.app.analyzer.reports import (
     NovelReportPayload,
+    PreparedReportSource,
     ReportSourceError,
     estimate_report_generation_steps,
     prepare_report_source,
@@ -103,11 +101,11 @@ def _source_or_http_error(
     db: Session,
     novel_id: int,
     model: str,
-) -> object:
+) -> PreparedReportSource:
     """准备已验证报告输入，把 ``ReportSourceError`` 翻译成 HTTP 409。
 
     ``db`` 和 ``novel_id`` 定位派生数据，``model`` 参与缓存来源判断。返回实际为
-    PreparedReportSource；类型写 object 是为保持依赖边界，调用者立即读取其字段。
+    PreparedReportSource，供估算与缓存校验共享。
     """
     try:
         return prepare_report_source(
@@ -122,7 +120,7 @@ def _source_or_http_error(
             if message in {"未找到指定小说。"}
             else status.HTTP_409_CONFLICT
         )
-        raise HTTPException(status_code=code, detail=message) from None
+        raise ServiceError(status_code=code, detail=message) from None
 
 
 def _active_report_job(
@@ -158,7 +156,7 @@ def _schedule_report_job(
     novel_id: int,
     progress_total: int,
     request: StartReportRequest,
-    background_tasks: BackgroundTasks,
+    background_tasks: TaskDispatcher,
     db: Session,
     provider: LLMProvider,
     session_factory: Callable[[], Session],
@@ -174,7 +172,7 @@ def _schedule_report_job(
         active = _active_report_job(db, novel_id)
         if active is not None:
             if bool(active.force_refresh) != bool(request.force):
-                raise HTTPException(
+                raise ServiceError(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "该小说已有不同刷新模式的报告任务正在运行，"
@@ -202,13 +200,13 @@ def _schedule_report_job(
             if active is None:
                 raise
             if bool(active.force_refresh) != bool(request.force):
-                raise HTTPException(
+                raise ServiceError(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
                         "该小说已有不同刷新模式的报告任务正在运行，"
                         "请等待其完成后重试。"
                     ),
-                )
+                ) from None
             return _job_response(active)
         try:
             db.refresh(job)
@@ -345,16 +343,16 @@ def get_report_estimate(novel_id: int, settings: Settings, db: Session) -> Repor
     )
 
 
-def start_report(request: StartReportRequest, background_tasks: BackgroundTasks, novel_id: int, settings: Settings, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
+def start_report(request: StartReportRequest, background_tasks: TaskDispatcher, novel_id: int, settings: Settings, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
     """Start one external report job after all explicit consent gates."""
     if db.get(Novel, novel_id) is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
     if not request.confirm_external_processing:
         provider_label = GENERATION_PROVIDERS[settings.generation_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "报告会把章节标题、派生摘要及可选人物分析数据发送至 "
@@ -363,7 +361,7 @@ def start_report(request: StartReportRequest, background_tasks: BackgroundTasks,
         )
     if not request.confirm_content_rights:
         provider_label = GENERATION_PROVIDERS[settings.generation_provider]
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "请确认你有权把这些小说派生数据提交给 "
@@ -372,14 +370,14 @@ def start_report(request: StartReportRequest, background_tasks: BackgroundTasks,
             ),
         )
     if request.force and not request.confirm_force_refresh:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="强制刷新会重复产生 API 调用，请再次明确确认。",
         )
     active = _active_report_job(db, novel_id)
     if active is not None:
         if bool(active.force_refresh) != bool(request.force):
-            raise HTTPException(
+            raise ServiceError(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     "该小说已有不同刷新模式的报告任务正在运行，"
@@ -398,7 +396,7 @@ def start_report(request: StartReportRequest, background_tasks: BackgroundTasks,
         .first()
     )
     if changing_sources is not None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_409_CONFLICT,
             detail="摘要或人物分析正在更新，请等待其完成后再生成报告。",
         )
@@ -427,7 +425,7 @@ def start_report(request: StartReportRequest, background_tasks: BackgroundTasks,
 def get_report(novel_id: int, settings: Settings, db: Session) -> ReportResponse:
     """Return the saved report even when its inputs later become stale."""
     if db.get(Novel, novel_id) is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="未找到指定小说。",
         )
@@ -437,7 +435,7 @@ def get_report(novel_id: int, settings: Settings, db: Session) -> ReportResponse
         .one_or_none()
     )
     if saved is None:
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="该小说尚未生成分析报告。",
         )
@@ -448,7 +446,7 @@ def get_report(novel_id: int, settings: Settings, db: Session) -> ReportResponse
             "Stored report %s failed schema validation.",
             saved.id,
         )
-        raise HTTPException(
+        raise ServiceError(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="已保存的报告格式无效，请重新生成。",
         ) from None

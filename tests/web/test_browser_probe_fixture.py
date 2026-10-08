@@ -13,7 +13,7 @@ import httpx
 from fastapi.testclient import TestClient
 from tests.web.web_browser_server import app
 
-with TestClient(app) as client:
+with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as client:
     original = client.get("/api/system/model-settings").json()
     assert original["generation"]["api_key_set"] is True
     assert client.post("/api/qa/probe-records").json()["items"] == []

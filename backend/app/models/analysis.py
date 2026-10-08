@@ -5,12 +5,15 @@
 生成结果与任务状态分表：任务失败不会覆盖上一份仍然可用的摘要。
 """
 
+from __future__ import annotations
+from datetime import datetime
+from typing import TYPE_CHECKING
+from sqlalchemy.orm import Mapped, mapped_column
 from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
-    Column,
     DateTime,
     ForeignKey,
     Index,
@@ -32,6 +35,11 @@ def _new_uuid() -> str:
     """生成与数据库无关的字符串 UUID，避免依赖某种数据库 UUID 类型。"""
     return str(uuid4())
 
+if TYPE_CHECKING:
+    from backend.app.models.novel import Chapter
+    from backend.app.models.novel import Novel
+
+
 
 class ChapterSummary(Base):
     """某章当前有效的结构化摘要；一章最多保留一份当前快照。
@@ -48,32 +56,32 @@ class ChapterSummary(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True, index=True)
-    chapter_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    chapter_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("chapters.id", ondelete="CASCADE"),
         nullable=False,
     )
-    summary = Column(Text, nullable=False)
-    key_events = Column(
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    key_events: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(JSON),
         default=list,
         nullable=False,
     )
-    plot_progression = Column(Text, nullable=False)
-    cliffhanger = Column(Text, nullable=True)
-    model = Column(String(100), nullable=False)
-    prompt_version = Column(String(50), nullable=False)
-    source_hash = Column(String(64), nullable=False)
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(
+    plot_progression: Mapped[str] = mapped_column(Text, nullable=False)
+    cliffhanger: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
 
-    chapter = relationship("Chapter", back_populates="summary")
+    chapter: Mapped["Chapter"] = relationship("Chapter", back_populates="summary")
 
 
 class AnalysisJob(Base):
@@ -141,32 +149,32 @@ class AnalysisJob(Base):
         ),
     )
 
-    id = Column(String(36), primary_key=True, default=_new_uuid)
-    novel_id = Column(
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
+    novel_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("novels.id", ondelete="CASCADE"),
         nullable=False,
     )
-    job_type = Column(String(40), nullable=False)
-    target_chapter_index = Column(Integer, nullable=True)
-    force_refresh = Column(
+    job_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_chapter_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    force_refresh: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=False,
         server_default=text("0"),
     )
-    status = Column(String(20), nullable=False, default="queued")
-    progress_current = Column(Integer, nullable=False, default=0)
-    progress_total = Column(Integer, nullable=False, default=0)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    progress_current: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=utc_now,
         onupdate=utc_now,
         nullable=False,
     )
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    novel = relationship("Novel", back_populates="analysis_jobs")
+    novel: Mapped["Novel"] = relationship("Novel", back_populates="analysis_jobs")

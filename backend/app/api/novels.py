@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from backend.app.core.database import get_db
 from backend.app.core.config import Settings, get_settings
@@ -224,7 +225,12 @@ async def upload_novel(
             detail="TXT 文件内容为空。",
         )
 
-    text, encoding = decode_txt(bytes(content))
+    return await run_in_threadpool(_save_uploaded_novel, bytes(content), safe_filename, db)
+
+
+def _save_uploaded_novel(content: bytes, safe_filename: str, db: Session) -> NovelUploadResponse:
+    """在线程内完成解码、切章与事务，不占用 ASGI 事件循环。"""
+    text, encoding = decode_txt(content)
     validate_decoded_text(text)
     chapters = split_chapters(text)
     if not chapters:

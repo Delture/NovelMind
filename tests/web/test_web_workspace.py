@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.api import summaries, rag, workspace
+from backend.app.services import dependencies
 from backend.app.core.config import get_settings, load_settings
 from backend.app.core.database import create_db_engine, init_db, get_db
 from backend.app.core.time import utc_now
@@ -56,13 +57,13 @@ def web(tmp_path):
         summaries.get_session_factory: lambda: factory,
         rag.get_session_factory: lambda: factory,
         summaries.get_llm_provider_factory: lambda: summary_provider,
-        summaries.get_sync_llm_provider_factory: lambda: FakeReportProvider,
+        dependencies.get_sync_llm_provider_factory: lambda: FakeReportProvider,
         rag.get_embedding_factory: lambda: embedding_provider,
         rag.get_generation_factory: lambda: answer_provider,
         rag.get_vector_store_factory: lambda: lambda: LocalVectorStore(settings.vector_store_path),
     }
     app.dependency_overrides.update(overrides)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     response = client.post('/api/novels/upload?filename=原创测试.txt', content="第一章 来信\n主角收到来信。\n第二章 启程\n主角决定出发。".encode(), headers={"content-type":"application/octet-stream"})
     assert response.status_code == 200
     novel_id = response.json()['novel_id']
@@ -139,7 +140,7 @@ def test_workflow_failure_stops_next_step_and_restart_is_explicit(web):
     assert workflow['status'] == 'failed'
     assert client.get(f'/api/novels/{novel_id}/report').status_code == 404
     with factory() as db:
-        row = Workflow(id=str(uuid4()),novel_id=novel_id,kind='report',status='running',created_at=utc_now().isoformat())
+        row = Workflow(id=str(uuid4()),novel_id=novel_id,kind='report',status='running',created_at=utc_now())
         db.add(row);db.commit();pending_id=row.id
     workspace.fail_interrupted_workflows(factory)
     with factory() as db:
@@ -149,7 +150,7 @@ def test_workflow_failure_stops_next_step_and_restart_is_explicit(web):
 
 def test_static_entry_serves_only_production_assets():
     from frontend.web_server import app as frontend
-    client = TestClient(frontend)
+    client = TestClient(frontend, base_url="http://127.0.0.1", client=("127.0.0.1", 50000))
     response = client.get('/')
     assert response.status_code == 200 and 'app.js' in response.text
     assert client.get('/app.js').status_code == 200

@@ -1,6 +1,6 @@
 import {openProviderSettings} from './provider-settings.js';
 import { api } from './api.js';
-import { modal, captureModalFocus, escape as e, bind, toast } from './ui.js';
+import { modal, captureModalFocus, escape as e, bind } from './ui.js';
 export async function privacy(trigger) {
   const returnFocus = captureModalFocus(trigger);
   const saved = await api('/workspace/privacy');

@@ -10,7 +10,7 @@ import math
 import random as random_module
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Callable, Dict, Optional, Protocol, Sequence, runtime_checkable
 
 import httpx
 import openai
@@ -198,7 +198,7 @@ class OpenAIEmbeddingProvider:
             write=60.0,
             pool=10.0,
         )
-        client_options: Dict[str, object] = {
+        client_options: Dict[str, Any] = {
             "api_key": settings.embedding_api_key,
             "base_url": settings.embedding_base_url,
             "timeout": timeout,
@@ -260,7 +260,7 @@ class OpenAIEmbeddingProvider:
                 before_attempt()
             try:
                 self._suppress_sensitive_sdk_debug_logs()
-                request: Dict[str, object] = {
+                request: Dict[str, Any] = {
                     "model": self._model,
                     "input": normalized_texts,
                     "dimensions": self._dimensions,

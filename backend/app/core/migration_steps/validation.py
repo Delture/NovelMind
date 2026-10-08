@@ -137,6 +137,8 @@ def _validate_exact_columns(
             "请先备份并修复数据库结构。"
         )
 
+    primary_columns = inspect(connection).get_pk_constraint(table_name)["constrained_columns"]
+    primary_positions = {name: i + 1 for i, name in enumerate(primary_columns)}
     for column in actual_columns:
         expected_type, nullable, primary_key, default = expected[
             column["name"]
@@ -150,7 +152,7 @@ def _validate_exact_columns(
         if (
             str(column["type"]).upper() != expected_type
             or bool(column["nullable"]) is not nullable
-            or int(column["primary_key"]) != primary_key
+            or primary_positions.get(column["name"], 0) != primary_key
             or (normalized_default != default and not (
                 table_name == "character_appearances"
                 and column["name"] in {"analysis_id", "novel_id"}
@@ -298,7 +300,7 @@ def _validate_exact_checks(
         mismatched_names = sorted(
             str(name)
             for name in set(actual) | set(normalized_expected)
-            if actual.get(name) != normalized_expected.get(name)
+            if actual.get(name) != normalized_expected.get(str(name))
         )
         raise RuntimeError(
             f"数据库表 {table_name} 的检查约束 "

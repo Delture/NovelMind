@@ -35,7 +35,6 @@
       loaded = false;
     let chapter = position.chapter,
       focus = false,
-      sideTab = 'chapters',
       restoring = false,
       disposed = false,
       saveTimer,
@@ -51,7 +50,7 @@
     root.dataset.readerRoot = 'true';
     root.classList.add('reader-app');
     root.style.transform = 'none';
-    root.innerHTML = `<header class="r-header"><div class="r-header-left"><button class="r-button" data-r-action="library" aria-label="返回资料库">${svg('back')}<span class="r-back-label">资料库</span></button><button class="r-button r-icon" data-r-action="sidebar" aria-label="切换目录" title="显示或隐藏目录">${svg('menu')}</button></div><div class="r-book"><strong></strong><span>本机资料库</span></div><div class="r-header-right">${nativeButton('text-search', '搜索全文', 'search')}${nativeButton('analysis', '理解故事', null, 'r-analysis')}${nativeButton('tasks', '任务')}${nativeButton('focus', '专注', 'focus')}${nativeButton('help', '快捷键', 'help', 'r-icon')}</div></header><div class="r-workspace"><aside class="r-sidebar" aria-label="阅读侧栏"><div class="r-side-tabs" role="tablist" aria-label="目录与书签"><button role="tab" aria-selected="true" aria-controls="r-chapter-panel" data-tab="chapters">目录</button><button role="tab" aria-selected="false" aria-controls="r-bookmark-panel" data-tab="bookmarks">书签 <span data-bookmark-count></span></button></div><div class="r-search-wrap">${svg('search')}<input class="r-search" type="search" aria-label="搜索章节标题或序号" placeholder="搜索章节标题或序号"></div><div class="r-side-meta"><span data-chapter-count>共 ${total} 章</span><button class="r-button" data-r-action="locate">定位当前</button></div><nav id="r-chapter-panel" class="r-directory" aria-label="全部章节"></nav><input class="r-bookmark-search" type="search" placeholder="搜索书签名称或备注" aria-label="搜索书签" hidden><div id="r-bookmark-panel" class="r-bookmarks" role="tabpanel" aria-label="书签列表" hidden></div><div class="r-side-footer">位置与书签自动保存在当前浏览器</div></aside><main class="r-paper"><div class="r-scroll" tabindex="0" role="region" aria-label="正文"><article class="r-prose"><header class="r-prose-header"><small data-chapter-label></small><h1 data-chapter-title></h1><div class="r-chapter-meta">原文 · 滚动阅读</div></header><div data-paragraphs></div><div class="r-end"><span data-end-label>本章已读完</span><button class="r-button" data-r-action="end-next">继续下一章 ${svg('next')}</button></div></article></div><nav class="r-dock" aria-label="阅读控制栏"><button class="r-button r-chapter-button" data-r-action="prev" aria-label="上一章">${svg('back')}<span>上一章</span></button><button class="r-button r-progress" data-r-action="progress" aria-label="阅读进度"><span data-pencil-name="chapter-counter"></span><small data-chapter-progress>本章 0%</small></button><span class="r-dock-separator"></span><button class="r-button" data-r-action="appearance" aria-label="Aa" title="阅读设置">Aa</button><button class="r-button r-icon" data-r-action="bookmark" aria-label="添加书签" title="添加书签">${svg('bookmark')}</button><button class="r-button r-chapter-button" data-r-action="next" aria-label="下一章"><span>下一章</span>${svg('next')}</button></nav></main></div><span class="r-save-status" role="status" aria-live="polite">阅读位置自动保存</span>`;
+    root.innerHTML = `<header class="r-header"><div class="r-header-left"><button class="r-button" data-r-action="library" aria-label="返回资料库">${svg('back')}<span class="r-back-label">资料库</span></button><button class="r-button r-icon" data-r-action="sidebar" aria-label="切换目录" title="显示或隐藏目录">${svg('menu')}</button></div><div class="r-book"><strong></strong><span>本机资料库</span></div><div class="r-header-right">${nativeButton('text-search', '搜索全文', 'search')}${nativeButton('analysis', '理解故事', null, 'r-analysis')}${nativeButton('tasks', '任务')}${nativeButton('focus', '专注', 'focus')}${nativeButton('help', '快捷键', 'help', 'r-icon')}</div></header><div class="r-workspace"><aside class="r-sidebar" aria-label="阅读侧栏"><div class="r-side-tabs" role="tablist" aria-label="目录与书签"><button role="tab" aria-selected="true" aria-controls="r-chapter-panel" data-tab="chapters">目录</button><button role="tab" aria-selected="false" aria-controls="r-bookmark-panel" data-tab="bookmarks">书签 <span data-bookmark-count></span></button></div><div class="r-search-wrap">${svg('search')}<input class="r-search" type="search" aria-label="搜索章节标题或序号" placeholder="搜索章节标题或序号"></div><div class="r-side-meta"><span data-chapter-count>共 ${total} 章</span><button class="r-button" data-r-action="locate">定位当前</button></div><nav id="r-chapter-panel" class="r-directory" aria-label="全部章节"></nav><input class="r-bookmark-search" type="search" placeholder="搜索书签名称或备注" aria-label="搜索书签" hidden><div id="r-bookmark-panel" class="r-bookmarks" role="tabpanel" aria-label="书签列表" hidden></div><div class="r-side-footer">位置与书签自动保存在本机资料库</div></aside><main class="r-paper"><div class="r-scroll" tabindex="0" role="region" aria-label="正文"><article class="r-prose"><header class="r-prose-header"><small data-chapter-label></small><h1 data-chapter-title></h1><div class="r-chapter-meta">原文 · 滚动阅读</div></header><div data-paragraphs></div><div class="r-end"><span data-end-label>本章已读完</span><button class="r-button" data-r-action="end-next">继续下一章 ${svg('next')}</button></div></article></div><nav class="r-dock" aria-label="阅读控制栏"><button class="r-button r-chapter-button" data-r-action="prev" aria-label="上一章">${svg('back')}<span>上一章</span></button><button class="r-button r-progress" data-r-action="progress" aria-label="阅读进度"><span data-pencil-name="chapter-counter"></span><small data-chapter-progress>本章 0%</small></button><span class="r-dock-separator"></span><button class="r-button" data-r-action="appearance" aria-label="Aa" title="阅读设置">Aa</button><button class="r-button r-icon" data-r-action="bookmark" aria-label="添加书签" title="添加书签">${svg('bookmark')}</button><button class="r-button r-chapter-button" data-r-action="next" aria-label="下一章"><span>下一章</span>${svg('next')}</button></nav></main></div><span class="r-save-status" role="status" aria-live="polite">阅读位置自动保存</span>`;
     $('.r-book strong').textContent = bookName;
     $('.r-side-footer').textContent = '位置与书签自动保存到本机资料库';
     const taskButton = $('[data-r-action="tasks"]');
@@ -95,12 +94,12 @@
         offset
       };
     }
-    function storePosition() {
+    function storePosition(options) {
       if (disposed || restoring || !loaded) return;
       position = anchor();
-      persist();
+      persist(options);
     }
-    function persist() {
+    function persist(options) {
       if (!loaded || disposed) return;
       ctx.save({
         prefs: {
@@ -108,11 +107,8 @@
         },
         position: {
           ...position
-        },
-        bookmarks: bookmarks.map(b => ({
-          ...b
-        }))
-      }).then(() => {
+        }
+      }, options).then(() => {
         if (!disposed) $('.r-save-status').textContent = '阅读位置已保存到本机资料库';
       }).catch(() => {
         if (!disposed) $('.r-save-status').textContent = '保存失败，请检查连接；继续阅读时将重试';
@@ -284,7 +280,6 @@
     empty.hidden = true;
     directory.append(empty);
     function setTab(tab) {
-      sideTab = tab;
       root.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
       directory.hidden = tab !== 'chapters';
       $('.r-bookmarks').hidden = tab !== 'bookmarks';
@@ -332,7 +327,7 @@
         remove.innerHTML = svg('close');
         on(remove, 'click', () => {
           bookmarks = bookmarks.filter(x => x.id !== b.id);
-          persist();
+          ctx.saveBookmark(b, true).catch(error => toast(error.message));
           renderBookmarks();
           progress();
         });
@@ -351,7 +346,8 @@
       d.querySelector('[data-bookmark-save]').onclick = () => {
         bookmark.label = d.querySelector('[data-bookmark-label]').value.trim();
         bookmark.note = d.querySelector('[data-bookmark-note]').value.trim();
-        persist();renderBookmarks();d.closeSheet();toast('书签已更新');
+        ctx.saveBookmark({...bookmark}).then(() => toast('书签已更新')).catch(error => toast(error.message));
+        renderBookmarks();d.closeSheet();
       };
     }
     function toggleBookmark() {
@@ -360,6 +356,7 @@
       const existing = bookmarks.find(b => b.chapter === chapter && b.paragraph === a.paragraph);
       if (existing) {
         bookmarks = bookmarks.filter(b => b !== existing);
+        ctx.saveBookmark(existing, true).catch(error => toast(error.message));
         toast('已移除当前位置的书签');
       } else {
         if (bookmarks.length >= 500) {toast('最多保存500个书签，请先整理现有书签。');return;}
@@ -369,6 +366,7 @@
           label: '', note: '',
           snippet: paras.children[a.paragraph] ? [...paras.children[a.paragraph].textContent.slice(a.offset)].slice(0,58).join('') : '章节开头'
         });
+        ctx.saveBookmark({...bookmarks.at(-1)}).catch(error => toast(error.message));
         toast('已添加书签，可在书签列表编辑名称和备注');
       }
       position = a;
@@ -535,7 +533,7 @@
         showChapter(requestedChapter - 1);
       }
     });
-    on(window, 'pagehide', storePosition);
+    on(window, 'pagehide', () => storePosition({keepalive:true}));
     on(document, 'visibilitychange', () => {
       if (document.hidden) storePosition();
     });

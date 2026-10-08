@@ -1,0 +1,12 @@
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Start CI with correctness checks; broad style rewrites are outside this repair.
+select = ["F"]
+
+[tool.mypy]
+python_version = "3.12"
+explicit_package_bases = true
+ignore_missing_imports = true
+follow_imports = "silent"

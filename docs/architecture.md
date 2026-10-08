@@ -113,3 +113,15 @@ HTTP 路由把已解析参数交给普通服务函数；任务链直接调用同
 开发和回归使用隔离数据。2026-09-27经总控授权，以项目managed launcher安全停止并隐藏启动正常模式，真实8501已加载增强版后端；只读确认381章、阅读状态和配置在加载前后不变，未调用用户真实模型探测。
 
 弹窗焦点通过 `captureModalFocus` 在异步请求前捕获，`modal(..., {returnFocus})` 保存原始归属；接替时不指向即将移除的旧弹窗控件。关闭后仅对仍连接、可见且可用的原触发元素恢复焦点，已有新弹窗时不抢焦点。通用动作绑定使用aria-busy/aria-disabled及在途WeakSet抑制重复操作，保留触发按钮的可聚焦性。
+
+
+## Issue #3 修复后的边界（2026-10-08）
+
+- `services/dependencies.py` 集中会话工厂与供应商依赖；服务抛 `ServiceError`，`api/service_route.py` 在 HTTP 边界统一映射。
+- 人物校验、调度与查询位于 `services/characters.py`；API 保留路由声明。
+- 长任务通过 `services/execution.py` 的四线程专用池派发，最多另有十六项等待任务。Future 与任务链父 ID 驻留内存；任务状态仍以 SQLite 为准。
+- 取消先条件更新活动状态，再取消 Future。运行中的 worker 通过既有状态检查协作停止，不能强行中断已发出的网络请求；迟到结果不会覆盖当前终态。
+- `analyzer/jobs.py` 统一分析任务的领取、进度与失败写回，`core/sqlite_retry.py` 是唯一写锁退避策略。SQLite 显式启用 WAL、外键和默认 5000ms busy_timeout；调用者的显式测试 timeout 仍可覆盖等待时间。
+- 位置与书签分开写入，短写事务先获得 SQLite 写锁，再合并现有 JSON，保留其他标签页的条目。
+- 迁移 v12 将 Workflow.created_at 从历史 VARCHAR 规范成 UTC DateTime，保留微秒精度与活动唯一索引；无法解析的历史时间会使迁移事务回滚。
+- macOS 启动器使用 `.venv/bin/python`、独立进程组与持有管道的看护进程；启动器突然退出后，看护只回收其所属进程组。

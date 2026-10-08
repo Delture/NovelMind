@@ -5,8 +5,11 @@ ORM 模型描述数据库列、数据库约束和 Python 对象关系。``nullab
 ``cascade`` 和 ``ondelete=CASCADE`` 分别照顾 ORM 层与数据库层的级联删除。
 """
 
+from __future__ import annotations
+from datetime import datetime
+from typing import TYPE_CHECKING
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import (
-    Column,
     DateTime,
     ForeignKey,
     Integer,
@@ -19,54 +22,66 @@ from sqlalchemy.orm import relationship
 from backend.app.core.database import Base
 from backend.app.core.time import utc_now
 
+if TYPE_CHECKING:
+    from backend.app.models.analysis import AnalysisJob
+    from backend.app.models.character import ChapterCharacterExtraction
+    from backend.app.models.analysis import ChapterSummary
+    from backend.app.models.character import CharacterAnalysis
+    from backend.app.models.character import CharacterAppearance
+    from backend.app.models.report import NovelReport
+    from backend.app.models.rag import RagChunkRecord
+    from backend.app.models.rag import RagIndex
+    from backend.app.models.rag import RagQuestion
+
+
 
 class Novel(Base):
     """一份已上传小说的元数据根对象，不在本行重复保存整部全文。"""
 
     __tablename__ = "novels"
 
-    id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String(255), nullable=False)
-    encoding = Column(String(20), nullable=False)
-    chapter_count = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=utc_now, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    encoding: Mapped[str] = mapped_column(String(20), nullable=False)
+    chapter_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
 
     # 一对多：删除小说时，章节及派生结果一同清除，避免孤儿记录。
-    chapters = relationship(
+    chapters: Mapped[list["Chapter"]] = relationship(
         "Chapter",
         back_populates="novel",
         cascade="all, delete-orphan",
         order_by="Chapter.chapter_index",
         passive_deletes=True,
     )
-    analysis_jobs = relationship(
+    analysis_jobs: Mapped[list["AnalysisJob"]] = relationship(
         "AnalysisJob",
         back_populates="novel",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
     # ``uselist=False`` 将默认列表语义收紧为“一部小说一个当前快照”。
-    character_analysis = relationship(
+    character_analysis: Mapped["CharacterAnalysis"] = relationship(
         "CharacterAnalysis",
         back_populates="novel",
         cascade="all, delete-orphan",
         passive_deletes=True,
         uselist=False,
     )
-    rag_index = relationship(
+    rag_index: Mapped["RagIndex"] = relationship(
         "RagIndex",
         back_populates="novel",
         cascade="all, delete-orphan",
         passive_deletes=True,
         uselist=False,
     )
-    rag_questions = relationship(
+    rag_questions: Mapped[list["RagQuestion"]] = relationship(
         "RagQuestion",
         back_populates="novel",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    report = relationship(
+    report: Mapped["NovelReport"] = relationship(
         "NovelReport",
         back_populates="novel",
         cascade="all, delete-orphan",
@@ -93,40 +108,40 @@ class Chapter(Base):
         ),
     )
 
-    id = Column(Integer, primary_key=True, index=True)
-    novel_id = Column(
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    novel_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("novels.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    chapter_index = Column(Integer, nullable=False)
-    title = Column(String(255), nullable=False)
-    content = Column(Text, nullable=False)
-    character_count = Column(Integer, nullable=False)
+    chapter_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    character_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    novel = relationship("Novel", back_populates="chapters")
-    summary = relationship(
+    novel: Mapped["Novel"] = relationship("Novel", back_populates="chapters")
+    summary: Mapped["ChapterSummary"] = relationship(
         "ChapterSummary",
         back_populates="chapter",
         cascade="all, delete-orphan",
         passive_deletes=True,
         uselist=False,
     )
-    character_extraction = relationship(
+    character_extraction: Mapped["ChapterCharacterExtraction"] = relationship(
         "ChapterCharacterExtraction",
         back_populates="chapter",
         cascade="all, delete-orphan",
         passive_deletes=True,
         uselist=False,
     )
-    character_appearances = relationship(
+    character_appearances: Mapped[list["CharacterAppearance"]] = relationship(
         "CharacterAppearance",
         back_populates="chapter",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    rag_chunks = relationship(
+    rag_chunks: Mapped[list["RagChunkRecord"]] = relationship(
         "RagChunkRecord",
         back_populates="chapter",
         cascade="all, delete-orphan",

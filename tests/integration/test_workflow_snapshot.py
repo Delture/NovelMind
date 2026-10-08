@@ -13,7 +13,7 @@ def workflow_case(isolated_config, monkeypatch):
     from sqlalchemy.orm import sessionmaker
     from backend.app.api import novels, workspace
     from backend.app.core.database import create_db_engine, get_db, init_db
-    from backend.app.services import rag, tasks
+    from backend.app.services import rag, tasks, dependencies
 
     case = isolated_config
     engine = create_db_engine(case.config.get_settings().database_url)
@@ -30,10 +30,10 @@ def workflow_case(isolated_config, monkeypatch):
     case.app.dependency_overrides[workspace.get_workflow_session_factory] = lambda: factory
     audit = ProviderAudit(factory)
     # Keep production dependency injection and its lazy factories intact.
-    monkeypatch.setattr(tasks, "AsyncDeepSeekProvider", lambda settings: audit.generation("summary", settings))
-    monkeypatch.setattr(tasks, "DeepSeekProvider", lambda settings: audit.generation("report", settings))
-    monkeypatch.setattr(rag, "DeepSeekProvider", lambda settings: audit.generation("answer", settings))
-    monkeypatch.setattr(rag, "OpenAIEmbeddingProvider", audit.embedding)
+    monkeypatch.setattr(dependencies, "AsyncDeepSeekProvider", lambda settings: audit.generation("summary", settings))
+    monkeypatch.setattr(dependencies, "get_llm_provider", lambda settings: audit.generation("report", settings))
+    monkeypatch.setattr(dependencies, "DeepSeekProvider", lambda settings: audit.generation("answer", settings))
+    monkeypatch.setattr(dependencies, "OpenAIEmbeddingProvider", audit.embedding)
     response = case.client.post("/api/novels/upload?filename=review-original.txt",
                                 content="第一章 来信\n主角收到来信，决定出发调查。".encode(),
                                 headers={"content-type": "application/octet-stream"})
@@ -58,7 +58,7 @@ def test_whole_workflow_uses_accepted_snapshot_after_settings_change(workflow_ca
     request = dict(kind=kind, question="主角收到什么？", confirm_external_processing=True, confirm_content_rights=True)
 
     def start():
-        with TestClient(case.app) as client:
+        with TestClient(case.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as client:
             return client.post(f"/api/novels/{case.novel_id}/workflows", json=request)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -141,7 +141,7 @@ def test_running_workflow_rejects_concurrent_start_and_duplicate_dispatch(workfl
     case=workflow_case
     payload=dict(kind=kind,question="主角收到什么？",confirm_external_processing=True,confirm_content_rights=True)
     def start():
-        with TestClient(case.app) as client:
+        with TestClient(case.app, base_url="http://127.0.0.1", client=("127.0.0.1", 50000)) as client:
             return client.post(f"/api/novels/{case.novel_id}/workflows",json=payload)
     with ThreadPoolExecutor(max_workers=1) as pool:
         future=pool.submit(start)
