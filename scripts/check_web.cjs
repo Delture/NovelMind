@@ -105,7 +105,7 @@ const path = require('node:path');
     check('人物、问答、报告真实空状态');
     await page.getByRole('button',{name:'设置',exact:true}).click();
     const combo=page.getByRole('combobox',{name:'文本生成服务预设'});await combo.click();
-    assert.equal(await page.locator('.select-menu:not([hidden])').evaluate(el=>getComputedStyle(el).borderRadius),'14px');
+    assert.equal(await page.locator('.select-menu:not([hidden])').evaluate(el=>getComputedStyle(el).borderRadius),'12px');
     await page.keyboard.press('End');await page.keyboard.press('Enter');await combo.click();await page.keyboard.press('Home');await page.keyboard.press('Enter');
     // Saves unchanged model values into the disposable settings file, not the real user settings.
     await page.getByRole('button',{name:'保存配置',exact:true}).click();
