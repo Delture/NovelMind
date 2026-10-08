@@ -24,11 +24,8 @@ let revision = 0,
 const base = (id = state.novel?.id) => `/novels/${id}`;
 const bookTitle = book => book.filename.replace(/\.txt$/i, '');
 function errorPanel(error, retry) {
-  root.innerHTML = `<div class="workspace"><div class="error-panel" role="alert"><h2>暂时无法加载</h2><p>${e(error.message)}</p>${button('重试', 'retry')}${button('返回资料库', 'library')}</div></div>`;
-  bind(root, {
-    retry,
-    library: () => go('library')
-  });
+  shell('暂时无法加载', '', `<div class="error-panel" role="alert"><p>${e(error.message)}</p>${button('重试', 'retry')}${button('返回资料库', 'library')}</div>`);
+  bind(root, {retry});
 }
 function shell(title, description, body, actions = '') {
   const book = state.novel;
@@ -37,7 +34,7 @@ function shell(title, description, body, actions = '') {
     ${book ? `<div class="book-context"><button class="link" data-action="library">${icon('back')}资料库</button><strong>${e(bookTitle(book))}</strong><small>${book.chapter_count} 章 · ${book.character_count.toLocaleString()} 字</small></div>` : ''}
     <nav aria-label="主导航">${(book ? ['reader', 'summary', 'characters', 'ask', 'report'] : ['library']).map(page => `<button data-action="nav-${page}" aria-current="${state.page === page ? 'page' : 'false'}">${routes[page]}</button>`).join('')}</nav>
     <div class="sidebar-footer">${button('任务', 'tasks')}${button('设置', 'settings')}</div></aside>
-    <main class="workspace"><header class="page-header"><div><h1>${e(title)}</h1><p>${e(description)}</p></div><div class="header-actions">${actions}</div></header>${body}</main></div>`;
+    <main class="workspace"><header class="page-header"><div><h1>${e(title)}</h1>${description ? `<p>${e(description)}</p>` : ''}</div><div class="header-actions">${actions}</div></header>${body}</main></div>`;
   const handlers = {
     library: () => go('library'),
     tasks: tasks.openTasks,
@@ -71,6 +68,7 @@ async function render() {
   root.setAttribute('aria-busy', 'true');
   if (!root.firstElementChild) root.innerHTML = '<p class="skeleton" role="status">正在加载…</p>';
   const loadingTimer = setTimeout(() => {if (token === revision) root.classList.add('page-loading');}, 120);
+  let bookLoaded = state.page === 'library';
   try {
     if (state.page !== 'library') {
       if (!novelId) {
@@ -80,6 +78,7 @@ async function render() {
       const book = await api(base(novelId));
       if (token !== revision) return;
       state.novel = book;
+      bookLoaded = true;
     } else state.novel = null;
     const fresh = () => token === revision;
     if (state.page === 'library') await pages.library(fresh);
@@ -92,7 +91,10 @@ async function render() {
     if (fresh() && observedTasks !== tasks.snapshot && pages.refresh) await pages.refresh();
     if (fresh()) animateEnter(root);
   } catch (error) {
-    if (token === revision) errorPanel(error, render);
+    if (token === revision) {
+      if (!bookLoaded) state.novel = null;
+      errorPanel(error, render);
+    }
   } finally {
     clearTimeout(loadingTimer);
     if (token === revision) {root.classList.remove('page-loading');root.removeAttribute('aria-busy');}

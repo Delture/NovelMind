@@ -127,7 +127,12 @@ export function createTasks({
   function taskHTML() {
     if (taskError) return `<p role="alert">${e(taskError)}</p><p class="muted">正在自动重连…</p>`;
     if (!lastTasks.length) return '<p class="empty">目前没有后台任务。</p>';
-    return lastTasks.map(t => `<section class="task"><div class="task-heading"><strong>${e(t.phase ? t.kind === 'report' ? '摘要与报告' : labels[t.kind] : labels[t.kind] || t.kind)}</strong><span>${statuses[t.status] || e(t.status)}</span></div><p>${e(t.filename)}</p>${t.phase ? `<p class="muted">${e(t.phase)}</p>` : ''}${t.progress_total ? `<progress value="${t.progress_current}" max="${t.progress_total}"></progress><small>${t.progress_current} / ${t.progress_total}</small>` : ''}${t.error_message ? `<p class="error">${e(t.error_message)}</p>` : ''}${["queued", "running"].includes(t.status) ? `<button class="link" data-task-cancel="${e(t.id)}">取消任务</button>` : ""}<button class="link" data-task-book="${t.novel_id}" data-task-page="${t.kind === 'report' ? 'report' : t.kind === 'ask' || t.kind === 'question' || t.kind === 'rag_index' ? 'ask' : t.kind === 'characters' ? 'characters' : 'summary'}">查看结果${t.status === 'failed' ? ' / 重新发起' : ''}</button></section>`).join('');
+    return lastTasks.map(t => {
+      const page = t.kind === 'report' ? 'report' : t.kind === 'ask' || t.kind === 'question' || t.kind === 'rag_index' ? 'ask' : t.kind === 'characters' ? 'characters' : 'summary';
+      const count = t.progress_total ? `<small>${t.progress_current} / ${t.progress_total}</small>` : '';
+      const cancel = ['queued', 'running'].includes(t.status) ? `<button class="link" data-task-cancel="${e(t.id)}">取消任务</button>` : '';
+      return `<section class="task"><div class="task-heading"><strong>${e(t.phase ? t.kind === 'report' ? '摘要与报告' : labels[t.kind] : labels[t.kind] || t.kind)}</strong><span>${statuses[t.status] || e(t.status)}</span></div><p>${e(t.filename)}</p>${t.phase ? `<p class="muted">${e(t.phase)}</p>` : ''}${t.progress_total ? `<progress value="${t.progress_current}" max="${t.progress_total}"></progress>` : ''}${t.error_message ? `<p class="error">${e(t.error_message)}</p>` : ''}<div class="task-actions">${count}${cancel}<button class="link" data-task-book="${t.novel_id}" data-task-page="${page}">查看结果${t.status === 'failed' ? ' / 重新发起' : ''}</button></div></section>`;
+    }).join('');
   }
   function drawTasks() {
     const panel = document.querySelector('[data-tasks]');
