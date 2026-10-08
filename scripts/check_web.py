@@ -47,7 +47,6 @@ def main():
                    PYTHON_DOTENV_DISABLED="1", PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8",
                    NOVELMIND_RUNTIME_DIR=str(Path(temporary) / "runtime"),
                    NOVELMIND_LOG_DIR=str(Path(temporary) / "logs"),
-                   BACKEND_URL=f"http://127.0.0.1:{backend_port}",
                    QA_URL=f"http://127.0.0.1:{frontend_port}", QA_OUTPUT=str(output), NOVELMIND_QA="isolated")
         try:
             for name, module, port in [("backend", "tests.web.web_browser_server:app", backend_port)]:

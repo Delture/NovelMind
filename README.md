@@ -47,8 +47,7 @@ DeepSeek 与硅基流动是预设，也支持 OpenAI 兼容服务。更换供应
 | 派生数据报告与原子保存 | [报告设计](docs/report_design.md) |
 | 从项目结构开始学习 | [代码阅读指南](docs/code_reading_guide.md) |
 | Python / FastAPI / ORM 语法 | [Python 语法指南](docs/python_syntax_guide.md) |
-| 当前原型、历史源稿与验收产物 | [设计目录](design/README.md) |
-| 旧版 Streamlit 可选入口与依赖 | [兼容说明](legacy/streamlit/README.md) |
+| 当前原型与验收产物 | [设计目录](design/README.md) |
 | 开发约束与历史记录 | [Codex.md](Codex.md)、[开发日志](docs/dev_log.md) |
 
 ## 验证
@@ -57,13 +56,11 @@ DeepSeek 与硅基流动是预设，也支持 OpenAI 兼容服务。更换供应
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-# 含可选 legacy 的全部测试（需兼容依赖）
-.\.venv\Scripts\python.exe -m pytest tests -q
 # 已有 Playwright 模块和 Edge 时
 .\.venv\Scripts\python.exe scripts/check_web.py
 ```
 
-默认测试包含 `tests/backend`、`tests/web`、`tests/launcher`、`tests/integration`；集成组覆盖端点、任务链、历史迁移与真实启动器生命周期。`tests/legacy` 为独立的兼容入口测试，完整 `pytest tests` 会包含它；假提供商与数据工厂在 `tests/support`。
+默认测试包含 `tests/backend`、`tests/web`、`tests/launcher`、`tests/integration`；集成组覆盖端点、任务链、历史迁移与真实启动器生命周期；假提供商与数据工厂在 `tests/support`。
 验收使用临时数据库与假提供商，浏览器输出默认在系统临时目录，可用 `QA_OUTPUT` 指定。
 真实供应商网络、收费及生成质量需要用户另行验收。不要提交 `.env`、数据库、向量库、密钥或用户文本。
 

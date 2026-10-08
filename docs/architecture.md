@@ -21,7 +21,6 @@ Windows 开发模式通过 `scripts/novelmind_server.py` 复用 uvicorn 的 Stat
 | `backend/app/services/` | 路由与工作流共用校验、缓存、冲突判断和派发 |
 | `backend/app/analyzer/`、`rag/` | 有界模型处理、来源校验、原子结果写入 |
 | `backend/app/models/`、`core/` | 数据约束、配置、会话与迁移 |
-| `legacy/streamlit/` | 隔离保留旧界面和可选依赖 |
 
 ## 请求与后台任务
 
@@ -86,7 +85,7 @@ HTTP 路由把已解析参数交给普通服务函数；任务链直接调用同
 
 ## 验收组织与运行隔离
 
-`tests/backend`、`tests/web`、`tests/launcher`、`tests/integration` 为默认测试，legacy 单独分组（全量 `pytest tests` 包含 legacy）；`tests/support` 提供共享 fakes 和种子数据。
+`tests/backend`、`tests/web`、`tests/launcher`、`tests/integration` 为默认测试；`tests/support` 提供共享 fakes 和种子数据。
 浏览器测试服务 `tests/web/web_browser_server.py` 只接受隔离环境，使用临时 SQLite、向量目录、配置和假模型。
 `check_web.py` 仅创建一个应用进程，输出默认在系统临时目录，`QA_OUTPUT` 可覆盖。
 启动器支持 `NOVELMIND_PORT`、`NOVELMIND_RUNTIME_DIR`、`NOVELMIND_LOG_DIR`、`NOVELMIND_APP` 注入，验收无需修改生产默认值。
