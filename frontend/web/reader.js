@@ -150,7 +150,7 @@
       root.style.setProperty('--reading-line', prefs.line);
       root.style.setProperty('--reading-width', prefs.width + 'px');
       root.style.setProperty('--reading-gap', prefs.gap + 'px');
-      root.style.setProperty('--reading-font', prefs.font === 'sans' ? '"Noto Sans SC", system-ui, sans-serif' : '"Noto Serif SC", serif');
+      root.style.setProperty('--font-reading', prefs.font === 'sans' ? 'var(--font-sans)' : 'var(--font-serif)');
       $('.r-sidebar').hidden = !prefs.sidebar || focus;
       $('[data-r-action="sidebar"]').setAttribute('aria-expanded', String(prefs.sidebar && !focus));
       root.classList.toggle('is-focus', focus);

@@ -1,0 +1,149 @@
+/* Design tokens: the only place colors, type, spacing, radii, shadows and motion are defined.
+   Light is the default; the reader's paper/sepia themes keep light tokens even under a dark UI. */
+:root,
+body[data-reader-theme=paper],
+body[data-reader-theme=sepia],
+.r-theme-options [data-theme=paper],
+.r-theme-options [data-theme=sepia] {
+  --bg: #f5f1e9;
+  --surface: #fffdf8;
+  --surface-soft: #eee6d9;
+  --surface-control: #f7f2e9;
+  --surface-selected: #e4d4bd;
+  --surface-glass: #fffaf0ce;
+  --glass-edge: #ffffffbd;
+  --glass-highlight: #ffffffa6;
+  --text: #39342e;
+  --text-muted: #796c5c;
+  --border: #dcd0bf;
+  --border-soft: #e8e0d4;
+  --border-strong: #bd9573;
+  /* --accent fills controls; --accent-hover is also the AA-safe accent for text,
+     --accent-pressed the one for small reader text on selected surfaces. */
+  --accent: #a66b4e;
+  --accent-hover: #9c6143;
+  --accent-pressed: #7d492f;
+  --accent-soft: #a66b4e10;
+  --primary: #43392f;
+  --on-primary: #fffdf8;
+  --danger: #993b2b;
+  --shadow-sm: 0 2px 7px #39291910;
+  --shadow-md: 0 6px 28px #4a382013;
+  --shadow-glass: 0 14px 44px #49392312, 0 2px 6px #49392308;
+  color-scheme: light;
+}
+
+:root[data-ui-theme=dark],
+body[data-reader-theme=dark],
+.r-theme-options [data-theme=dark] {
+  --bg: #1c1d1e;
+  --surface: #272927;
+  --surface-soft: #31332f;
+  --surface-control: #30322f;
+  --surface-selected: #594737;
+  --surface-glass: #30332dd9;
+  --glass-edge: #ddd3bc38;
+  --glass-highlight: #f6d2a833;
+  --text: #eee8de;
+  --text-muted: #b4aa9d;
+  --border: #585348;
+  --border-soft: #41403b;
+  --accent: #d9a686;
+  --accent-hover: #dcad8d;
+  --accent-pressed: #dcad8d;
+  --accent-soft: #d9a68610;
+  --primary: #d2b494;
+  --on-primary: #211d19;
+  --danger: #f0b19e;
+  --shadow-sm: 0 2px 7px #00000030;
+  --shadow-md: 0 6px 28px #00000040;
+  --shadow-glass: 0 18px 50px #00000038, 0 2px 8px #00000020;
+  color-scheme: dark;
+}
+
+/* Reader themes: small reader text is checked against normal, selected and glass surfaces. */
+body[data-reader-theme=paper],
+body[data-reader-theme=sepia],
+.r-theme-options [data-theme=paper],
+.r-theme-options [data-theme=sepia] {
+  --surface-glass: #f8eed9d9;
+  --glass-edge: #fffaf0b8;
+  --text-muted: #625545;
+}
+
+body[data-reader-theme=sepia],
+.r-theme-options [data-theme=sepia] {
+  --bg: #eae0ce;
+  --surface: #f7eedf;
+  --surface-selected: #d9c5a8;
+  --text: #534536;
+  --text-muted: #5f4a35;
+  --border-soft: #ded0b8;
+  --accent-pressed: #704027;
+}
+
+body[data-reader-theme=dark],
+.r-theme-options [data-theme=dark] {
+  --surface-selected: #463c31;
+  --text: #dad5cd;
+  --text-muted: #c2b8ac;
+}
+
+:root {
+  --highlight: #dfb77b80;
+  --backdrop: #221b1640;
+  --backdrop-opaque: #18120da6;
+  --cover-1: #d6c2a0;
+  --cover-2: #b8c4b1;
+  --cover-3: #d6b7a3;
+  --cover-ink: #66523d;
+  --cover-spine: #ffffff35;
+
+  --font-ui: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-serif: "Noto Serif SC", "SimSun", serif;
+  --font-sans: "Noto Sans SC", system-ui, sans-serif;
+  --font-brand: Georgia, serif;
+  /* Reader preferences override these inline on .reader-app. */
+  --font-reading: var(--font-serif);
+  --reading-size: 18px;
+  --reading-line: 1.9;
+  --reading-width: 720px;
+  --reading-gap: 22px;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+  --fs-2xl: clamp(26px, 3vw, 34px);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 999px;
+
+  --ease: cubic-bezier(.2, .75, .25, 1);
+  --dur-fast: .16s;
+  --dur-base: .22s;
+}
+
+/* Accessibility preferences (mirrored from the OS by appearance.js). */
+:root[data-reduced-motion=true] {
+  --dur-fast: 0s;
+  --dur-base: 0s;
+}
+
+:root[data-high-contrast=true] {
+  --text-muted: var(--text);
+}
