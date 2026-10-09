@@ -90,7 +90,7 @@ addEventListener('storage', event => {
 });
 document.addEventListener('pointermove', event => {
   if (motionReduced() || document.documentElement.dataset.reducedTransparency === 'true' || document.hidden || event.pointerType === 'touch') return;
-  const surface = event.target.closest?.('.r-dock,.r-header,.sidebar,.sheet,.select-menu');
+  const surface = event.target.closest?.('.r-dock,.sheet,.select-menu');
   if (surface !== litSurface) {
     clearLight();
     litSurface = surface;

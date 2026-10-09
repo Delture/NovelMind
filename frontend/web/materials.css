@@ -1,5 +1,5 @@
-/* Shared glass material, motion and accessibility overrides. Reading text stays on opaque paper. */
-:is(.sidebar, .r-header, .r-sidebar, .r-dock, .sheet, .select-menu, .toast) {
+/* Glass is for true overlays only: dialogs, the drawer, menus, toasts and the reader dock. Everything else is opaque. */
+:is(.r-dock, .sheet, .select-menu, .toast) {
   border: 1px solid var(--glass-edge);
   background: var(--surface-glass);
   color: var(--text);
@@ -24,7 +24,7 @@
 }
 
 /* Foreground controls stay above the pointer-light layer, including menu options. */
-.sheet > *, .sidebar > *, .r-header > *, .r-dock > *, .select-menu > * {
+.sheet > *, .r-dock > *, .select-menu > * {
   position: relative;
   z-index: 1;
 }
@@ -79,7 +79,7 @@
   display: none;
 }
 
-:root[data-reduced-transparency=true] :is(.sidebar, .r-header, .r-sidebar, .r-dock, .sheet, .select-menu, .toast) {
+:root[data-reduced-transparency=true] :is(.r-dock, .sheet, .select-menu, .toast) {
   border-color: var(--border);
   background: var(--surface);
   backdrop-filter: none;

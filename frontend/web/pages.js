@@ -5,6 +5,18 @@ import { api, allPages, optional } from './api.js';
 import { modal, captureModalFocus, escape as e, button, icon, bind, toast, taskStatuses as statuses } from "./ui.js";
 
 // 页面负责获取数据、绑定操作和阅读状态，导航由 app.js 提供。
+const toneCount = 6;
+// Cover title: split at a separator when there is one, otherwise in half; each line stays short enough to typeset.
+function coverLines(title) {
+  const chars = [...title], half = Math.ceil(chars.length / 2);
+  const parts = title.split(/\s*[-—–·:：_]\s*/).filter(Boolean);
+  const lines = parts.length > 1 ? parts.slice(0, 2) : chars.length > 4 ? [chars.slice(0, half).join(''), chars.slice(half).join('')] : [title];
+  return lines.map(line => [...line].length > 5 ? [...line].slice(0, 5).join('') + '…' : line);
+}
+const coverHTML = (book, title) => `<div class="book-cover" data-tone="${book.id % toneCount + 1}" aria-hidden="true">${coverLines(title).map(line => `<span>${e(line)}</span>`).join('')}</div>`;
+// The list already shows the chapter number, so drop a leading “第N章”; a full-width space between paired headings becomes a plain one.
+const chapterName = title => title.replace(/^第[\d零〇一二三四五六七八九十百千两]+[章回节卷]\s*/, '').replace(/\u3000+/g, ' ') || title;
+const pad = n => String(n).padStart(2, '0');
 export function createPages({
   root,
   state,
@@ -30,16 +42,23 @@ export function createPages({
       lastId = Number(localStorage.getItem('novelmind.last-book'));
     } catch {}
     const recent = books.find(b => b.id === lastId);
+    let resume = '';
+    if (recent) {
+      const [list, saved] = await Promise.all([chapters(recent.id), api(base(recent.id) + '/reading')]);
+      if (!fresh()) return;
+      const at = Math.min(list.length, saved.position.chapter);
+      resume = `<section class="continue">${coverHTML(recent, bookTitle(recent))}<div class="continue-body"><small class="eyebrow">继续阅读</small><h2>${e(bookTitle(recent))}</h2><p>第 ${at} 章 · ${e(chapterName(list[at - 1].title))}</p><div class="progress-line"><progress value="${at}" max="${list.length}" aria-label="阅读进度"></progress><span>${at} / ${list.length} 章 · ${Math.round(at / list.length * 100)}%</span></div></div><button type="button" class="primary" data-action="continue">继续阅读${icon('forward')}</button></section>`;
+    }
     shell('你的资料库', '让故事的每一条线索，都有迹可循。', `
-    ${recent ? `<section class="continue"><div><small>继续上次的阅读</small><h2>${e(bookTitle(recent))}</h2><p>回到上次停下的位置</p></div>${button('继续阅读', 'continue', true)}</section>` : ''}
-    ${searchBox('搜索书名')}<div class="section-label">全部小说 · ${books.length} 本</div><div class="books"></div><p data-no-match class="empty" hidden>没有找到这本书。</p>
+    ${resume}
+    <div class="section-bar"><div class="section-label">全部小说 · ${books.length} 本</div>${searchBox('搜索书名')}</div><div class="books"></div><p data-no-match class="empty" hidden>没有找到这本书。</p>
     ${books.length ? '' : '<div class="empty"><h2>从一本小说开始</h2><p>导入 TXT 后即可阅读，章节和阅读记录保存在本机。</p></div>'}`, button('导入小说', 'import', true));
     const container = root.querySelector('.books');
     for (const book of books) {
       const article = document.createElement('article');
       article.className = 'book-card';
       article.dataset.title = book.filename;
-      article.innerHTML = `<button class="manage" aria-label="管理 ${e(bookTitle(book))}">管理</button><div class="book-cover" aria-hidden="true">${e(bookTitle(book).slice(0, 1))}</div><h2>${e(bookTitle(book))}</h2><p>${book.chapter_count} 章 · ${book.character_count.toLocaleString()} 字</p><footer>${button('开始阅读', 'read', true)}${button('理解故事', 'analysis')}</footer>`;
+      article.innerHTML = `${coverHTML(book, bookTitle(book))}<div class="book-info"><h2>${e(bookTitle(book))}</h2><p>${book.chapter_count} 章 · ${book.character_count.toLocaleString()} 字</p><footer>${button('开始阅读', 'read', true)}<button type="button" class="quiet" data-action="analysis">理解故事</button></footer></div><button class="manage" aria-label="管理 ${e(bookTitle(book))}">${icon('more')}</button>`;
       bind(article, {
         read: () => go('reader', book.id),
         analysis: () => go('summary', book.id)
@@ -219,7 +238,8 @@ export function createPages({
       const summary = map.get(index),
         chapter = list[index - 1];
       nav.querySelectorAll('button').forEach(b => b.setAttribute('aria-current', String(Number(b.dataset.index) === index)));
-      detail.innerHTML = `<small>第 ${index} 章</small><h2>${e(chapter.title)}</h2>` + (summary ? `<section><h3>这一章发生了什么</h3><p>${e(summary.summary)}</p></section><section><h3>关键事件</h3><ul>${summary.key_events.map(s => `<li>${e(s)}</li>`).join('')}</ul></section><section><h3>故事推进</h3><p>${e(summary.plot_progression)}</p>${summary.cliffhanger ? `<p>${e(summary.cliffhanger)}</p>` : ''}</section><small>${e(summary.model)} · ${e(summary.updated_at.slice(0, 10))}</small>` : '<div class="empty"><p>这一章还没有摘要。</p></div>') + citationLinks([index]) + `<footer>${button(summary ? '重新生成本章' : '生成本章摘要', 'single')}</footer>`;
+      const action = button(summary ? '重新生成本章' : '生成本章摘要', 'single');
+      detail.innerHTML = `<small class="eyebrow">第 ${index} 章</small><h2>${e(chapterName(chapter.title))}</h2>` + (summary ? `<section class="lead"><h3>这一章发生了什么</h3><p>${e(summary.summary)}</p></section><section><h3>关键事件</h3><ol class="events">${summary.key_events.map(s => `<li>${e(s)}</li>`).join('')}</ol></section><section><h3>故事推进</h3><p>${e(summary.plot_progression)}</p>${summary.cliffhanger ? `<p>${e(summary.cliffhanger)}</p>` : ''}</section><footer><div class="detail-meta"><small>${e(summary.model)} · ${e(summary.updated_at.slice(0, 10))}</small>${citationLinks([index])}</div>${action}</footer>` : `<div class="empty"><p>这一章还没有摘要。</p></div><footer><div class="detail-meta">${citationLinks([index])}</div>${action}</footer>`);
       bindCitations(detail);
       bind(detail, {
         single: () => plan('chapter', {
@@ -231,16 +251,17 @@ export function createPages({
     };
     for (const chapter of list) {
       const row = document.createElement('button');
-      row.className = 'row';
+      row.className = 'row numbered';
       row.dataset.index = chapter.index;
-      row.innerHTML = `<span>${e(chapter.title)}</span><small>${map.has(chapter.index) ? '已生成' : '待生成'}</small>`;
+      row.title = chapter.title;
+      row.innerHTML = `<span class="row-index">${pad(chapter.index)}</span><span class="row-title">${e(chapterName(chapter.title))}</span><small>${map.has(chapter.index) ? '已生成' : '待生成'}</small>`;
       row.onclick = () => show(chapter.index);
       nav.append(row);
     }
     show(selected);
     root.querySelector('input').oninput = event => {
       const term = event.target.value.trim();
-      nav.querySelectorAll('button').forEach(b => b.hidden = term && !(/^\d+$/.test(term) ? Number(b.dataset.index) === Number(term) : b.textContent.includes(term)));
+      nav.querySelectorAll('button').forEach(b => b.hidden = term && !(/^\d+$/.test(term) ? Number(b.dataset.index) === Number(term) : b.title.includes(term)));
     };
     if (saved.length === list.length) root.querySelector('[data-action=generate]').textContent = '检查并补齐摘要';
     bind(root, {
@@ -362,10 +383,10 @@ export function createPages({
     };
     let body = '<div class="empty"><h2>看见故事的全貌</h2><p>生成前会先补齐缺失或过期的章节摘要，再整理全书报告。</p></div>';
     if (saved) {
-      body = `${saved.up_to_date ? '' : '<p class="status-note">这份报告的来源已更新。你可以继续阅读旧结果，或生成新版。</p>'}<h2>${e(saved.report.title)}</h2><p class="muted">${e(saved.model)} · ${saved.summary_count} 章摘要 · ${e(saved.updated_at.slice(0, 10))}</p><div class="report-sections">`;
+      body = `${saved.up_to_date ? '' : '<p class="status-note">这份报告的来源已更新。你可以继续阅读旧结果，或生成新版。</p>'}<div class="report-meta"><h2>${e(saved.report.title)}</h2><p class="muted">${e(saved.model)} · ${saved.summary_count} 章摘要 · ${e(saved.updated_at.slice(0, 10))}</p></div><div class="report-sections">`;
       for (const [key, label] of Object.entries(fields)) {
         const sections = Array.isArray(saved.report[key]) ? saved.report[key] : [saved.report[key]];
-        for (const section of sections) if (section) body += `<section class="report-section"><small>${label}</small><h3>${e(section.title)}</h3><p>${e(section.analysis)}</p>${citationLinks(section.evidence_chapter_indices)}</section>`;
+        for (const section of sections) if (section) body += `<section class="report-section" data-kind="${key}"><small class="eyebrow">${label}</small><h3>${e(section.title)}</h3><p>${e(section.analysis)}</p>${citationLinks(section.evidence_chapter_indices)}</section>`;
       }
       body += '</div>';
     }
