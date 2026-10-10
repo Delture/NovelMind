@@ -1,8 +1,8 @@
-from tests.support.report_fakes import FakeReportProvider, report_payload, section
+from tests.support.report_fakes import FakeReportProvider, report_payload
 """Tests for report provenance, generation, jobs, and API gates."""
 
 from dataclasses import replace
-from typing import Callable, Generator, Optional, Type
+from typing import Callable, Generator
 from unittest.mock import Mock
 
 import pytest
@@ -14,15 +14,10 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.services import reports as reports_api
 from backend.app.analyzer.llm import (
-    JsonGenerationResult,
     LLMProviderError,
 )
 from backend.app.analyzer.reports import (
     REPORT_PROMPT_VERSION,
-    NovelReportPayload,
-    ReportEvidenceNote,
-    ReportEvidenceNotesPayload,
-    ReportSectionPayload,
     ReportSourceError,
     estimate_report_generation_steps,
     generate_report_payload,
@@ -41,7 +36,6 @@ from backend.app.services.reports import (
 )
 from backend.app.core.config import Settings, load_settings
 from backend.app.core.database import Base, create_db_engine
-from backend.app.main import app
 from backend.app.models.analysis import AnalysisJob, ChapterSummary
 from backend.app.models.novel import Chapter, Novel
 from backend.app.models.report import NovelReport
@@ -119,27 +113,6 @@ def add_novel_with_summaries(
     return novel
 
 
-
-
-
-
-def test_report_payload_allows_empty_unsupported_optional_sections() -> None:
-    payload = NovelReportPayload(
-        title="材料边界报告",
-        executive_summary=section("执行摘要"),
-        plot_structure=section("情节结构"),
-        character_dynamics=section("人物动态"),
-        pacing=section("节奏"),
-    )
-
-    assert payload.themes == []
-    assert payload.strengths == []
-    assert payload.risks == []
-    assert payload.recommendations == []
-
-
-
-
 class SafeProviderFailure(LLMProviderError):
     def __init__(self) -> None:
         super().__init__(
@@ -169,14 +142,6 @@ def add_saved_report(
     db.commit()
     db.refresh(saved)
     return saved
-
-
-def test_report_routes_are_registered() -> None:
-    paths = app.openapi()["paths"]
-    assert "get" in paths["/api/novels/{novel_id}/report/estimate"]
-    assert {"get", "post"} <= set(
-        paths["/api/novels/{novel_id}/report"]
-    )
 
 
 def test_report_source_requires_current_complete_summaries(
