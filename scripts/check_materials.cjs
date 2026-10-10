@@ -66,25 +66,29 @@ runSuite('materials',async ({page,context,api,url,upload,select,shot,check,event
   await stableShot('library-warm-stable');
   await contrast('light library actions','.book-card footer button');
   await contrast('light library auxiliary','.page-header p, .book-card p, .continue p');
+  // Only true overlays are glass; the edge-attached sidebar is flat and opaque.
   details.material.push(await material('.sidebar'));
-  assert.match(details.material[0].blur,/blur\(/);
-  assert.notEqual(details.material[0].shadow,'none');
-  await page.mouse.move(50,50);await page.waitForTimeout(60);
-  const first=await page.locator('.sidebar').evaluate(node=>getComputedStyle(node).getPropertyValue('--light-x'));
-  await page.mouse.move(110,75);await page.waitForTimeout(60);
-  const second=await page.locator('.sidebar').evaluate(node=>getComputedStyle(node).getPropertyValue('--light-x'));
-  assert(first&&second&&first!==second);
-  const idle=await page.evaluate(()=>__qaMaterial.frames.fired);await page.waitForTimeout(350);
-  assert.equal(await page.evaluate(()=>__qaMaterial.frames.fired),idle);
-  check('暖色玻璃blur/半透明/高光存在，动态光随指针变化但无持续RAF循环');
-
+  assert.equal(details.material[0].blur,'none');
+  assert.equal(details.material[0].shadow,'none');
+  assert.equal((await material('.book-card')).blur,'none');
   const openSettings=async()=>{
     await page.getByRole('button',{name:'设置',exact:true}).click();
     const d=page.getByRole('dialog',{name:'模型与设置'});await d.waitFor();return d;
   };
   let d=await openSettings();await stable();
-  assert(await page.evaluate(()=>__qaMaterial.events.some(e=>e.tag==='DIALOG'&&e.kind==='end')));
   details.material.push(await material('dialog'));
+  assert.match(details.material.at(-1).blur,/blur\(/);
+  assert.notEqual(details.material.at(-1).shadow,'none');
+  const box=await d.boundingBox();
+  await page.mouse.move(box.x+50,box.y+50);await page.waitForTimeout(60);
+  const first=await d.evaluate(node=>getComputedStyle(node).getPropertyValue('--light-x'));
+  await page.mouse.move(box.x+110,box.y+75);await page.waitForTimeout(60);
+  const second=await d.evaluate(node=>getComputedStyle(node).getPropertyValue('--light-x'));
+  assert(first&&second&&first!==second);
+  const idle=await page.evaluate(()=>__qaMaterial.frames.fired);await page.waitForTimeout(350);
+  assert.equal(await page.evaluate(()=>__qaMaterial.frames.fired),idle);
+  check('侧栏实色无blur；浮层有玻璃blur/阴影，动态光随指针变化但无持续RAF循环');
+  assert(await page.evaluate(()=>__qaMaterial.events.some(e=>e.tag==='DIALOG'&&e.kind==='end')));
   await stableShot('settings-warm-stable');
   await d.getByRole('button',{name:'关闭',exact:true}).click();await d.waitFor({state:'detached'});
   if(!await page.getByRole('button',{name:'设置',exact:true}).evaluate(node=>node===document.activeElement))details.findings.push('Settings exit does not restore focus to its trigger');

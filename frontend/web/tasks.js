@@ -170,7 +170,7 @@ export function createTasks({
       lastTasks = result;
       drawTasks();
       const running = result.filter(t => ['queued', 'running'].includes(t.status)).length;
-      root.querySelectorAll('[data-action=tasks]').forEach(b => b.textContent = running ? `任务 · ${running}` : '任务');
+      root.querySelectorAll('[data-action=tasks]').forEach(b => b.querySelector('span').textContent = running ? `任务 · ${running}` : '任务');
       if (changed && getPageRefresh()) await getPageRefresh()();
     } catch (error) {
       taskError = error.message;

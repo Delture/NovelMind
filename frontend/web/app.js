@@ -27,14 +27,15 @@ function errorPanel(error, retry) {
   shell('暂时无法加载', '', `<div class="error-panel" role="alert"><p>${e(error.message)}</p>${button('重试', 'retry')}${button('返回资料库', 'library')}</div>`);
   bind(root, {retry});
 }
+const navItem = (label, action, name, current = false) => `<button type="button" class="nav-item" data-action="${action}" ${current ? 'aria-current="page"' : ''}>${icon(name)}<span>${e(label)}</span></button>`;
 function shell(title, description, body, actions = '') {
   const book = state.novel;
   root.className = '';
-  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand">NovelMind<small>阅读工作室</small></div>
+  root.innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">${icon('reader')}</span>NovelMind</div>
     ${book ? `<div class="book-context"><button class="link" data-action="library">${icon('back')}资料库</button><strong>${e(bookTitle(book))}</strong><small>${book.chapter_count} 章 · ${book.character_count.toLocaleString()} 字</small></div>` : ''}
-    <nav aria-label="主导航">${(book ? ['reader', 'summary', 'characters', 'ask', 'report'] : ['library']).map(page => `<button data-action="nav-${page}" aria-current="${state.page === page ? 'page' : 'false'}">${routes[page]}</button>`).join('')}</nav>
-    <div class="sidebar-footer">${button('任务', 'tasks')}${button('设置', 'settings')}</div></aside>
-    <main class="workspace"><header class="page-header"><div><h1>${e(title)}</h1>${description ? `<p>${e(description)}</p>` : ''}</div><div class="header-actions">${actions}</div></header>${body}</main></div>`;
+    <nav aria-label="主导航">${(book ? ['reader', 'summary', 'characters', 'ask', 'report'] : ['library']).map(page => navItem(routes[page], 'nav-' + page, page, state.page === page)).join('')}</nav>
+    <div class="sidebar-footer">${navItem('任务', 'tasks', 'tasks')}${navItem('设置', 'settings', 'settings')}<p class="sidebar-note">阅读与分析结果保存在本机</p></div></aside>
+    <main class="workspace"><header class="page-header"><div>${book ? `<nav class="crumbs" aria-label="当前位置"><button class="link" data-action="nav-reader">${e(bookTitle(book))}</button><span aria-hidden="true">/</span><span>${routes[state.page]}</span></nav>` : ''}<h1>${e(title)}</h1>${description ? `<p>${e(description)}</p>` : ''}</div><div class="header-actions">${actions}</div></header>${body}</main></div>`;
   const handlers = {
     library: () => go('library'),
     tasks: tasks.openTasks,
