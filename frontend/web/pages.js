@@ -216,6 +216,11 @@ export function createPages({
       saveBookmark: (bookmark, remove) => saveBookmark(id, bookmark, remove)
     });
     readerCleanup = () => {cleanup();loader.dispose();};
+    pageRefresh = async () => {
+      chapterCache.delete(id);
+      if (readerCleanup) {readerCleanup();readerCleanup = null;}
+      if (fresh()) await reader(fresh, query);
+    };
   }
   function citationLinks(indices) {
     return `<div class="citation-links">${[...new Set(indices)].map(n => `<button class="link" data-cite="${n}">第 ${n} 章 · 查看证据</button>`).join('')}</div>`;

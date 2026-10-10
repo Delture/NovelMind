@@ -15,7 +15,7 @@ from backend.app.services.execution import JobTasks
 from backend.app.services.tasks import (
     AnalysisJobResponse,
     ProviderFactory,
-    get_llm_provider_factory,
+    get_sync_llm_provider_factory,
     get_session_factory,
 )
 
@@ -44,7 +44,7 @@ def start_chapter_review(
     background_tasks: BackgroundTasks,
     novel_id: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
-    provider_factory: ProviderFactory = Depends(get_llm_provider_factory),
+    provider_factory: ProviderFactory = Depends(get_sync_llm_provider_factory),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
     settings: Settings = Depends(get_settings),
 ) -> AnalysisJobResponse:

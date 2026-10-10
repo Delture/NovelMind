@@ -225,7 +225,7 @@ def start_workflow(novel_id: int, value: WorkflowRequest, background: Background
         raise HTTPException(422, "请输入问题。")
     job_types = ("chapter_summaries", "report", "characters") if value.kind == "report" else ("rag_index",)
     conflict = db.query(AnalysisJob.id).filter(AnalysisJob.novel_id == novel_id,
-        AnalysisJob.job_type.in_(job_types), AnalysisJob.status.in_(("queued", "running"))).first()
+        AnalysisJob.job_type.in_((*job_types, "chapter_review")), AnalysisJob.status.in_(("queued", "running"))).first()
     if conflict or (value.kind == "ask" and db.query(RagQuestion.id).filter(
             RagQuestion.novel_id == novel_id, RagQuestion.status.in_(("queued", "running"))).first()):
         raise HTTPException(409, "这本书已有相关任务正在运行，请等待完成后再开始任务链。")

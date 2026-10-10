@@ -450,15 +450,15 @@ def run_chapter_review_job(
                     return "derived"
 
                 if not plan_is_identity(plan, snapshots):
+                    db.query(Chapter).filter(Chapter.novel_id == novel_id).delete(
+                        synchronize_session=False
+                    )
+                    db.flush()
+                    db.expire_all()
                     reading = db.get(ReadingState, novel_id)
                     if reading is not None and isinstance(reading.value, dict):
                         reading.value = _remap_reading(reading.value, plan)
                         flag_modified(reading, "value")
-
-                    db.query(Chapter).filter(Chapter.novel_id == novel_id).delete(
-                        synchronize_session=False
-                    )
-                    db.expire_all()
                     for item in rebuilt:
                         db.add(
                             Chapter(
@@ -482,7 +482,17 @@ def run_chapter_review_job(
                 db.commit()
                 return "ok"
 
-        outcome = retry_sqlite(commit_result)
+        try:
+            outcome = retry_sqlite(commit_result)
+        except Exception:
+            logger.exception("chapter review save failed for job %s", job_id)
+            _mark_failed(
+                session_factory,
+                job_id,
+                "running",
+                "目录复核未能保存，已保留规则分章。",
+            )
+            return
         if outcome == "ok":
             return
         if outcome == "cancelled":
