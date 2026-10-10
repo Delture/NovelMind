@@ -457,7 +457,7 @@ def run_chapter_review_job(
                     db.expire_all()
                     reading = db.get(ReadingState, novel_id)
                     if reading is not None and isinstance(reading.value, dict):
-                        reading.value = _remap_reading(reading.value, plan)
+                        reading.value = _remap_reading(reading.value, plan, snapshots)
                         flag_modified(reading, "value")
                     for item in rebuilt:
                         db.add(
@@ -506,12 +506,43 @@ def run_chapter_review_job(
         _close_provider(provider)
 
 
-def _remap_reading(value: dict, plan) -> dict:
+def _paragraph_count(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def _remap_anchor(old_chapter: int, paragraph, plan, snapshots_by_index: dict) -> tuple[int, int]:
+    new_chapter = map_chapter_index(old_chapter, plan)
+    if not isinstance(paragraph, int) or paragraph < 0:
+        return new_chapter, paragraph if isinstance(paragraph, int) else -1
+    for item in plan:
+        if item.from_index <= old_chapter <= item.to_index:
+            if item.from_index == item.to_index:
+                return new_chapter, paragraph
+            offset = 0
+            for src in range(item.from_index, old_chapter):
+                snap = snapshots_by_index[src]
+                if src > item.from_index and snap.title.strip():
+                    offset += 1
+                offset += _paragraph_count(snap.content)
+            if old_chapter > item.from_index:
+                snap = snapshots_by_index[old_chapter]
+                if snap.title.strip():
+                    offset += 1
+            return new_chapter, offset + paragraph
+    return new_chapter, paragraph
+
+
+def _remap_reading(value: dict, plan, snapshots: list) -> dict:
+    by_index = {snap.index: snap for snap in snapshots}
     updated = dict(value)
     position = updated.get("position")
     if isinstance(position, dict) and isinstance(position.get("chapter"), int):
         position = dict(position)
-        position["chapter"] = map_chapter_index(position["chapter"], plan)
+        chapter, paragraph = _remap_anchor(
+            position["chapter"], position.get("paragraph", -1), plan, by_index
+        )
+        position["chapter"] = chapter
+        position["paragraph"] = paragraph
         updated["position"] = position
     bookmarks = updated.get("bookmarks")
     if isinstance(bookmarks, list):
@@ -522,7 +553,11 @@ def _remap_reading(value: dict, plan) -> dict:
                 continue
             item = dict(bookmark)
             if isinstance(item.get("chapter"), int):
-                item["chapter"] = map_chapter_index(item["chapter"], plan)
+                chapter, paragraph = _remap_anchor(
+                    item["chapter"], item.get("paragraph", -1), plan, by_index
+                )
+                item["chapter"] = chapter
+                item["paragraph"] = paragraph
             remapped.append(item)
         updated["bookmarks"] = remapped
     return updated

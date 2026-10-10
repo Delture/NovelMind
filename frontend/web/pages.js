@@ -215,10 +215,10 @@ export function createPages({
       save: (value, options) => saveReading(id, value, options),
       saveBookmark: (bookmark, remove) => saveBookmark(id, bookmark, remove)
     });
-    readerCleanup = () => {cleanup();loader.dispose();};
+    readerCleanup = (options) => {cleanup(options);loader.dispose();};
     pageRefresh = async () => {
       chapterCache.delete(id);
-      if (readerCleanup) {readerCleanup();readerCleanup = null;}
+      if (readerCleanup) {readerCleanup({skipSave: true});readerCleanup = null;}
       if (fresh()) await reader(fresh, query);
     };
   }

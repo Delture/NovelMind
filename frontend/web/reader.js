@@ -569,11 +569,11 @@
     restoring = true;
     showChapter(chapter, initial);
     renderBookmarks();
-    return () => {
+    return (options = {}) => {
       if (disposed) return;
       clearTimeout(saveTimer);
       clearTimeout(idleTimer);
-      storePosition();
+      if (!options.skipSave) storePosition();
       disposed = true;
       textSearch?.dispose();
       window.CSS?.highlights?.delete('novelmind-search-hit');

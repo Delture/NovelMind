@@ -200,3 +200,28 @@ def test_review_job_keeps_chapters_on_provider_failure(web) -> None:
     with factory() as db:
         assert db.get(AnalysisJob, job_id).status == "failed"
         assert db.get(Novel, novel_id).chapter_count == before
+
+
+def test_remap_paragraph_across_merge() -> None:
+    from backend.app.services.chapter_review import _remap_reading
+    chapters = _snaps("第1章 A", "第2章 B", "第3章 C")
+    # Make multi-paragraph bodies
+    chapters = [
+        ChapterSnapshot(index=1, title="第1章 A", content="a1\n\na2", character_count=5),
+        ChapterSnapshot(index=2, title="第2章 B", content="b1\nb2", character_count=5),
+        ChapterSnapshot(index=3, title="第3章 C", content="c1", character_count=2),
+    ]
+    plan = [
+        ReviewedChapter(title="合并一二", from_index=1, to_index=2),
+        ReviewedChapter(title="第3章 C", from_index=3, to_index=3),
+    ]
+    # a1,a2 then title "第2章 B", then b1,b2 → para 0 of ch2 becomes index 3
+    value = {
+        "position": {"chapter": 2, "paragraph": 0, "offset": 0},
+        "bookmarks": [{"id": "2:1", "chapter": 2, "paragraph": 1, "offset": 0}],
+    }
+    out = _remap_reading(value, plan, chapters)
+    assert out["position"]["chapter"] == 1
+    assert out["position"]["paragraph"] == 3  # a1,a2,title,b1
+    assert out["bookmarks"][0]["chapter"] == 1
+    assert out["bookmarks"][0]["paragraph"] == 4  # + b2
