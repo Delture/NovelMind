@@ -6,7 +6,7 @@
 - 不提交、推送、安装升级依赖、调用收费 API，除非用户明确授权。
 - 保护 `.env`、`.venv`、`data`、`vector_store`、`logs`、`output`；测试仅临时目录与假提供商。
 - 本地只做解析、存储、统计、检索、编排和界面；语义生成与 embedding 使用外部 API。
-- 代码面向有 Python 基础的本科生。解释公开边界、复杂流程与不直观原因，保留教学资料；不要用注释字数作质量指标。
+- 优先用清晰的命名和类型表达意图，而不是教学式注释。注释只写非显然的原因：不变量、事务/并发、取消语义、安全与付费边界；不要复述参数或函数名，也不要用注释字数作质量指标。
 - 保持小而明确的模块，不引入通用工作流框架、新前端构建链或万能基类。
 - 端点和密钥绑定，读取与错误不暴露密钥；任务持有受理时配置。显式授权、失败保留旧结果、来源复核、外键与原子性不能削弱。
 - Windows 移动/删除前确认完整绝对路径在项目内，用 PowerShell LiteralPath 操作。
@@ -33,5 +33,5 @@
 ```
 
 README 是快速开始和导航；`docs/user_guide.md` 管操作，`architecture.md` 管实现。
-`rag_design.md`、`report_design.md` 保留业务算法约束；两份教学指南继续维护。
+`rag_design.md`、`report_design.md` 保留业务算法约束。`docs/code_reading_guide.md` 与 `docs/python_syntax_guide.md` 仅作历史参考，不必为每次改动同步维护。
 历史 HANDOFF/SAVEPOINT 位于 `docs/archive/`，不能当作当前待实现清单。
