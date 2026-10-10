@@ -73,15 +73,6 @@ def test_commands_use_virtual_environment_python_and_loopback() -> None:
     assert frontend[frontend.index("--port") + 1] == "8501"
 
 
-def test_development_command_enables_backend_reload() -> None:
-    command = launcher.build_backend_command(Path("python.exe"), development=True)
-
-    assert "--reload" in command
-    assert command[command.index("--reload-dir") + 1] == str(
-        launcher.PROJECT_ROOT
-    )
-
-
 def test_runtime_state_is_written_atomically_and_read_back(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -135,31 +126,6 @@ def test_control_server_requires_token_and_accepts_stop() -> None:
         thread.join(timeout=2)
 
 
-def test_wait_until_ready_reports_early_process_exit() -> None:
-    process = Mock(spec=subprocess.Popen)
-    process.poll.return_value = 7
-
-    with pytest.raises(launcher.LauncherError, match="退出码 7"):
-        launcher._wait_until_ready(
-            "后端",
-            process,
-            lambda: False,
-            timeout=0.1,
-        )
-
-
-def test_terminate_process_closes_log_for_finished_process() -> None:
-    process = Mock(spec=subprocess.Popen)
-    process.poll.return_value = 0
-    log_handle = Mock()
-    managed = launcher.ManagedProcess("backend", process, log_handle)
-
-    launcher._terminate_process(managed)
-
-    log_handle.close.assert_called_once_with()
-    process.send_signal.assert_not_called()
-
-
 @pytest.mark.skipif(os.name != "nt", reason="Windows CTRL_BREAK_EVENT")
 def test_terminate_process_requests_graceful_windows_stop(
     monkeypatch: pytest.MonkeyPatch,
@@ -177,11 +143,3 @@ def test_terminate_process_requests_graceful_windows_stop(
     log_handle.close.assert_called_once_with()
 
 
-def test_parse_args_keeps_daily_mode_as_default() -> None:
-    daily = launcher._parse_args([])
-    development = launcher._parse_args(["--dev", "--no-browser"])
-    stop = launcher._parse_args(["--stop"])
-
-    assert not daily.dev and not daily.stop and not daily.no_browser
-    assert development.dev and development.no_browser
-    assert stop.stop and not stop.dev

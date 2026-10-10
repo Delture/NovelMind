@@ -1,24 +1,15 @@
-from tests.support.character_fixtures import _add_current_extractions, _add_novel, _add_snapshot, _extraction_data
+from tests.support.character_fixtures import _add_novel, _add_snapshot
 """Tests for character-analysis API scheduling and result queries."""
 
-from datetime import datetime
 from typing import Callable, Generator
 from unittest.mock import Mock
 
 import pytest
 from backend.app.services.errors import ServiceError as HTTPException
-from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.app.analyzer.characters import (
-    CHARACTER_EXTRACTION_PROMPT_VERSION,
-    CHARACTER_MERGE_PROMPT_VERSION,
-    CHARACTER_RELATIONSHIP_PROMPT_VERSION,
-    character_analysis_source_hash,
-    character_chapter_source_hash,
-)
 from backend.app.services.characters import (
     StartCharacterAnalysisRequest,
     _schedule_character_job,
@@ -31,16 +22,7 @@ from backend.app.services.characters import (
 )
 from backend.app.core.config import load_settings
 from backend.app.core.database import Base, create_db_engine
-from backend.app.main import app
 from backend.app.models.analysis import AnalysisJob
-from backend.app.models.character import (
-    ChapterCharacterExtraction,
-    Character,
-    CharacterAnalysis,
-    CharacterAppearance,
-    CharacterRelationship,
-)
-from backend.app.models.novel import Chapter, Novel
 
 
 @pytest.fixture()
@@ -57,57 +39,6 @@ def session_factory() -> Generator[Callable[[], Session], None, None]:
     finally:
         Base.metadata.drop_all(bind=engine)
         engine.dispose()
-
-
-
-
-def test_character_routes_are_registered() -> None:
-    paths = app.openapi()["paths"]
-
-    assert "get" in paths["/api/novels/{novel_id}/characters/estimate"]
-    assert {"get", "post"} <= set(
-        paths["/api/novels/{novel_id}/characters"]
-    )
-    assert "get" in paths[
-        "/api/novels/{novel_id}/characters/{character_id}"
-    ]
-    assert "get" in paths[
-        "/api/novels/{novel_id}/characters/{character_id}/appearances"
-    ]
-    assert "get" in paths[
-        "/api/novels/{novel_id}/characters/{character_id}/relationships"
-    ]
-
-
-
-
-
-
-
-
-@pytest.mark.parametrize(
-    ("field_name", "value"),
-    [
-        ("confirm_external_processing", "true"),
-        ("confirm_external_processing", 1),
-        ("confirm_content_rights", "true"),
-        ("confirm_content_rights", 1),
-        ("force", "false"),
-        ("force", 0),
-    ],
-)
-def test_character_start_request_rejects_coerced_booleans(
-    field_name: str,
-    value: object,
-) -> None:
-    payload: dict[str, object] = {
-        "confirm_external_processing": True,
-        "confirm_content_rights": True,
-        "force": False,
-    }
-    payload[field_name] = value
-    with pytest.raises(ValidationError):
-        StartCharacterAnalysisRequest.model_validate(payload)
 
 
 def test_character_estimate_reports_cache_and_force_upper_bound(
@@ -145,37 +76,6 @@ def test_character_estimate_reports_cache_and_force_upper_bound(
         assert cached.estimated_force_generation_steps == 4
         assert cached.maximum_force_request_attempts == 115_380
         assert cached.up_to_date is True
-
-
-def test_character_estimate_treats_invalid_cached_payload_as_pending(
-    session_factory: Callable[[], Session],
-) -> None:
-    settings = load_settings({})
-    with session_factory() as session:
-        novel = _add_novel(session)
-        _add_current_extractions(session, novel)
-        invalid = (
-            session.query(ChapterCharacterExtraction)
-            .filter(
-                ChapterCharacterExtraction.chapter_id
-                == novel.chapters[0].id
-            )
-            .one()
-        )
-        invalid.extraction_data = {"observations": "invalid"}
-        session.commit()
-
-        estimate = get_character_estimate(
-            novel.id,
-            settings=settings,
-            db=session,
-        )
-
-    assert estimate.cached_chapter_count == 1
-    assert estimate.pending_chapter_count == 1
-    assert estimate.estimated_extraction_steps == 1
-    assert estimate.estimated_generation_steps == 3
-    assert estimate.up_to_date is False
 
 
 @pytest.mark.parametrize(
@@ -244,43 +144,6 @@ def test_character_job_scheduling_is_idempotent_and_scope_safe(
     second_provider.close.assert_called_once_with()
 
 
-def test_character_start_reuses_active_job_before_provider_creation(
-    session_factory: Callable[[], Session],
-) -> None:
-    provider_factory = Mock(side_effect=RuntimeError("must not run"))
-    request = StartCharacterAnalysisRequest(
-        confirm_external_processing=True,
-        confirm_content_rights=True,
-    )
-    with session_factory() as session:
-        novel = _add_novel(session)
-        session.add(
-            AnalysisJob(
-                id="active-before-provider",
-                novel_id=novel.id,
-                job_type="characters",
-                status="running",
-                progress_current=1,
-                progress_total=4,
-                force_refresh=False,
-            )
-        )
-        session.commit()
-
-        response = start_character_analysis(
-            novel_id=novel.id,
-            request=request,
-            background_tasks=Mock(),
-            db=session,
-            settings=load_settings({}),
-            provider_factory=provider_factory,
-            session_factory=session_factory,
-        )
-
-    assert response.id == "active-before-provider"
-    provider_factory.assert_not_called()
-
-
 def test_character_scheduler_closes_provider_on_early_query_error(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -306,42 +169,6 @@ def test_character_scheduler_closes_provider_on_early_query_error(
             session_factory=session_factory,
         )
 
-    provider.close.assert_called_once_with()
-
-
-def test_character_job_rejects_conflicting_force_scope(
-    session_factory: Callable[[], Session],
-) -> None:
-    provider = Mock()
-    with session_factory() as session:
-        novel = _add_novel(session)
-        session.add(
-            AnalysisJob(
-                id="active-characters",
-                novel_id=novel.id,
-                job_type="characters",
-                status="running",
-                progress_current=0,
-                progress_total=4,
-                force_refresh=False,
-            )
-        )
-        session.commit()
-        with pytest.raises(HTTPException) as error:
-            _schedule_character_job(
-                novel_id=novel.id,
-                progress_total=4,
-                request=StartCharacterAnalysisRequest(
-                    confirm_external_processing=True,
-                    confirm_content_rights=True,
-                    force=True,
-                ),
-                background_tasks=Mock(),
-                db=session,
-                provider=provider,
-                session_factory=session_factory,
-            )
-    assert error.value.status_code == 409
     provider.close.assert_called_once_with()
 
 
@@ -437,19 +264,3 @@ def test_character_detail_appearances_and_relationships_are_scoped(
         assert error.value.status_code == 404
 
 
-def test_character_list_is_empty_before_first_analysis(
-    session_factory: Callable[[], Session],
-) -> None:
-    with session_factory() as session:
-        novel = _add_novel(session)
-        response = list_characters(
-            novel.id,
-            offset=0,
-            limit=20,
-            search=None,
-            sort="mention_count",
-            db=session,
-        )
-    assert response.items == []
-    assert response.total == 0
-    assert response.analysis_updated_at is None

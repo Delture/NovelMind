@@ -1,47 +1,9 @@
-import asyncio
-import json
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from pathlib import Path
-from typing import Callable, Generator, Optional, Type
-from unittest.mock import Mock
-import httpx
-import pytest
-from fastapi import HTTPException
-from pydantic import BaseModel, ValidationError
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from typing import Callable, Optional, Type
+from pydantic import BaseModel
 from backend.app.analyzer.llm import (
     JsonGenerationResult,
     ProviderUnavailableError,
 )
-from backend.app.analyzer import summaries as summaries_service
-from backend.app.analyzer import jobs as jobs_service
-from backend.app.services import tasks as summaries_api
-from backend.app.analyzer.summaries import (
-    ChapterSummaryPayload,
-    fail_interrupted_jobs,
-    generate_chapter_summary,
-    run_summary_job,
-)
-from backend.app.services.summaries import (
-    StartSummariesRequest,
-    get_chapter_summary,
-    get_analysis_job,
-    get_summary_estimate,
-    list_analysis_jobs,
-    list_chapter_summaries,
-    start_chapter_summaries,
-    start_single_chapter_summary,
-)
-from backend.app.core.config import load_settings
-from backend.app.core.database import Base, create_db_engine, get_db
-from backend.app.core.time import utc_now
-from backend.app.main import app
-from backend.app.models.analysis import AnalysisJob, ChapterSummary
-from backend.app.models.novel import Chapter, Novel
 
 class FakeProvider:
     model = "deepseek-v4-pro"

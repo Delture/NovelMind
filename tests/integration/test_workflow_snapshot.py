@@ -12,7 +12,7 @@ def workflow_case(isolated_config, monkeypatch):
     from sqlalchemy.orm import sessionmaker
     from backend.app.api import novels, workspace
     from backend.app.core.database import create_db_engine, get_db, init_db
-    from backend.app.services import rag, tasks, dependencies
+    from backend.app.services import dependencies
 
     case = isolated_config
     engine = create_db_engine(case.config.get_settings().database_url)

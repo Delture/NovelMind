@@ -1,25 +1,7 @@
-import json
-from dataclasses import dataclass
-from sqlalchemy import select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 from backend.app.analyzer.llm import JsonGenerationResult
-from backend.app.core.database import create_db_engine, init_db
-from backend.app.models.novel import Chapter, Novel
-from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
 from backend.app.rag.answering import (
-    RAG_ANSWER_PROMPT_VERSION,
     RagAnswerPayload,
-    fail_interrupted_rag_questions,
-    run_rag_answer_job,
 )
-from backend.app.rag.chunking import (
-    CHUNK_FORMAT_VERSION,
-    build_rag_chunks,
-    rag_source_hash,
-)
-from backend.app.rag.embedding import EmbeddingBatchResult
-from backend.app.rag.vector_store import VectorSearchHit
 
 class FakeLLMProvider:
     def __init__(self, payload: RagAnswerPayload) -> None:

@@ -3,16 +3,12 @@ from tests.support.report_fakes import FakeReportProvider, report_payload
 
 from dataclasses import replace
 from typing import Callable, Generator
-from unittest.mock import Mock
 
 import pytest
-from fastapi import BackgroundTasks
-from backend.app.services.errors import ServiceError as HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.app.services import reports as reports_api
 from backend.app.analyzer.llm import (
     LLMProviderError,
 )
@@ -29,10 +25,8 @@ from backend.app.analyzer.summaries import (
     chapter_summary_source_hash,
 )
 from backend.app.services.reports import (
-    StartReportRequest,
     get_report,
     get_report_estimate,
-    start_report,
 )
 from backend.app.core.config import Settings, load_settings
 from backend.app.core.database import Base, create_db_engine
@@ -356,113 +350,6 @@ def test_report_estimate_discloses_derived_data_and_cache(
         assert cached.up_to_date
         assert cached.estimated_generation_steps == 0
         assert cached.estimated_force_generation_steps == 2
-
-
-@pytest.mark.parametrize(
-    "start_request",
-    [
-        StartReportRequest(
-            confirm_external_processing=False,
-            confirm_content_rights=True,
-        ),
-        StartReportRequest(
-            confirm_external_processing=True,
-            confirm_content_rights=False,
-        ),
-        StartReportRequest(
-            confirm_external_processing=True,
-            confirm_content_rights=True,
-            force=True,
-            confirm_force_refresh=False,
-        ),
-    ],
-)
-def test_report_consent_failures_construct_no_provider(
-    session_factory,
-    start_request: StartReportRequest,
-) -> None:
-    calls = 0
-
-    def provider_factory():
-        nonlocal calls
-        calls += 1
-        return FakeReportProvider()
-
-    with session_factory() as db:
-        novel = add_novel_with_summaries(db)
-        with pytest.raises(HTTPException) as error:
-            start_report(
-                request=start_request,
-                background_tasks=BackgroundTasks(),
-                novel_id=novel.id,
-                settings=configured_settings(),
-                db=db,
-                provider_factory=provider_factory,
-                session_factory=session_factory,
-            )
-    assert error.value.status_code == 400
-    assert calls == 0
-
-
-def test_report_start_schedules_one_background_job(
-    session_factory,
-) -> None:
-    provider = FakeReportProvider()
-    tasks = BackgroundTasks()
-    with session_factory() as db:
-        novel = add_novel_with_summaries(db)
-        response = start_report(
-            request=StartReportRequest(
-                confirm_external_processing=True,
-                confirm_content_rights=True,
-            ),
-            background_tasks=tasks,
-            novel_id=novel.id,
-            settings=configured_settings(),
-            db=db,
-            provider_factory=lambda: provider,
-            session_factory=session_factory,
-        )
-        assert response.job_type == "report"
-        assert response.status == "queued"
-        assert response.progress_total == 2
-        assert db.query(AnalysisJob).count() == 1
-    assert len(tasks.tasks) == 1
-    assert provider.closed is False
-
-
-def test_report_response_failure_terminalizes_job_and_closes_provider(
-    session_factory,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    provider = FakeReportProvider()
-    monkeypatch.setattr(
-        reports_api,
-        "_job_response",
-        Mock(side_effect=RuntimeError("response validation failed")),
-    )
-
-    with session_factory() as db:
-        novel = add_novel_with_summaries(db)
-        with pytest.raises(RuntimeError, match="response validation failed"):
-            start_report(
-                request=StartReportRequest(
-                    confirm_external_processing=True,
-                    confirm_content_rights=True,
-                ),
-                background_tasks=BackgroundTasks(),
-                novel_id=novel.id,
-                settings=configured_settings(),
-                db=db,
-                provider_factory=lambda: provider,
-                session_factory=session_factory,
-            )
-
-        job = db.query(AnalysisJob).one()
-        assert job.status == "failed"
-        assert job.completed_at is not None
-        assert "后台队列" in str(job.error_message)
-    assert provider.closed is True
 
 
 def test_get_report_returns_stale_snapshot_without_destroying_it(

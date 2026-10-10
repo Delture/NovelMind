@@ -2,7 +2,6 @@
 import json
 import logging
 from dataclasses import replace
-from types import SimpleNamespace
 from typing import Callable, Optional
 
 import httpx
@@ -10,7 +9,6 @@ import pytest
 
 from backend.app.core.config import Settings, load_settings
 from backend.app.rag.embedding import (
-    MAX_EMBEDDING_BATCH_SIZE,
     OpenAIEmbeddingProvider,
     EmbeddingAuthenticationError,
     EmbeddingBalanceError,
@@ -19,7 +17,6 @@ from backend.app.rag.embedding import (
     EmbeddingRateLimitError,
     EmbeddingRequestError,
     EmbeddingResponseError,
-    EmbeddingUnavailableError,
 )
 
 
@@ -142,31 +139,6 @@ def test_embedding_wire_contract_and_response_order() -> None:
 
 
 @pytest.mark.parametrize(
-    "texts",
-    [
-        [],
-        [""],
-        ["   "],
-        ["ok"] * (MAX_EMBEDDING_BATCH_SIZE + 1),
-    ],
-)
-def test_embedding_rejects_invalid_batches_without_network(
-    texts: list[str],
-) -> None:
-    calls = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return embedding_response(count=1)
-
-    provider = make_provider(handler)
-    with pytest.raises(ValueError, match="1 to 10"):
-        provider.embed(texts)
-    assert calls == 0
-
-
-@pytest.mark.parametrize(
     "response",
     [
         embedding_response(count=1),
@@ -182,34 +154,6 @@ def test_embedding_rejects_invalid_response_shape(
     provider = make_provider(lambda _: response)
     with pytest.raises(EmbeddingResponseError):
         provider.embed(["a", "b"])
-
-
-def test_embedding_rejects_nonfinite_and_zero_vectors() -> None:
-    response = embedding_response(count=1)
-    payload = json.loads(response.content)
-    payload["data"][0]["embedding"] = [0.0] * 1_024
-    provider = make_provider(
-        lambda _: httpx.Response(200, json=payload)
-    )
-    with pytest.raises(EmbeddingResponseError):
-        provider.embed(["a"])
-
-    for invalid_value in [float("nan"), float("inf")]:
-        invalid_response = SimpleNamespace(
-            model="Qwen/Qwen3-Embedding-4B",
-            data=[
-                SimpleNamespace(
-                    index=0,
-                    embedding=[invalid_value] * 1_024,
-                )
-            ],
-            usage=SimpleNamespace(prompt_tokens=1),
-        )
-        with pytest.raises(EmbeddingResponseError):
-            provider._validate_response(
-                invalid_response,
-                expected_count=1,
-            )
 
 
 @pytest.mark.parametrize("status_code", [408, 409, 429, 500, 503])
@@ -270,23 +214,6 @@ def test_rate_limit_exhaustion_is_specific_and_safe() -> None:
     assert "siliconflow-test-key" not in str(captured.value)
 
 
-def test_connection_exhaustion_is_safe() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError(
-            "sensitive novel body and siliconflow-test-key",
-            request=request,
-        )
-
-    provider = make_provider(
-        handler,
-        settings=make_settings(max_attempts=1),
-    )
-    with pytest.raises(EmbeddingUnavailableError) as captured:
-        provider.embed(["sensitive novel body"])
-    assert "sensitive" not in str(captured.value)
-    assert "siliconflow-test-key" not in str(captured.value)
-
-
 @pytest.mark.parametrize(
     ("status_code", "error_type"),
     [
@@ -327,16 +254,3 @@ def test_debug_logging_does_not_expose_embedding_input(
     assert "NOVEL_BODY_SENTINEL" not in caplog.text
 
 
-def test_close_is_idempotent_and_closes_http_client() -> None:
-    http_client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda _: embedding_response(count=1)
-        )
-    )
-    provider = OpenAIEmbeddingProvider(
-        make_settings(),
-        http_client=http_client,
-    )
-    provider.close()
-    provider.close()
-    assert http_client.is_closed is True

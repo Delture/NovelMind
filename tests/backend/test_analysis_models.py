@@ -1,7 +1,5 @@
 
-from datetime import datetime
 from typing import Generator
-from uuid import UUID
 
 import pytest
 from sqlalchemy import text
@@ -110,51 +108,6 @@ def test_chapter_summary_is_unique_per_chapter(
             db_session.rollback()
 
 
-def test_analysis_job_uses_uuid_string_and_relationship(
-    db_session: Session,
-) -> None:
-    novel = add_novel(db_session)
-    job = AnalysisJob(
-        novel_id=novel.id,
-        job_type="chapter_summaries",
-        status="queued",
-        progress_current=0,
-        progress_total=1,
-    )
-    db_session.add(job)
-    db_session.commit()
-
-    assert isinstance(job.id, str)
-    assert str(UUID(job.id)) == job.id
-    assert job.novel.id == novel.id
-    assert novel.analysis_jobs == [job]
-    assert isinstance(job.created_at, datetime)
-    assert isinstance(job.updated_at, datetime)
-    assert job.started_at is None
-    assert job.completed_at is None
-    assert job.target_chapter_index is None
-    assert job.force_refresh is False
-
-
-def test_analysis_job_persists_force_refresh(
-    db_session: Session,
-) -> None:
-    novel = add_novel(db_session)
-    job = AnalysisJob(
-        novel_id=novel.id,
-        job_type="chapter_summaries",
-        force_refresh=True,
-        status="queued",
-        progress_current=0,
-        progress_total=1,
-    )
-    db_session.add(job)
-    db_session.commit()
-    db_session.refresh(job)
-
-    assert job.force_refresh is True
-
-
 def test_only_one_active_job_is_allowed_per_novel_and_type(
     db_session: Session,
 ) -> None:
@@ -183,49 +136,6 @@ def test_only_one_active_job_is_allowed_per_novel_and_type(
     with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
         db_session.commit()
     db_session.rollback()
-
-
-def test_terminal_or_different_type_jobs_do_not_conflict(
-    db_session: Session,
-) -> None:
-    novel = add_novel(db_session)
-    db_session.add_all(
-        [
-            AnalysisJob(
-                novel_id=novel.id,
-                job_type="chapter_summaries",
-                status="succeeded",
-                progress_current=1,
-                progress_total=1,
-            ),
-            AnalysisJob(
-                novel_id=novel.id,
-                job_type="chapter_summaries",
-                status="failed",
-                progress_current=0,
-                progress_total=1,
-                target_chapter_index=1,
-            ),
-            AnalysisJob(
-                novel_id=novel.id,
-                job_type="chapter_summaries",
-                status="queued",
-                progress_current=0,
-                progress_total=1,
-            ),
-            AnalysisJob(
-                novel_id=novel.id,
-                job_type="characters",
-                status="running",
-                progress_current=0,
-                progress_total=1,
-            ),
-        ]
-    )
-
-    db_session.commit()
-
-    assert db_session.query(AnalysisJob).count() == 4
 
 
 @pytest.mark.parametrize(

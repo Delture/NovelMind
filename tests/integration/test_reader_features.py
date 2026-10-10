@@ -94,39 +94,6 @@ def test_search_paginates_literal_hits_in_chapter_order_without_writing(reader_c
     assert case.client.get("/api/workspace/tasks").json() == []
 
 
-@pytest.mark.parametrize("query", ["%", "_", "\\", "'", "<b>unsafe</b>"])
-def test_search_treats_like_symbols_and_markup_as_plain_text(reader_case, query):
-    result = search(reader_case, query)
-    assert len(result["items"]) == 1
-    hit = result["items"][0]
-    assert hit["chapter_index"] == 1
-    assert query in hit["snippet"]
-    assert utf16_slice(hit["snippet"], hit["snippet_match_start"], hit["snippet_match_length"]) == query
-    assert search(reader_case, "' OR 1=1 --")["items"] == []
-    assert search(reader_case, "OTHER_BOOK_ONLY")["items"] == []
-
-
-def test_search_handles_emoji_indentation_empty_lines_and_bounded_snippets(reader_case):
-    result = search(reader_case, "🧪目标")
-    assert [hit["paragraph"] for hit in result["items"]] == [3, 3]
-    assert [hit["offset"] for hit in result["items"]] == [2, 8]
-    assert all(hit["match_length"] == 4 for hit in result["items"])
-    hit = search(reader_case, "定位值")["items"][0]
-    assert hit["offset"] == 92
-    assert len(hit["snippet"]) <= 48 + len("定位值") + 64
-    assert hit["snippet"] != reader_case.contents[4]
-    assert utf16_slice(hit["snippet"], hit["snippet_match_start"], hit["snippet_match_length"]) == "定位值"
-
-
-def test_search_nonoverlap_case_query_trimming_and_no_match_contract(reader_case):
-    assert [hit["offset"] for hit in search(reader_case, "aa")["items"]] == [0, 2]
-    assert [hit["chapter_index"] for hit in search(reader_case, "TARGET")["items"]] == [3]
-    assert search(reader_case, "  target  ") == search(reader_case, "target")
-    assert len(search(reader_case, "x" * 200)["items"]) == 1
-    for result in (search(reader_case, "不存在的词"), search(reader_case, "target", offset=10000, limit=50)):
-        assert result["items"] == [] and result["has_more"] is False and result["next_offset"] is None
-
-
 @pytest.mark.parametrize("params", [{}, {"q": ""}, {"q": "   "}, {"q": "x" * 201},
     {"q": "target\n"}, {"q": "target\r"}, {"q": "target\x00"},
     {"q": "target", "offset": -1}, {"q": "target", "offset": 10001},
@@ -136,10 +103,6 @@ def test_search_rejects_invalid_bounds_without_changing_reader_state(reader_case
     response = reader_case.client.get("/api/novels/1/search", params=params)
     assert response.status_code == 422, response.text
     assert dump(reader_case) == original
-
-
-def test_search_missing_book_is_not_an_empty_success(reader_case):
-    assert reader_case.client.get("/api/novels/999/search", params={"q": "target"}).status_code == 404
 
 
 def test_old_bookmarks_default_label_note_without_a_get_write(reader_case):

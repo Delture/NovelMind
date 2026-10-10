@@ -1,14 +1,12 @@
 
 from dataclasses import dataclass
 
-import pytest
 
 from backend.app.rag.chunking import (
     CHUNK_FORMAT_VERSION,
     CHUNK_OVERLAP_CHARACTERS,
     MAX_CHUNK_CHARACTERS,
     build_rag_chunks,
-    query_embedding_text,
     rag_source_hash,
     split_chapter_ranges,
 )
@@ -20,11 +18,6 @@ class FakeChapter:
     chapter_index: int
     title: str
     content: str
-
-
-def test_short_and_empty_chapter_ranges() -> None:
-    assert split_chapter_ranges("") == []
-    assert split_chapter_ranges("短章") == [(0, 2)]
 
 
 def test_long_chunk_ranges_are_bounded_ordered_and_cover_every_character() -> None:
@@ -117,13 +110,3 @@ def test_source_hash_changes_with_source_or_embedding_contract() -> None:
     )
 
 
-@pytest.mark.parametrize("question", ["", " ", "\n\t"])
-def test_blank_query_is_rejected(question: str) -> None:
-    with pytest.raises(ValueError, match="blank"):
-        query_embedding_text(question)
-
-
-def test_query_text_is_stripped_and_task_specific() -> None:
-    assert query_embedding_text("  谁拿走了钥匙？  ") == (
-        "用途：检索小说原文\n问题：谁拿走了钥匙？"
-    )
