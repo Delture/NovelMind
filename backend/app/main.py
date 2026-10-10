@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from backend.app.api.characters import router as characters_router
 from backend.app.api.novels import router as novels_router
+from backend.app.api.chapter_review import router as chapter_review_router
 from backend.app.api.rag import router as rag_router
 from backend.app.api.reports import router as reports_router
 from backend.app.api.summaries import router as summaries_router
@@ -51,6 +52,7 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(LocalOriginMiddleware)
 app.include_router(characters_router, prefix="/api")
 app.include_router(novels_router, prefix="/api")
+app.include_router(chapter_review_router, prefix="/api")
 app.include_router(rag_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(summaries_router, prefix="/api")

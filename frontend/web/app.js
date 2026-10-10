@@ -105,7 +105,8 @@ const tasks = createTasks({
   root,
   base,
   go,
-  getPageRefresh: () => pages.refresh
+  getPageRefresh: () => pages.refresh,
+  onCatalogChanged: novelId => pages.invalidateChapters(novelId)
 });
 const pages = createPages({
   root,

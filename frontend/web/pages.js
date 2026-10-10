@@ -30,6 +30,7 @@ export function createPages({
   let readerCleanup, pageRefresh;
   const chapterCache = new Map(),
     readingWrites = new Map();
+  let readingSaveGeneration = 0;
   function searchBox(placeholder) {
     return `<div class="search">${icon('search')}<input type="search" placeholder="${e(placeholder)}" aria-label="${e(placeholder)}"></div>`;
   }
@@ -84,12 +85,16 @@ export function createPages({
     });
   }
   function importBook() {
-    const d = modal('导入小说', `<div class="drop-zone"><p data-file-title>将 TXT 文件拖到这里</p><p class="muted">或从电脑中选择一本小说</p><input type="file" accept=".txt,text/plain" hidden aria-label="选择 TXT 文件"><button data-action="choose">选择文件</button></div><p class="muted">最大 20 MB · UTF-8 / GB18030 · 在本机解析</p><p data-status role="status"></p><footer><button class="primary" data-action="upload" disabled>导入</button></footer>`);
+    const d = modal('导入小说', `<div class="drop-zone"><p data-file-title>将 TXT 文件拖到这里</p><p class="muted">或从电脑中选择一本小说</p><input type="file" accept=".txt,text/plain" hidden aria-label="选择 TXT 文件"><button data-action="choose">选择文件</button></div><p class="muted">最大 20 MB · UTF-8 / GB18030 · 在本机解析</p><label class="check-row"><input type="checkbox" data-ai-review disabled> 导入后用 AI 复核目录</label><p class="muted" data-ai-hint>需先配置生成模型。默认关闭；约 1 次模型请求，失败则保留规则分章，不阻塞导入。</p><p data-status role="status"></p><footer><button class="primary" data-action="upload" disabled>导入</button></footer>`);
     let file;
-    const input = d.querySelector('input'),
+    const input = d.querySelector('input[type=file]'),
       zone = d.querySelector('.drop-zone'),
       status = d.querySelector('[data-status]'),
-      submit = d.querySelector('[data-action=upload]');
+      submit = d.querySelector('[data-action=upload]'),
+      aiReview = d.querySelector('[data-ai-review]');
+    api('/system/model-settings').then(settings => {
+      if (settings?.generation?.configured) aiReview.disabled = false;
+    }).catch(() => {});
     const pick = selected => {
       file = selected;
       const valid = file && /\.txt$/i.test(file.name) && file.size > 0 && file.size <= 20 * 1024 * 1024;
@@ -122,7 +127,15 @@ export function createPages({
           });
           d.closeSheet();
           toast(`已导入 ${result.chapter_count} 章`);
+          const wantReview = aiReview.checked && !aiReview.disabled;
           go('reader', result.novel_id);
+          if (wantReview) {
+            try {
+              await plan('review', {id: result.novel_id, onStart: () => chapterCache.delete(result.novel_id)});
+            } catch (error) {
+              toast(error.message || '目录复核未启动，已保留规则分章');
+            }
+          }
         } catch (error) {
           status.textContent = error.message;
         }
@@ -155,14 +168,26 @@ export function createPages({
     return next;
   }
   function saveReading(id, value, {keepalive = false} = {}) {
-    const write = () => api(base(id) + '/reading/position', {method:'PUT', json:value, keepalive});
+    const gen = readingSaveGeneration;
+    const write = () => {
+      if (gen !== readingSaveGeneration) return Promise.resolve();
+      return api(base(id) + '/reading/position', {method:'PUT', json:value, keepalive});
+    };
     // pagehide must start the request immediately, before the document is discarded.
     return keepalive ? write() : queueReading(id, write);
   }
   function saveBookmark(id, bookmark, remove = false) {
-    return queueReading(id, () => api(base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id), {
-      method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : {json:bookmark})
-    }));
+    const gen = readingSaveGeneration;
+    return queueReading(id, () => {
+      if (gen !== readingSaveGeneration) return Promise.resolve();
+      let path = base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id);
+      if (remove && bookmark.expected_chapter_count != null) {
+        path += '?expected_chapter_count=' + encodeURIComponent(bookmark.expected_chapter_count);
+      }
+      return api(path, {
+        method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : {json:bookmark})
+      });
+    });
   }
   async function reader(fresh, query) {
     const book = state.novel,
@@ -203,7 +228,13 @@ export function createPages({
       save: (value, options) => saveReading(id, value, options),
       saveBookmark: (bookmark, remove) => saveBookmark(id, bookmark, remove)
     });
-    readerCleanup = () => {cleanup();loader.dispose();};
+    readerCleanup = (options) => {cleanup(options);loader.dispose();};
+    pageRefresh = async () => {
+      readingSaveGeneration += 1;
+      chapterCache.delete(id);
+      if (readerCleanup) {readerCleanup({skipSave: true});readerCleanup = null;}
+      if (fresh()) await reader(fresh, query);
+    };
   }
   function citationLinks(indices) {
     return `<div class="citation-links">${[...new Set(indices)].map(n => `<button class="link" data-cite="${n}">第 ${n} 章 · 查看证据</button>`).join('')}</div>`;
@@ -273,7 +304,7 @@ export function createPages({
         id
       })
     });
-    pageRefresh = () => summaries(fresh);
+    pageRefresh = () => { chapterCache.delete(id); return summaries(fresh); };
   }
   async function characters(fresh) {
     const id = state.novel.id;
@@ -320,7 +351,7 @@ export function createPages({
         id
       })
     });
-    pageRefresh = () => characters(fresh);
+    pageRefresh = () => { chapterCache.delete(id); return characters(fresh); };
   }
   function questionHTML(question) {
     return `<div class="question">${e(question.question)}</div><section class="answer"><small>NovelMind · ${e(statuses[question.status])}</small><p>${e(question.answer || question.error_message || '正在根据原文整理回答…')}</p>${question.insufficient_evidence ? '<p class="muted">现有证据不足以完整回答这个问题。</p>' : ''}<div class="citation-links">${question.citations.map((c, i) => `<button class="link" data-question="${e(question.id)}" data-citation="${i}">第 ${c.chapter_index} 章 · ${e(c.chapter_title)}</button>`).join('')}</div></section>`;
@@ -363,6 +394,7 @@ export function createPages({
       })
     });
     pageRefresh = async () => {
+      chapterCache.delete(id);
       const [questions, current] = await Promise.all([allPages(base(id) + '/rag/questions', 100), api(base(id) + '/rag/index')]);
       if (!fresh()) return;
       draw(questions);
@@ -401,7 +433,7 @@ export function createPages({
         id
       })
     });
-    pageRefresh = () => report(fresh);
+    pageRefresh = () => { chapterCache.delete(id); return report(fresh); };
   }
   return {
     library,
@@ -412,6 +444,9 @@ export function createPages({
     report,
     get refresh() {
       return pageRefresh;
+    },
+    invalidateChapters(novelId) {
+      chapterCache.delete(novelId);
     },
     cleanup() {
       readerCleanup?.();

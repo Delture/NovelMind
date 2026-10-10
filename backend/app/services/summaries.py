@@ -281,6 +281,8 @@ def start_chapter_summaries(request: StartSummariesRequest, background_tasks: Ta
         )
 
     _ensure_no_active_report(db, novel_id)
+    from backend.app.services.chapter_review import ensure_no_active_chapter_review
+    ensure_no_active_chapter_review(db, novel_id)
     chapter_count = (
         db.query(func.count(Chapter.id))
         .filter(Chapter.novel_id == novel_id)
@@ -334,6 +336,8 @@ def start_single_chapter_summary(request: StartSummariesRequest, background_task
             ),
         )
     _ensure_no_active_report(db, novel_id)
+    from backend.app.services.chapter_review import ensure_no_active_chapter_review
+    ensure_no_active_chapter_review(db, novel_id)
     provider = provider_factory()
     return _schedule_summary_job(
         novel_id=novel_id,

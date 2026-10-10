@@ -95,6 +95,9 @@
         offset
       };
     }
+    function pushBookmark(bookmark, remove) {
+      return ctx.saveBookmark({...bookmark, expected_chapter_count: total}, remove);
+    }
     function storePosition(options) {
       if (disposed || restoring || !loaded) return;
       position = anchor();
@@ -108,7 +111,8 @@
         },
         position: {
           ...position
-        }
+        },
+        expected_chapter_count: total
       }, options).then(() => {
         if (!disposed) $('.r-save-status').textContent = '阅读位置已保存到本机资料库';
       }).catch(() => {
@@ -335,7 +339,7 @@
         remove.innerHTML = svg('close');
         on(remove, 'click', () => {
           bookmarks = bookmarks.filter(x => x.id !== b.id);
-          ctx.saveBookmark(b, true).catch(error => toast(error.message));
+          pushBookmark(b, true).catch(error => toast(error.message));
           renderBookmarks();
           progress();
         });
@@ -354,7 +358,7 @@
       d.querySelector('[data-bookmark-save]').onclick = () => {
         bookmark.label = d.querySelector('[data-bookmark-label]').value.trim();
         bookmark.note = d.querySelector('[data-bookmark-note]').value.trim();
-        ctx.saveBookmark({...bookmark}).then(() => toast('书签已更新')).catch(error => toast(error.message));
+        pushBookmark({...bookmark}).then(() => toast('书签已更新')).catch(error => toast(error.message));
         renderBookmarks();d.closeSheet();
       };
     }
@@ -364,7 +368,7 @@
       const existing = bookmarks.find(b => b.chapter === chapter && b.paragraph === a.paragraph);
       if (existing) {
         bookmarks = bookmarks.filter(b => b !== existing);
-        ctx.saveBookmark(existing, true).catch(error => toast(error.message));
+        pushBookmark(existing, true).catch(error => toast(error.message));
         toast('已移除当前位置的书签');
       } else {
         if (bookmarks.length >= 500) {toast('最多保存500个书签，请先整理现有书签。');return;}
@@ -374,7 +378,7 @@
           label: '', note: '',
           snippet: paras.children[a.paragraph] ? [...paras.children[a.paragraph].textContent.slice(a.offset)].slice(0,58).join('') : '章节开头'
         });
-        ctx.saveBookmark({...bookmarks.at(-1)}).catch(error => toast(error.message));
+        pushBookmark({...bookmarks.at(-1)}).catch(error => toast(error.message));
         toast('已添加书签，可在书签列表编辑名称和备注');
       }
       position = a;
@@ -569,11 +573,11 @@
     restoring = true;
     showChapter(chapter, initial);
     renderBookmarks();
-    return () => {
+    return (options = {}) => {
       if (disposed) return;
       clearTimeout(saveTimer);
       clearTimeout(idleTimer);
-      storePosition();
+      if (!options.skipSave) storePosition();
       disposed = true;
       textSearch?.dispose();
       window.CSS?.highlights?.delete('novelmind-search-hit');

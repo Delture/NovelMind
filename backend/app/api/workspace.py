@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 from typing import Literal, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, StrictBool, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -45,6 +45,7 @@ class Bookmark(Position):
     snippet: str = Field(default="", max_length=100)
     label: str = Field(default="", max_length=80)
     note: str = Field(default="", max_length=500)
+    expected_chapter_count: int | None = Field(default=None, ge=1, le=10000, exclude=True)
 
 
 class Preferences(BaseModel):
@@ -68,13 +69,22 @@ class ReadingPosition(BaseModel):
     """小体积位置与偏好更新，不携带或覆盖其他标签页的书签。"""
     prefs: Preferences
     position: Position
+    # 客户端缓存的目录章数；目录复核合并后旧阅读器提交会因不匹配被拒绝。
+    expected_chapter_count: int | None = Field(default=None, ge=1, le=10000, exclude=True)
 
 
 def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState]:
-    """先获取 SQLite 写锁再读 JSON，串行合并不同条目的修改。"""
-    novel = get_novel_or_404(db, novel_id)
+    """先拿写锁再读 Novel/JSON，避免目录复核提交后仍用旧 chapter_count 放行。"""
+    get_novel_or_404(db, novel_id)
     db.execute(insert(ReadingState).values(novel_id=novel_id, value=ReaderState().model_dump())
                .on_conflict_do_nothing(index_elements=["novel_id"]))
+    # INSERT 已占用 SQLite 写锁；此处再读 Novel，保证 chapter_count 与后续更新同临界区。
+    novel = (
+        db.query(Novel)
+        .filter(Novel.id == novel_id)
+        .populate_existing()
+        .one()
+    )
     row = db.query(ReadingState).filter(ReadingState.novel_id == novel_id).populate_existing().one()
     return novel, row
 
@@ -82,9 +92,15 @@ def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState
 @router.put("/novels/{novel_id}/reading/position", response_model=ReadingPosition)
 def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(get_db)):
     novel, row = _reading_for_update(db, novel_id)
+    if (
+        value.expected_chapter_count is not None
+        and value.expected_chapter_count != novel.chapter_count
+    ):
+        raise HTTPException(409, "章节目录已更新，请重新打开阅读器。")
     if value.position.chapter > novel.chapter_count:
         raise HTTPException(422, "阅读位置超出章节范围。")
-    row.value = {**row.value, **value.model_dump()}
+    payload = value.model_dump(exclude={"expected_chapter_count"})
+    row.value = {**row.value, **payload}
     db.commit()
     return value
 
@@ -92,19 +108,35 @@ def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(g
 @router.put("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", response_model=Bookmark)
 def save_bookmark(novel_id: int, bookmark_id: str, value: Bookmark, db: Session = Depends(get_db)):
     novel, row = _reading_for_update(db, novel_id)
+    if (
+        value.expected_chapter_count is not None
+        and value.expected_chapter_count != novel.chapter_count
+    ):
+        raise HTTPException(409, "章节目录已更新，请重新打开阅读器。")
     if value.id != bookmark_id or value.chapter > novel.chapter_count:
         raise HTTPException(422, "书签标识或位置无效。")
     bookmarks = [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]
     if len(bookmarks) >= 500:
         raise HTTPException(422, "最多保存500个书签。")
-    row.value = {**row.value, "bookmarks": [*bookmarks, value.model_dump()]}
+    payload = value.model_dump(exclude={"expected_chapter_count"})
+    row.value = {**row.value, "bookmarks": [*bookmarks, payload]}
     db.commit()
     return value
 
 
 @router.delete("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", status_code=204)
-def delete_bookmark(novel_id: int, bookmark_id: str, db: Session = Depends(get_db)):
+def delete_bookmark(
+    novel_id: int,
+    bookmark_id: str,
+    expected_chapter_count: int | None = Query(default=None, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
     novel, row = _reading_for_update(db, novel_id)
+    if (
+        expected_chapter_count is not None
+        and expected_chapter_count != novel.chapter_count
+    ):
+        raise HTTPException(409, "章节目录已更新，请重新打开阅读器。")
     row.value = {**row.value, "bookmarks": [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]}
     db.commit()
 
@@ -225,7 +257,7 @@ def start_workflow(novel_id: int, value: WorkflowRequest, background: Background
         raise HTTPException(422, "请输入问题。")
     job_types = ("chapter_summaries", "report", "characters") if value.kind == "report" else ("rag_index",)
     conflict = db.query(AnalysisJob.id).filter(AnalysisJob.novel_id == novel_id,
-        AnalysisJob.job_type.in_(job_types), AnalysisJob.status.in_(("queued", "running"))).first()
+        AnalysisJob.job_type.in_((*job_types, "chapter_review")), AnalysisJob.status.in_(("queued", "running"))).first()
     if conflict or (value.kind == "ask" and db.query(RagQuestion.id).filter(
             RagQuestion.novel_id == novel_id, RagQuestion.status.in_(("queued", "running"))).first()):
         raise HTTPException(409, "这本书已有相关任务正在运行，请等待完成后再开始任务链。")
