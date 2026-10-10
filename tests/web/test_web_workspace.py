@@ -1,4 +1,3 @@
-"""新前端的真实 API 集成测试，模型提供商用确定性替身，数据库完全隔离。"""
 
 from dataclasses import replace
 from uuid import uuid4

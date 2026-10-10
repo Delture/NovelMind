@@ -1,4 +1,3 @@
-"""Tests for cleanup of derived local vector collections."""
 
 from dataclasses import replace
 

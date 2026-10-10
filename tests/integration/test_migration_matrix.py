@@ -4,7 +4,6 @@ import pytest
 
 
 def build_historical(engine, version):
-    """Replay only released steps up to the requested version on a bare old schema."""
     from backend.app.core.migrations import MIGRATIONS
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE novels (id INTEGER PRIMARY KEY, filename VARCHAR(255) NOT NULL, encoding VARCHAR(20) NOT NULL, chapter_count INTEGER NOT NULL, created_at DATETIME NOT NULL)")
@@ -111,7 +110,6 @@ def test_new_v11_database_reinitializes_without_schema_changes(isolated_config):
 
 @pytest.mark.parametrize("invalid", [False, True])
 def test_v11_fills_legacy_zero_ownership_or_rolls_back_mismatch(isolated_config, invalid):
-    """Exercise the rebuilding migration with actual rows needing ownership repair."""
     from backend.app.core.database import create_db_engine
     from backend.app.core.migrations import run_migrations
     engine = create_db_engine(isolated_config.config.get_settings().database_url)

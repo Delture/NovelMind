@@ -15,15 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class TaskDispatcher(Protocol):
-    """服务只依赖派发合同，不接收 HTTP 框架的具体对象。"""
-
     def add_task(self, function: Callable, *args: Any, **kwargs: Any) -> None: ...
 
 
 @dataclass
 class JobHandle:
-    """一项任务的资源、归属与可取消 Future。"""
-
     job_id: str
     function: Callable
     args: tuple
@@ -134,8 +130,6 @@ executor = JobExecutor()
 
 
 class JobTasks:
-    """适配响应后派发，或由任务链直接等待；不依赖 FastAPI 类型。"""
-
     def __init__(self, background=None, *, parent_id=None, runner=executor):
         self.background = background
         self.parent_id = parent_id

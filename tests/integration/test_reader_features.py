@@ -1,4 +1,3 @@
-"""Read-only full-text search and backwards-compatible bookmark API contracts."""
 
 from copy import deepcopy
 import sqlite3

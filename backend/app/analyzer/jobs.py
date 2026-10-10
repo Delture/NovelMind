@@ -1,9 +1,4 @@
-"""后台分析任务共享的失败落盘与 SQLite 锁重试工具。
-
-任务真正失败后，最重要的是把状态可靠写成终态，否则界面会永远转圈。SQLite
-同一时刻只允许有限写并发，恰逢其他事务时可能短暂报 locked；这里用新的短会话
-和有界退避重试。重试必须有上限，避免永久阻塞，也只针对确认为锁冲突的错误。
-"""
+"""终态必须可靠落盘，否则界面会一直转圈；SQLite 锁冲突用新的短会话有界重试。"""
 
 import logging
 from typing import Callable, Any
@@ -41,7 +36,6 @@ def mark_analysis_job_failed_with_sqlite_lock_retry(
     expected_status: str,
     failure_context: str,
 ) -> bool:
-    """Conditionally terminalize one job using bounded fresh sessions."""
     if expected_status not in {"queued", "running"}:
         raise ValueError("expected_status must be queued or running")
 

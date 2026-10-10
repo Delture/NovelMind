@@ -1,4 +1,3 @@
-"""Tests for the external OpenAI-compatible embedding client."""
 
 import json
 import logging
@@ -29,7 +28,6 @@ def make_settings(
     api_key: Optional[str] = "siliconflow-test-key",
     max_attempts: int = 3,
 ) -> Settings:
-    """Return a valid SiliconFlow embedding configuration."""
     return replace(
         load_settings({}),
         embedding_api_key=api_key,
@@ -46,7 +44,6 @@ def embedding_response(
     model: str = "Qwen/Qwen3-Embedding-4B",
     indices: Optional[list[int]] = None,
 ) -> httpx.Response:
-    """Build one OpenAI-compatible embedding response."""
     if status_code != 200:
         return httpx.Response(
             status_code,
@@ -89,7 +86,6 @@ def make_provider(
     settings: Optional[Settings] = None,
     sleeps: Optional[list[float]] = None,
 ) -> OpenAIEmbeddingProvider:
-    """Create a provider backed by an in-memory HTTP transport."""
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     return OpenAIEmbeddingProvider(
         settings or make_settings(),

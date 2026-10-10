@@ -1,4 +1,3 @@
-"""共享确定性测试数据与假提供商；不发送网络请求。"""
 import json
 from dataclasses import dataclass
 from sqlalchemy import select

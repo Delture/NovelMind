@@ -52,11 +52,7 @@ MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
 
 
 def run_migrations(engine: Engine) -> None:
-    """在一个事务中依次执行尚未记录的迁移，并写入版本账本。
-
-    “exactly once” 指同一数据库的正常执行语义；迁移函数本身仍需可重复运行，
-    因为进程崩溃、手工修复或某些 SQLite DDL 行为都可能留下边界状态。
-    """
+    """迁移函数本身仍需可重复运行：进程崩溃、手工修复或 SQLite DDL 行为都可能留下边界状态。"""
     with engine.begin() as connection:
         # sqlite3 legacy transaction control does not BEGIN for DDL by itself.
         if connection.dialect.name == "sqlite" and not cast(sqlite3.Connection, connection.connection.driver_connection).in_transaction:
@@ -72,7 +68,6 @@ def run_migrations(engine: Engine) -> None:
                 """
             )
         )
-        # 先一次性读取版本集合，循环无需反复查询账本。
         applied_versions = {
             row.version
             for row in connection.execute(

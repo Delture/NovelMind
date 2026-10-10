@@ -1,4 +1,3 @@
-"""Tests for the public system configuration status."""
 
 import json
 from dataclasses import replace

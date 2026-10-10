@@ -53,8 +53,6 @@ from backend.app.models.novel import Chapter, Novel
 
 
 class CloseTrackingFakeProvider(FakeProvider):
-    """Record provider cleanup without requiring a real network client."""
-
     def __init__(self) -> None:
         super().__init__()
         self.close_calls = 0
@@ -157,7 +155,6 @@ class RetryOnceAsyncFakeProvider(ConcurrentAsyncFakeProvider):
 
 @pytest.fixture()
 def session_factory() -> Generator[Callable[[], Session], None, None]:
-    """Provide isolated sessions sharing one in-memory SQLite database."""
     engine = create_db_engine(
         "sqlite://",
         poolclass=StaticPool,
@@ -176,7 +173,6 @@ def session_factory() -> Generator[Callable[[], Session], None, None]:
 
 
 def add_novel(session: Session, chapter_count: int = 2) -> Novel:
-    """Persist a small novel used by summary tests."""
     novel = Novel(
         filename="story.txt",
         encoding="utf-8",

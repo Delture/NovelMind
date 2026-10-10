@@ -1,9 +1,5 @@
-"""把环境变量和前端本地覆盖转换为经过校验的运行时配置。
-
-配置模块位于项目底层，必须集中默认值和类型转换、尽早拒绝危险 URL 或非法
-数值，并以不可变快照交给后台任务。``.env`` 是安装默认值，
-``data/model_settings.json`` 是界面保存的本机覆盖；密钥不会通过状态接口回显。
-覆盖文件使用临时文件加原子替换，防止断电留下半截 JSON。
+"""``.env`` 是安装默认值，``data/model_settings.json`` 是界面保存的本机覆盖。
+覆盖文件用临时文件加原子替换，防止断电留下半截 JSON。
 """
 
 import os
@@ -19,16 +15,12 @@ from dotenv import load_dotenv
 
 
 class ConfigurationError(ValueError):
-    """表示配置值有问题，而不是网络或业务数据发生错误。"""
+    pass
 
 
 @dataclass(frozen=True)
 class Settings:
-    """一次完整且不可变的运行时配置快照。
-
-    ``frozen=True`` 阻止属性原地改变。切换模型时创建新 Settings，使已启动任务
-    继续用旧快照、新请求使用新快照，执行过程不会中途变更供应商。
-    """
+    """不可变快照：已启动任务继续用旧配置，新请求用新配置。"""
 
     app_name: str
     database_url: str
@@ -52,17 +44,14 @@ class Settings:
 
     @property
     def deepseek_configured(self) -> bool:
-        """Return whether a non-empty DeepSeek API key is available."""
         return self.deepseek_api_key is not None
 
     @property
     def embedding_configured(self) -> bool:
-        """Return whether a complete external embedding API is configured."""
         return bool(self.embedding_api_key and self.embedding_base_url)
 
     @property
     def summary_provider_concurrency_limit(self) -> int:
-        """给出已知供应商/模型的请求并发硬上限。"""
         model = self.deepseek_model.casefold()
         if self.generation_provider == "deepseek":
             if "flash" in model:
@@ -73,7 +62,6 @@ class Settings:
 
     @property
     def summary_initial_concurrency(self) -> int:
-        """给自动调度器一个保守起点，后续再根据成功或限流调整。"""
         if self.summary_concurrency_mode == "manual":
             return self.summary_effective_concurrency_limit
         model = self.deepseek_model.casefold()
@@ -90,14 +78,12 @@ class Settings:
 
     @property
     def summary_effective_concurrency_limit(self) -> int:
-        """同时服从用户设置和供应商上限，取二者中更小的值。"""
         return min(
             self.summary_max_concurrency,
             self.summary_provider_concurrency_limit,
         )
 
 
-# 内部稳定标识映射为界面名称。持久化与判断使用英文标识，不使用可翻译文字。
 GENERATION_PROVIDERS = {
     "deepseek": "DeepSeek",
     "openai_compatible": "OpenAI 兼容服务",
@@ -138,11 +124,6 @@ def _required_value(
     name: str,
     default: str,
 ) -> str:
-    """读取必填字符串，去除首尾空白，空值时抛 ``ConfigurationError``。
-
-    ``environ`` 是环境变量式映射，``name`` 是键名，``default`` 在键不存在时使用。
-    返回保证非空的字符串；集中处理让错误消息始终指出具体变量名。
-    """
     value = environ.get(name, default).strip()
     if not value:
         raise ConfigurationError(f"{name} cannot be blank")
@@ -154,11 +135,6 @@ def _positive_integer(
     name: str,
     default: int,
 ) -> int:
-    """把环境变量转换为大于零的整数。
-
-    ``default`` 已是整数。无法执行 ``int`` 或结果小于 1 时抛 ConfigurationError；
-    返回值可直接用于超时、重试和并发上限。
-    """
     raw_value = environ.get(name, str(default)).strip()
     try:
         value = int(raw_value)
@@ -175,7 +151,6 @@ def _optional_value(
     environ: Mapping[str, str],
     name: str,
 ) -> Optional[str]:
-    """读取可选字符串；缺失或去空白后为空则统一返回 ``None``。"""
     return environ.get(name, "").strip() or None
 
 
@@ -185,11 +160,6 @@ def _choice_value(
     default: str,
     choices: frozenset[str],
 ) -> str:
-    """读取小写枚举值并验证其属于 ``choices``。
-
-    ``choices`` 用 frozenset 表示不会被修改。成功返回规范化小写字符串，业务层
-    无需反复处理大小写；失败抛出列有允许值的 ConfigurationError。
-    """
     value = _required_value(environ, name, default).lower()
     if value not in choices:
         allowed = " or ".join(sorted(choices))
@@ -253,11 +223,7 @@ def _normalize_compatible_base_url(name: str, value: str) -> str:
 
 
 def _normalize_deepseek_base_url(value: str) -> str:
-    """只接受 DeepSeek 官方 HTTPS 根地址或 ``/v1``，返回规范地址。
-
-    这防止 DeepSeek 预设密钥被误发往自定义域名；自定义端点必须显式选择
-    ``openai_compatible`` 供应商。
-    """
+    """防止 DeepSeek 预设密钥被误发往自定义域名；自定义端点须显式选择 openai_compatible。"""
     normalized = _normalize_http_url("DEEPSEEK_BASE_URL", value)
     parsed = urlparse(normalized)
     if (
@@ -296,7 +262,6 @@ def _normalize_siliconflow_base_url(value: str) -> str:
 
 
 def normalize_provider_url(role: str, provider: str, base_url: str) -> str:
-    """探测草稿与保存设置采用同一角色、协议和官方地址边界。"""
     providers = GENERATION_PROVIDERS if role == "generation" else EMBEDDING_PROVIDERS
     if role not in {"generation", "embedding"} or provider not in providers:
         raise ConfigurationError("Unsupported model provider for this role")
@@ -308,7 +273,6 @@ def normalize_provider_url(role: str, provider: str, base_url: str) -> str:
 
 
 def load_settings(environ: Mapping[str, str]) -> Settings:
-    """Build and validate settings from an environment mapping."""
     generation_provider = _required_value(
         environ,
         "GENERATION_PROVIDER",
@@ -460,7 +424,6 @@ def load_settings(environ: Mapping[str, str]) -> Settings:
 
 
 def _runtime_settings_path() -> Path:
-    """返回前端覆盖配置文件的绝对 Path，供原子读取和写入使用。"""
     return Path(
         os.environ.get(
             "MODEL_SETTINGS_PATH",
@@ -519,7 +482,6 @@ def _atomic_write_runtime_payload(
 
 
 def _read_runtime_model_settings() -> dict[str, str]:
-    """Read only recognized string overrides from the local settings file."""
     path = _runtime_settings_path()
     if not path.exists():
         return {}
@@ -547,7 +509,6 @@ def _read_runtime_model_settings() -> dict[str, str]:
 
 
 def _model_settings_environ(value: Settings) -> dict[str, str]:
-    """Serialize the editable provider fields without unrelated settings."""
     return {
         "GENERATION_PROVIDER": value.generation_provider,
         "DEEPSEEK_API_KEY": value.deepseek_api_key or "",
@@ -571,7 +532,6 @@ def _model_settings_environ(value: Settings) -> dict[str, str]:
 
 
 def save_runtime_model_settings(value: Settings) -> None:
-    """Atomically persist validated local provider settings."""
     path = _runtime_settings_path()
     payload = _model_settings_environ(value)
     with _runtime_settings_lock:
@@ -581,7 +541,6 @@ def save_runtime_model_settings(value: Settings) -> None:
 def update_runtime_model_settings(
     overrides: Mapping[str, str],
 ) -> Settings:
-    """Validate and persist a partial editable-settings update."""
     unknown = set(overrides).difference(_MODEL_SETTING_NAMES)
     if unknown:
         raise ConfigurationError("Unknown model setting")
@@ -596,7 +555,6 @@ def update_runtime_model_settings(
 
 
 def clear_runtime_model_settings() -> None:
-    """Remove the local override so environment settings apply again."""
     with _runtime_settings_lock:
         try:
             _runtime_settings_path().unlink(missing_ok=True)
@@ -607,7 +565,6 @@ def clear_runtime_model_settings() -> None:
 
 
 def runtime_model_settings_exist() -> bool:
-    """Return whether the frontend-managed override file exists."""
     return _runtime_settings_path().is_file()
 
 
@@ -616,7 +573,6 @@ settings = load_settings(_replace_legacy_embedding_settings(os.environ))
 
 
 def get_settings() -> Settings:
-    """Return environment settings overlaid by editable local settings."""
     with _runtime_settings_lock:
         environ = _replace_legacy_embedding_settings(os.environ)
         environ.update(_read_runtime_model_settings())

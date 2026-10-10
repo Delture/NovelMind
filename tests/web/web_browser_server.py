@@ -69,8 +69,6 @@ class SlowSummaryProvider(SummaryProvider):
 
 
 class PausableEmbeddingProvider(EmbeddingProvider):
-    """Deterministic vectors with an explicit barrier for disconnect verification."""
-
     def embed(self, texts, *, before_attempt=None):
         wait_for_test_release("embedding")
         return super().embed(texts, before_attempt=before_attempt)
@@ -120,7 +118,6 @@ def pause(scope: str):
 
 @app.post("/api/qa/barrier")
 def barrier():
-    """Report whether a worker really reached its fake provider."""
     return {"entered": provider_entered.is_set()}
 
 

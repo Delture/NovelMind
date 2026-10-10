@@ -1,9 +1,4 @@
-"""RAG 的确定性章节分块、embedding 文本格式和整书来源哈希。
-
-分块边界是索引协议的一部分：同一原文必须每次得到相同 chunk_id、字符范围和
-哈希，才能安全复用旧向量。算法优先在自然段或换行附近断开，找不到再硬切；
-相邻块保留重叠，减少关键信息恰好跨边界而检索不到的概率。
-"""
+"""分块边界是索引协议的一部分：同一原文必须每次得到相同 chunk_id、字符范围和哈希，才能安全复用旧向量。"""
 
 import hashlib
 import json
@@ -19,8 +14,6 @@ _BREAK_MARKERS = ("\n\n", "\n", "。", "！", "？", "；")
 
 
 class ChapterLike(Protocol):
-    """分块所需的最小章节形状，使 ORM 对象和测试假对象都可使用。"""
-
     id: int
     chapter_index: int
     title: str
@@ -29,8 +22,6 @@ class ChapterLike(Protocol):
 
 @dataclass(frozen=True)
 class RagChunk:
-    """尚未持久化的分块值对象，记录章节内的精确字符范围。"""
-
     chunk_id: str
     novel_id: int
     chapter_id: int
@@ -45,16 +36,11 @@ class RagChunk:
 
 
 def _sha256_text(value: str) -> str:
-    """返回文本 UTF-8 SHA-256 十六进制摘要，作为稳定内容标识。"""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _find_chunk_end(content: str, start: int) -> int:
-    """从 start 起选择不超过最大长度且尽量靠近自然换行的结束位置。
-
-    返回值是左闭右开切片的 end。若搜索窗口无合适分隔，退回目标硬边界；始终
-    保证 end 大于 start，调用循环因此能够前进。
-    """
+    """若搜索窗口无合适分隔，退回目标硬边界；始终保证 end 大于 start，调用循环因此能前进。"""
     target = min(start + MAX_CHUNK_CHARACTERS, len(content))
     if target == len(content):
         return target
@@ -68,7 +54,6 @@ def _find_chunk_end(content: str, start: int) -> int:
 
 
 def split_chapter_ranges(content: str) -> list[tuple[int, int]]:
-    """返回稳定字符区间；区间采用 Python 左闭右开的切片语义。"""
     if not content:
         return []
 
@@ -91,7 +76,6 @@ def document_embedding_text(
     chapter_title: str,
     text: str,
 ) -> str:
-    """Format a retrieval document without local semantic processing."""
     return (
         "用途：检索小说原文\n"
         f"章节：第{chapter_index}章 {chapter_title}\n"
@@ -99,13 +83,11 @@ def document_embedding_text(
     )
 
 def query_embedding_text(question: str) -> str:
-    """Format one user question for the same retrieval task."""
     if not isinstance(question, str) or not question.strip():
         raise ValueError("question cannot be blank")
     return f"用途：检索小说原文\n问题：{question.strip()}"
 
 
-# chunk_id 包含章节与块序号；content_hash 证明这个范围内文字没有变化。
 def build_rag_chunks(
     *,
     novel_id: int,
@@ -113,7 +95,6 @@ def build_rag_chunks(
     embedding_model: str,
     dimensions: int,
 ) -> list[RagChunk]:
-    """Build stable, ordered chunks from stored chapters."""
     result: list[RagChunk] = []
     for chapter in sorted(chapters, key=lambda item: item.chapter_index):
         for chunk_index, (start, end) in enumerate(
@@ -172,7 +153,6 @@ def rag_source_hash(
     embedding_model: str,
     dimensions: int,
 ) -> str:
-    """Hash the complete ordered source and retrieval configuration."""
     payload = {
         "version": CHUNK_FORMAT_VERSION,
         "embedding_model": embedding_model,

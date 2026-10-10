@@ -1,4 +1,3 @@
-"""Tests for persisted character-analysis snapshots and extraction caches."""
 
 from typing import Generator
 
@@ -21,7 +20,6 @@ from backend.app.models.novel import Chapter, Novel
 
 @pytest.fixture
 def db_session() -> Generator[Session, None, None]:
-    """Use a fresh SQLite schema with foreign keys enabled."""
     engine = create_db_engine(
         "sqlite://",
         poolclass=StaticPool,

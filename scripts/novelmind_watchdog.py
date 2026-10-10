@@ -7,7 +7,6 @@ import time
 
 
 def reap_group(pipe: int, group: int) -> None:
-    """等待启动器管道 EOF，先优雅停止，十秒后清理仍存活的所属进程。"""
     with os.fdopen(pipe, "rb") as stream:
         stream.read()
     try:

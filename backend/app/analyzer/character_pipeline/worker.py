@@ -1,4 +1,3 @@
-"""人物分析 worker 阶段；保留有界抽取、确定性统计与失败原子性。"""
 import logging
 from datetime import datetime
 from functools import partial
@@ -32,7 +31,6 @@ def _claim_character_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
-    """使用共享条件领取与 SQLite 写锁策略。"""
     return claim_analysis_job(db, job_id, "characters", claimed_at, sleep=_sleep_before_claim_retry)
 
 
@@ -42,7 +40,6 @@ def _character_job_has_live_source(
     job_id: str,
     novel_id: int,
 ) -> bool:
-    """确认人物任务仍运行且小说仍存在，供每次模型调用前取消检测。"""
     with session_factory() as status_db:
         return (
             status_db.query(AnalysisJob.id)
@@ -59,7 +56,6 @@ def _character_job_has_live_source(
 
 
 def _close_provider(provider: LLMProvider) -> None:
-    """调用人物 provider 的可选 close；异常只记录日志。"""
     close = getattr(provider, "close", None)
     if not callable(close):
         return
@@ -74,7 +70,6 @@ def run_character_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
-    """Execute one full-book character job and release its provider."""
     try:
         _run_character_job(job_id, provider, session_factory)
     finally:
@@ -87,10 +82,7 @@ def _run_character_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
-    """领取任务、准备章节、归并/推理并原子保存人物快照。
-
-    网络调用不持有写事务；异常由外层写 failed，旧快照保持可用。
-    """
+    """网络调用不持有写事务；异常由外层写 failed，旧快照保持可用。"""
     with session_factory() as db:
         try:
             claimed = _claim_character_job(db, job_id, utc_now())
@@ -180,7 +172,6 @@ def _run_character_job(
                 return
 
             def record_generation_step() -> None:
-                """独立短会话推进进度，复用生命周期与写锁策略。"""
                 def progress_step():
                     with session_factory() as progress_db:
                         if not advance_analysis_job(progress_db, job_id, expand_total=True):

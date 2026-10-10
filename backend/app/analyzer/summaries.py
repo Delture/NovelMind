@@ -1,9 +1,5 @@
-"""章节摘要的切分归并、缓存校验、并发调度和后台任务执行。
-
-单章过长时先按段落切片、分别摘要、再分层合并；短章只需一次调用。全书各章
-互不依赖，因此异步并发请求，但 SQLite 写入由协调器串行完成以降低锁竞争。
-每章成功即增量落盘，失败重试可复用来源哈希仍一致的结果。自动并发在稳定成功
-后逐步增加，遇到限流/服务错误则减半，兼顾速度与供应商压力。
+"""各章并发请求，但 SQLite 写入由协调器串行完成以降低锁竞争。
+自动并发在稳定成功后增加，遇限流/服务错误则减半；每章成功即增量落盘，重试可复用来源哈希一致的结果。
 """
 
 import asyncio
@@ -67,8 +63,6 @@ class _SummaryWorkItem:
 
 
 class ChapterSummaryPayload(BaseModel):
-    """模型必须返回的章节摘要合同；额外字段和不合规内容会被拒绝。"""
-
     model_config = ConfigDict(extra="forbid")
 
     summary: str = Field(min_length=1, max_length=4_000)
@@ -79,7 +73,6 @@ class ChapterSummaryPayload(BaseModel):
     @field_validator("summary", "plot_progression")
     @classmethod
     def strip_required_text(cls, value: str) -> str:
-        """去除必填摘要字段空白；清理后为空则拒绝。"""
         normalized = value.strip()
         if not normalized:
             raise ValueError("summary text cannot be blank")
@@ -91,7 +84,6 @@ class ChapterSummaryPayload(BaseModel):
         cls,
         value: Optional[str],
     ) -> Optional[str]:
-        """把可选悬念的空字符串规范为 None，其余返回去空白文本。"""
         if value is None:
             return None
         return value.strip() or None
@@ -99,7 +91,6 @@ class ChapterSummaryPayload(BaseModel):
     @field_validator("key_events")
     @classmethod
     def normalize_key_events(cls, values: list[str]) -> list[str]:
-        """清理关键事件，拒绝空项/超长项并按首次出现顺序去重。"""
         normalized: list[str] = []
         for value in values:
             event = value.strip()
@@ -113,7 +104,6 @@ class ChapterSummaryPayload(BaseModel):
 
 
 def _split_text(text: str) -> list[str]:
-    """Split oversized text at paragraph boundaries when practical."""
     chunks: list[str] = []
     current_parts: list[str] = []
     current_length = 0
@@ -149,13 +139,11 @@ def _split_text(text: str) -> list[str]:
 
 
 def _summary_chunks(content: str) -> list[str]:
-    """把章节切为首次摘要块；短文本返回只含自身的列表。"""
     chunks = _split_text(content)
     return chunks or [content]
 
 
 def estimate_summary_generation_steps(content: str) -> int:
-    """Return actual map/reduce generation steps for one chapter."""
     pending_count = len(_summary_chunks(content))
     generation_steps = pending_count
     while pending_count > 1:
@@ -167,7 +155,7 @@ def estimate_summary_generation_steps(content: str) -> int:
 
 
 def chapter_summary_source_hash(title: str, content: str) -> str:
-    """计算内容寻址键；标题、正文或提示规则变化都会使旧摘要失效。"""
+    """标题、正文或提示规则变化都会使旧摘要失效。"""
     source_material = json.dumps(
         {
             "title": title,
@@ -183,7 +171,6 @@ def chapter_summary_source_hash(title: str, content: str) -> str:
 
 
 def _summary_system_prompt() -> str:
-    """构造章节摘要系统提示，规定事实边界、JSON 合同与注入防护。"""
     return novelmind_system_prompt(
         role="中文小说长篇分块消化助手",
         material_scope=(
@@ -210,7 +197,6 @@ def _summary_system_prompt() -> str:
 def _ensure_summary_job_can_continue(
     should_continue: Optional[Callable[[], bool]],
 ) -> None:
-    """调用可选取消回调；返回 False 时停止下一次外部调用。"""
     if should_continue is not None and not should_continue():
         raise _SummaryJobCancelled()
 
@@ -222,11 +208,6 @@ def _summarize_text(
     provider: LLMProvider,
     should_continue: Optional[Callable[[], bool]] = None,
 ) -> tuple[ChapterSummaryPayload, str]:
-    """同步摘要短章或对超长章分块后分层归并。
-
-    ``title/content`` 是材料，``provider`` 生成结构化结果，取消回调在每次请求前
-    执行。返回 ``(最终摘要 payload, 实际模型名)``。
-    """
     chunks = _summary_chunks(content)
 
     partial_results: list[ChapterSummaryPayload] = []
@@ -315,7 +296,6 @@ async def _summarize_text_async(
     provider: LLMProvider,
     should_continue: Optional[Callable[[], bool]] = None,
 ) -> ChapterSummaryPayload:
-    """Summarize one chapter while yielding during every network request."""
     chunks = _summary_chunks(content)
     partial_results: list[ChapterSummaryPayload] = []
     for index, chunk in enumerate(chunks, start=1):
@@ -391,7 +371,6 @@ def _summary_is_current(
     source_hash: str,
     provider_model: str,
 ) -> bool:
-    """比较来源哈希、模型和提示版本，判断已有摘要是否仍可复用。"""
     return bool(
         existing is not None
         and existing.source_hash == source_hash
@@ -409,11 +388,7 @@ def _persist_summary_payload(
     payload: ChapterSummaryPayload,
     provider_model: str,
 ) -> ChapterSummary:
-    """在当前事务插入或更新单章摘要，并返回 ORM 行。
-
-    ``payload`` 已经通过 Pydantic；函数同时保存 source_hash/model/prompt_version，
-    但不自行 commit，由调用者把结果与任务进度放进同一事务。
-    """
+    """不自行 commit，由调用者把结果与任务进度放进同一事务。"""
     existing = (
         db.query(ChapterSummary)
         .filter(ChapterSummary.chapter_id == chapter_id)
@@ -445,7 +420,6 @@ def generate_chapter_summary(
     force: bool = False,
     should_continue: Optional[Callable[[], bool]] = None,
 ) -> tuple[ChapterSummary, bool]:
-    """Create or update one chapter summary, reusing a current result."""
     source_hash = chapter_summary_source_hash(
         chapter.title,
         chapter.content,
@@ -488,7 +462,6 @@ def _claim_summary_job(
     job_id: str,
     claimed_at: datetime,
 ) -> int:
-    """使用共享条件领取与 SQLite 写锁策略。"""
     return claim_analysis_job(db, job_id, "chapter_summaries", claimed_at, sleep=_sleep_before_sqlite_retry)
 
 
@@ -497,7 +470,6 @@ def _mark_queued_job_failed_after_claim_error(
     job_id: str,
     error_message: str,
 ) -> bool:
-    """领取异常时只终结仍为 queued 的摘要任务。"""
     return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
@@ -513,7 +485,6 @@ def _mark_running_job_failed_after_execution_error(
     job_id: str,
     error_message: str,
 ) -> bool:
-    """执行异常时只终结仍为 running 的摘要任务。"""
     return mark_analysis_job_failed_with_sqlite_lock_retry(
         session_factory,
         job_id,
@@ -531,7 +502,6 @@ def _summary_job_has_live_source(
     novel_id: int,
     chapter_id: int,
 ) -> bool:
-    """确认任务仍运行、小说仍存在且目标章节仍属于该小说。"""
     with session_factory() as status_db:
         active_job = (
             status_db.query(AnalysisJob.id)
@@ -550,7 +520,6 @@ def _summary_job_has_live_source(
 
 
 async def _close_provider_async(provider: LLMProvider) -> None:
-    """优先 await aclose，否则调用同步 close；关闭异常只写日志。"""
     aclose = getattr(provider, "aclose", None)
     try:
         if callable(aclose):
@@ -568,7 +537,6 @@ def run_summary_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
-    """运行异步摘要 worker，并在 finally 保证 provider 被关闭。"""
     """Execute the async scheduler from FastAPI's background thread."""
     asyncio.run(
         _run_summary_job_and_close(job_id, provider, session_factory)
@@ -580,7 +548,6 @@ async def _run_summary_job_and_close(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
-    """取消并 await 全部活动 asyncio Task，避免协程泄漏和未取异常警告。"""
     try:
         await _run_summary_job(job_id, provider, session_factory)
     finally:
@@ -588,18 +555,12 @@ async def _run_summary_job_and_close(
 
 
 def _advance_summary_job(db: Session, job_id: str) -> bool:
-    """与章节摘要同事务推进进度，保留统一生命周期语义。"""
     return advance_analysis_job(db, job_id)
 
 
 async def _cancel_summary_tasks(
     active: dict[asyncio.Task, _SummaryWorkItem],
 ) -> None:
-    """并发等待章节请求，由单一协调器串行写 SQLite。
-
-    自动模式稳定成功后渐增并发，遇可重试限流/服务压力时减半；不可恢复错误取消
-    其余 task 并上抛，已提交的逐章缓存继续保留。
-    """
     tasks = list(active)
     for task in tasks:
         task.cancel()
@@ -618,11 +579,7 @@ async def _run_concurrent_summary_generation(
     pending: deque[_SummaryWorkItem],
     session_factory: Callable[[], Session],
 ) -> None:
-    """并发等待章节请求，由单一协调器串行写 SQLite。
-
-    ``pending`` 是尚未启动的章节队列；自动模式成功后渐增并发，遇可重试压力减半。
-    不可恢复错误取消其余 task，已经提交的逐章缓存继续保留。
-    """
+    """不可恢复错误取消其余 task，已提交的逐章缓存继续保留。"""
     mode = str(
         getattr(provider, "summary_concurrency_mode", "manual")
     )
@@ -745,7 +702,6 @@ async def _run_summary_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> None:
-    """Generate concurrently while keeping all SQLite writes serialized."""
     with session_factory() as db:
         claimed_at = utc_now()
         try:
@@ -968,7 +924,6 @@ def fail_interrupted_jobs(
 # 进程内 BackgroundTasks 无法跨重启恢复，所以启动时必须显式结束遗留活动任务。
     session_factory: Callable[[], Session],
 ) -> int:
-    """Mark jobs left active by an earlier process shutdown as failed."""
     with session_factory() as db:
         jobs = (
             db.query(AnalysisJob)

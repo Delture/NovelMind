@@ -1,8 +1,5 @@
-"""RAG 当前索引指针、分块定位信息和问答历史模型。
-
-向量本体存放在独立本地向量库，主 SQLite 只保存“哪一个集合是当前集合”和每个
-向量对应的精确原文范围。建索引时先写新集合，验证数量后才切换 ``RagIndex``；
-因此失败不会破坏旧索引。问答再从主库回读原文并核验哈希，绝不盲信向量元数据。
+"""建索引时先写新集合，验证数量后才切换 RagIndex，失败不破坏旧索引；
+问答再从主库回读原文并核验哈希，不盲信向量元数据。
 """
 
 from __future__ import annotations
@@ -31,7 +28,6 @@ from backend.app.core.time import utc_now
 
 
 def _new_uuid() -> str:
-    """为 RAG 问答生成数据库无关的 UUID 字符串主键。"""
     return str(uuid4())
 
 if TYPE_CHECKING:
@@ -41,8 +37,6 @@ if TYPE_CHECKING:
 
 
 class RagIndex(Base):
-    """一部小说唯一且已验证的当前向量快照指针。"""
-
     __tablename__ = "rag_indices"
     __table_args__ = (
         UniqueConstraint(
@@ -178,8 +172,6 @@ class RagChunkRecord(Base):
 
 
 class RagQuestion(Base):
-    """一条持久化问答任务及其证据、答案和引用白名单结果。"""
-
     __tablename__ = "rag_questions"
     __table_args__ = (
         CheckConstraint(

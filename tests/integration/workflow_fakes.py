@@ -1,4 +1,3 @@
-"""Small provider doubles recording actual construction and call-time settings."""
 
 from threading import Event, Lock
 

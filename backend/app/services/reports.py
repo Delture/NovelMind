@@ -1,8 +1,4 @@
-"""全书报告的输入估算、后台启动和当前快照读取接口。
-
-报告不重发正文，而是校验章节摘要来源并可选使用当前人物快照。准备输入、界面
-披露和后台执行共享同一规则。成功才原子替换旧报告，刷新失败不清空已有结果。
-"""
+"""成功才原子替换旧报告，刷新失败不清空已有结果。准备输入、界面披露和后台执行共享同一规则。"""
 
 from backend.app.services.execution import TaskDispatcher
 from backend.app.services.errors import ServiceError
@@ -46,8 +42,6 @@ logger = logging.getLogger(__name__)
 
 # ``force`` 仅忽略可复用报告，不会绕过授权或来源完整性检查。
 class StartReportRequest(BaseModel):
-    """Explicit external-processing and paid-refresh consent."""
-
     model_config = ConfigDict(extra="forbid")
 
     confirm_external_processing: StrictBool
@@ -57,8 +51,6 @@ class StartReportRequest(BaseModel):
 
 
 class ReportEstimateResponse(BaseModel):
-    """Bounded external work and the exact derived-data disclosure."""
-
     novel_id: int
     chapter_count: int
     summary_count: int
@@ -81,8 +73,6 @@ class ReportEstimateResponse(BaseModel):
 
 
 class ReportResponse(BaseModel):
-    """One saved structured report and safe provenance metadata."""
-
     novel_id: int
     report: NovelReportPayload
     model: str
@@ -102,11 +92,6 @@ def _source_or_http_error(
     novel_id: int,
     model: str,
 ) -> PreparedReportSource:
-    """准备已验证报告输入，把 ``ReportSourceError`` 翻译成 HTTP 409。
-
-    ``db`` 和 ``novel_id`` 定位派生数据，``model`` 参与缓存来源判断。返回实际为
-    PreparedReportSource，供估算与缓存校验共享。
-    """
     try:
         return prepare_report_source(
             db,
@@ -127,7 +112,6 @@ def _active_report_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
-    """查询该小说活动报告任务；没有时返回 None。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -146,7 +130,6 @@ def _mark_undispatched_report_failed(
     session_factory: Callable[[], Session],
     job_id: str,
 ) -> bool:
-    """通过共享补偿结束未派发任务。"""
     return fail_dispatch(db=db, session_factory=session_factory, job_id=job_id, job_type="report", message="报告任务未能加入后台队列，请重试。")
 
 
@@ -161,12 +144,6 @@ def _schedule_report_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> AnalysisJobResponse:
-    """持久化报告任务并安全移交生成客户端。
-
-    ``novel_id/progress_total/request`` 定义范围、进度和 force 授权；FastAPI
-    ``background_tasks`` 接收 worker；``db/session_factory`` 分别服务当前事务和
-    补偿事务。成功返回任务响应，派发前后失败都会关闭 provider 并终结任务。
-    """
     provider_transferred = False
     try:
         active = _active_report_job(db, novel_id)
@@ -254,12 +231,6 @@ def _build_report_estimate(
     novel_id: int,
     settings: Settings,
 ) -> ReportEstimateResponse:
-    """生成报告授权页所需的纯本地估算。
-
-    ``db/novel_id`` 定位并复核全部当前摘要与可选人物快照，``settings`` 提供当前
-    生成模型。返回摘要/人物数量、批次、预计步骤、最大尝试和外发字符；不构造
-    provider，不产生模型费用。
-    """
     source = _source_or_http_error(
         db=db,
         novel_id=novel_id,
@@ -335,7 +306,6 @@ def _build_report_estimate(
 
 
 def get_report_estimate(novel_id: int, settings: Settings, db: Session) -> ReportEstimateResponse:
-    """Describe report prerequisites, data transfer, and API bounds."""
     return _build_report_estimate(
         db=db,
         novel_id=novel_id,

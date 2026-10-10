@@ -1,8 +1,5 @@
-"""Windows 开发入口：复用 uvicorn 文件监视，通过进程事件重启自己拥有的 worker。
-
-uvicorn 0.39 的 Windows reload 依赖控制台 CTRL_C_EVENT，随后无界 join。
-启动器的新进程组或无控制台环境可能不传递该事件。本适配只替换 worker 的停止
-协议，继续复用 uvicorn 的监听 socket、spawn、文件监视和日志，不修改第三方包。
+"""uvicorn 0.39 的 Windows reload 依赖控制台 CTRL_C_EVENT 且无界 join，启动器的新进程组或无控制台环境可能不传递该事件。
+本适配只替换 worker 的停止协议，继续复用 uvicorn 的监听 socket、spawn、文件监视和日志，不修改第三方包。
 """
 
 import argparse
@@ -19,15 +16,14 @@ logger = logging.getLogger("uvicorn.error")
 
 
 class WorkerTarget:
-    """可被 spawn 序列化的 worker 入口，配置和停止事件只传给自己的子进程。"""
+    """可被 spawn 序列化；配置和停止事件只传给自己的子进程。"""
 
     def __init__(self, config, stop_event):
-        """捕获启动配置和 multiprocessing Event，不传线程或已创建的 Server。"""
+        """不传线程或已创建的 Server。"""
         self.config = config
         self.stop_event = stop_event
 
     def run(self, sockets=None):
-        """在子进程主线程运行 uvicorn；辅助线程仅把事件转换成退出标志。"""
         server = Server(self.config)
 
         def request_exit():
@@ -43,7 +39,6 @@ class OwnedWorkerReload(StatReload):
     """只重启自己持有的 Process，先优雅退出，再按有界超时终止。"""
 
     def __init__(self, config, sockets):
-        """使用与 uvicorn 相同的 spawn 上下文创建进程间事件。"""
         self.worker_stopped = False
         self.worker_stop = multiprocessing.get_context("spawn").Event()
         target = WorkerTarget(config, self.worker_stop)
@@ -81,7 +76,6 @@ class OwnedWorkerReload(StatReload):
         self.worker_stopped = False
 
     def shutdown(self):
-        """退出重载器时回收自己的 worker 和监听 socket。"""
         try:
             # restart 可能已响应停止请求并关闭旧 Process 句柄。
             if not self.worker_stopped:
@@ -93,7 +87,6 @@ class OwnedWorkerReload(StatReload):
 
 
 def main():
-    """仅支持启动器需要的开发参数；真实服务生命周期仍由 uvicorn 执行。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app")
     parser.add_argument("--host", default="127.0.0.1")

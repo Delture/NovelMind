@@ -1,4 +1,3 @@
-"""v01_analysis：保留历史数据升级和约束检查。"""
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 from .validation import (
@@ -11,7 +10,6 @@ from .validation import (
 )
 
 def _add_unique_chapter_index(connection: Connection) -> None:
-    """Prevent duplicate display indexes inside one novel."""
     inspector = inspect(connection)
     if "chapters" not in inspector.get_table_names():
         return
@@ -67,7 +65,6 @@ def _add_unique_chapter_index(connection: Connection) -> None:
 
 
 def _add_analysis_tables(connection: Connection) -> None:
-    """Create and validate chapter-summary and analysis-job tables."""
     connection.execute(
         text(
             """
@@ -272,7 +269,6 @@ def _add_analysis_tables(connection: Connection) -> None:
 
 
 def _add_unique_active_job_index(connection: Connection) -> None:
-    """Add target scope and enforce one active job per novel and type."""
     if "analysis_jobs" not in inspect(connection).get_table_names():
         raise RuntimeError(
             "数据库缺少 analysis_jobs 表，无法添加活动任务唯一索引。"
@@ -367,7 +363,6 @@ def _add_unique_active_job_index(connection: Connection) -> None:
 
 
 def _add_analysis_force_scope(connection: Connection) -> None:
-    """Persist whether an analysis job intentionally refreshes results."""
     if "analysis_jobs" not in inspect(connection).get_table_names():
         raise RuntimeError(
             "数据库缺少 analysis_jobs 表，无法添加强制刷新字段。"

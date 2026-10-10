@@ -1,9 +1,5 @@
-"""章节摘要的估算、启动、结果分页和任务状态接口。
-
-服务负责校验与任务派发，不实现摘要算法。标准顺序是：验证小说与
-双重授权、计算范围、创建 queued 任务、提交事务、再交给任务派发器。
-先提交保证后台线程能查到任务；派发失败则用独立会话补偿成 failed。数据库
-局部唯一索引处理并发竞态，冲突以领域错误交还 HTTP 边界。
+"""标准顺序：验证小说与双重授权、计算范围、创建 queued 任务、提交事务、再交给任务派发器。
+先提交保证后台线程能查到任务；派发失败用独立会话补偿成 failed；并发竞态由数据库局部唯一索引处理。
 """
 
 from backend.app.services.execution import TaskDispatcher
@@ -46,8 +42,6 @@ logger = logging.getLogger(__name__)
 
 # 请求只承载用户选择；任务状态由服务端决定，不能相信浏览器提交内部状态。
 class StartSummariesRequest(BaseModel):
-    """Explicit consent and refresh options for summary generation."""
-
     model_config = ConfigDict(extra="forbid")
 
     confirm_external_processing: StrictBool
@@ -56,8 +50,6 @@ class StartSummariesRequest(BaseModel):
 
 
 class ChapterSummaryResponse(BaseModel):
-    """One saved structured chapter summary."""
-
     chapter_id: int
     chapter_index: int
     chapter_title: str
@@ -70,8 +62,6 @@ class ChapterSummaryResponse(BaseModel):
 
 
 class ChapterSummaryListResponse(BaseModel):
-    """All completed chapter summaries for one novel."""
-
     items: list[ChapterSummaryResponse]
     total: int
     completed: int
@@ -80,8 +70,6 @@ class ChapterSummaryListResponse(BaseModel):
 
 
 class SummaryEstimateResponse(BaseModel):
-    """Estimated external work shown before a user confirms generation."""
-
     novel_id: int
     chapter_count: int
     character_count: int
@@ -105,8 +93,6 @@ class SummaryEstimateResponse(BaseModel):
 
 
 class AnalysisJobListResponse(BaseModel):
-    """Recent analysis jobs for one novel."""
-
     items: list[AnalysisJobResponse]
     total: int
 
@@ -133,7 +119,6 @@ def _active_summary_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
-    """返回某小说当前活动摘要任务，供友好冲突提示；无任务返回 None。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -152,7 +137,6 @@ def _mark_committed_summary_job_failed(
     db: Session,
     session_factory: Callable[[], Session],
 ) -> bool:
-    """通过共享补偿结束未派发任务。"""
     return fail_dispatch(db=db, session_factory=session_factory, job_id=job_id, job_type="chapter_summaries", message="摘要任务未能加入后台队列，请重试。")
 
 
@@ -169,11 +153,6 @@ def _schedule_summary_job(
     session_factory: Callable[[], Session],
     target_chapter_index: Optional[int] = None,
 ) -> AnalysisJobResponse:
-    """创建并派发全书或单章摘要任务。
-
-    ``target_chapter_index=None`` 表示全书；其余参数分别提供请求范围、进度、授权、
-    后台容器、数据库和 provider 所有权。返回的任务 ID 供前端轮询。
-    """
     active_job = _active_summary_job(db, novel_id)
     if active_job is not None:
         _close_provider(provider)
@@ -278,7 +257,6 @@ def _schedule_summary_job(
 
 
 def start_chapter_summaries(request: StartSummariesRequest, background_tasks: TaskDispatcher, novel_id: int, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
-    """Start an idempotent background job for all chapter summaries."""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -322,7 +300,6 @@ def start_chapter_summaries(request: StartSummariesRequest, background_tasks: Ta
 
 
 def start_single_chapter_summary(request: StartSummariesRequest, background_tasks: TaskDispatcher, novel_id: int, chapter_index: int, db: Session, provider_factory: ProviderFactory, session_factory: Callable[[], Session]) -> AnalysisJobResponse:
-    """Start summary generation for one selected chapter."""
     chapter_exists = (
         db.query(Chapter.id)
         .filter(
@@ -371,7 +348,6 @@ def start_single_chapter_summary(request: StartSummariesRequest, background_task
 
 
 def list_chapter_summaries(novel_id: int, offset: int, limit: int, db: Session) -> ChapterSummaryListResponse:
-    """Return completed summaries without loading chapter bodies."""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -429,7 +405,6 @@ def list_chapter_summaries(novel_id: int, offset: int, limit: int, db: Session) 
 
 
 def get_chapter_summary(novel_id: int, chapter_index: int, db: Session) -> ChapterSummaryResponse:
-    """Return one chapter summary without loading chapter content."""
     row = (
         db.query(
             Chapter.id,
@@ -480,7 +455,6 @@ def get_chapter_summary(novel_id: int, chapter_index: int, db: Session) -> Chapt
 
 
 def get_summary_estimate(novel_id: int, settings: Settings, db: Session) -> SummaryEstimateResponse:
-    """Estimate work and disclosure before starting external generation."""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -583,7 +557,6 @@ def get_summary_estimate(novel_id: int, settings: Settings, db: Session) -> Summ
 
 
 def list_analysis_jobs(novel_id: int, job_type: Optional[str], limit: int, db: Session) -> AnalysisJobListResponse:
-    """Return recent persisted jobs so a refreshed UI can recover."""
     if db.get(Novel, novel_id) is None:
         raise ServiceError(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -610,7 +583,6 @@ def list_analysis_jobs(novel_id: int, job_type: Optional[str], limit: int, db: S
 
 
 def get_analysis_job(job_id: str, db: Session) -> AnalysisJobResponse:
-    """Return current progress for one analysis job."""
     job = db.get(AnalysisJob, job_id)
     if job is None:
         raise ServiceError(

@@ -1,4 +1,3 @@
-"""HTTP 声明；任务链直接调用 services 中同一业务入口。"""
 from backend.app.api.service_route import ServiceRoute
 from backend.app.services.tasks import get_session_factory
 from collections.abc import Callable
@@ -38,7 +37,6 @@ def get_rag_estimate(
         get_vector_store_factory
     ),
 ) -> RagEstimateResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.get_rag_estimate(novel_id=novel_id, force=force, db=db, settings=settings, vector_store_factory=vector_store_factory)
 
 
@@ -54,7 +52,6 @@ def get_rag_index_status(
         get_vector_store_factory
     ),
 ) -> RagIndexStatusResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.get_rag_index_status(novel_id=novel_id, db=db, settings=settings, vector_store_factory=vector_store_factory)
 
 
@@ -75,7 +72,6 @@ def start_rag_index(
     ),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> RagJobResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.start_rag_index(request=request, background_tasks=JobTasks(background_tasks), novel_id=novel_id, db=db, settings=settings, embedding_factory=embedding_factory, vector_store_factory=vector_store_factory, session_factory=session_factory)
 
 
@@ -88,7 +84,6 @@ def list_rag_index_jobs(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
 ) -> list[RagJobResponse]:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.list_rag_index_jobs(novel_id=novel_id, limit=limit, db=db)
 
 
@@ -111,7 +106,6 @@ def start_rag_question(
     ),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> RagQuestionResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.start_rag_question(request=request, background_tasks=JobTasks(background_tasks), novel_id=novel_id, db=db, settings=settings, embedding_factory=embedding_factory, generation_factory=generation_factory, vector_store_factory=vector_store_factory, session_factory=session_factory)
 
 
@@ -125,7 +119,6 @@ def list_rag_questions(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> RagQuestionListResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.list_rag_questions(novel_id=novel_id, offset=offset, limit=limit, db=db)
 
 
@@ -142,5 +135,4 @@ def get_rag_question(
     ),
     db: Session = Depends(get_db),
 ) -> RagQuestionResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.get_rag_question(novel_id=novel_id, question_id=question_id, db=db)

@@ -1,4 +1,3 @@
-"""Contract tests for the DeepSeek JSON generation provider."""
 
 import asyncio
 import json
@@ -29,8 +28,6 @@ from backend.app.core.config import Settings, load_settings
 
 
 class AnalysisPayload(BaseModel):
-    """Small response model used to verify JSON validation."""
-
     summary: str
     characters: List[str]
 
@@ -42,7 +39,6 @@ def make_settings(
     max_attempts: int = 3,
     max_tokens: int = 8_192,
 ) -> Settings:
-    """Return deterministic provider settings for one test."""
     return replace(
         load_settings({}),
         deepseek_api_key=api_key,
@@ -59,7 +55,6 @@ def completion_response(
     status_code: int = 200,
     error_message: str = "provider failure",
 ) -> httpx.Response:
-    """Build one DeepSeek-compatible HTTP response."""
     if status_code != 200:
         return httpx.Response(
             status_code,
@@ -111,7 +106,6 @@ def make_provider(
     sleeps: Optional[List[float]] = None,
     jitter: float = 0.25,
 ) -> DeepSeekProvider:
-    """Create a provider backed by an in-memory HTTP transport."""
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     return DeepSeekProvider(
         settings or make_settings(),

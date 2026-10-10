@@ -1,4 +1,3 @@
-"""人物 API 声明；业务校验、估算、查询和派发均在 services.characters。"""
 
 from backend.app.api.service_route import ServiceRoute
 from typing import Callable, Literal, Optional
@@ -41,7 +40,6 @@ def get_character_estimate(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> CharacterEstimateResponse:
-    """委托人物业务服务。"""
     return service.get_character_estimate(novel_id=novel_id, settings=settings, db=db)
 
 
@@ -59,7 +57,6 @@ def start_character_analysis(
     provider_factory: ProviderFactory = Depends(get_sync_llm_provider_factory),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
-    """委托人物业务服务。"""
     return service.start_character_analysis(
         request=request,
         background_tasks=JobTasks(background_tasks),
@@ -82,7 +79,6 @@ def list_characters(
     ),
     db: Session = Depends(get_db),
 ) -> CharacterListResponse:
-    """委托人物业务服务。"""
     return service.list_characters(
         novel_id=novel_id, offset=offset, limit=limit, search=search, sort=sort, db=db
     )
@@ -97,7 +93,6 @@ def get_character(
     character_id: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
 ) -> CharacterDetailResponse:
-    """委托人物业务服务。"""
     return service.get_character(novel_id=novel_id, character_id=character_id, db=db)
 
 
@@ -112,7 +107,6 @@ def list_character_appearances(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> CharacterAppearanceListResponse:
-    """委托人物业务服务。"""
     return service.list_character_appearances(
         novel_id=novel_id, character_id=character_id, offset=offset, limit=limit, db=db
     )
@@ -129,7 +123,6 @@ def list_character_relationships(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> CharacterRelationshipListResponse:
-    """委托人物业务服务。"""
     return service.list_character_relationships(
         novel_id=novel_id, character_id=character_id, offset=offset, limit=limit, db=db
     )

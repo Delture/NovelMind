@@ -1,4 +1,3 @@
-"""Model-directory probes use fake transports, scoped credentials, and bounded responses."""
 
 import asyncio
 from dataclasses import replace

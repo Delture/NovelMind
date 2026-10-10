@@ -1,4 +1,3 @@
-"""Database integrity tests for RAG snapshots and answer history."""
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker

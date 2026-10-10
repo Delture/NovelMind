@@ -1,4 +1,3 @@
-"""人物分析 merge 阶段；保留有界抽取、确定性统计与失败原子性。"""
 import logging
 from typing import Callable, Optional
 from backend.app.analyzer.llm import LLMProvider, ProviderResponseError
@@ -25,7 +24,6 @@ from .extraction import _canonical_json, _generate_payload
 logger = logging.getLogger(__name__)
 
 def _merge_system_prompt() -> str:
-    """构造观察归并提示，要求每个 observation_id 恰好归入一个人物档案。"""
     return novelmind_system_prompt(
         role="中文小说人物消歧与档案归并助手",
         material_scope=(
@@ -48,7 +46,6 @@ def _merge_system_prompt() -> str:
 
 
 def _reconciliation_system_prompt() -> str:
-    """构造跨批候选身份调和提示，只允许引用给定本地 profile_id。"""
     return novelmind_system_prompt(
         role="中文小说跨批人物消歧助手",
         material_scope=(
@@ -67,7 +64,6 @@ def _reconciliation_system_prompt() -> str:
 
 
 def _synthesis_system_prompt() -> str:
-    """构造同一身份候选的名称、别名和简介综合提示。"""
     return novelmind_system_prompt(
         role="中文小说人物档案合成助手",
         material_scope=(
@@ -86,7 +82,6 @@ def _synthesis_system_prompt() -> str:
 
 
 def _relationship_system_prompt() -> str:
-    """构造人物关系推理提示，要求关系端点和证据章节来自白名单。"""
     return novelmind_system_prompt(
         role="中文小说人物关系分析助手",
         material_scope=(
@@ -112,7 +107,6 @@ def _relationship_system_prompt() -> str:
 def _compact_observation(
     observation: StoredCharacterObservation,
 ) -> dict[str, object]:
-    """Keep later-stage prompts bounded without changing stored data."""
     return {
         "observation_id": observation.observation_id,
         "name": _bounded_text(observation.name, 80),
@@ -135,7 +129,6 @@ def _compact_observation(
 def _compact_profile(
     profile: _ResolvedProfile,
 ) -> dict[str, object]:
-    """Return only bounded fields needed for relationship inference."""
     return {
         "profile_id": profile.profile_id,
         "canonical_name": _bounded_text(
@@ -160,7 +153,6 @@ def _chapter_data_for_observations(
     *,
     include_titles: bool,
 ) -> list[dict[str, object]]:
-    """按 observation ID 聚合所涉章节/片段信息，供人物归并提示提供证据上下文。"""
     chapters_by_id: dict[int, dict[str, object]] = {}
     for item, observation in observations:
         chapter_data = chapters_by_id.setdefault(
@@ -197,7 +189,6 @@ def _merge_request_data(
     batch_index: int,
     batch_count: int,
 ) -> dict[str, object]:
-    """把一个观察批次和对应章节上下文组装为人物归并请求 JSON。"""
     return {
         "batch_index": batch_index,
         "batch_count": batch_count,
@@ -217,7 +208,6 @@ def _relationship_request_data(
     batch_index: int,
     batch_count: int,
 ) -> dict[str, object]:
-    """把候选人物与有限章节证据组装为关系推理请求 JSON。"""
     return {
         "batch_index": batch_index,
         "batch_count": batch_count,
@@ -234,7 +224,6 @@ def _relationship_request_data(
 def _observation_batches(
     prepared: list[_PreparedChapter],
 ) -> list[_ObservationBatch]:
-    """Partition observations under explicit count and size bounds."""
     batches: list[_ObservationBatch] = []
     current: list[
         tuple[_PreparedChapter, StoredCharacterObservation]
@@ -287,7 +276,6 @@ def _validate_partition(
     *,
     profile_id_prefix: str = "profile",
 ) -> list[_ResolvedProfile]:
-    """验证归并结果对 expected_ids 不重不漏，并分配本地 profile_id。"""
     seen: set[str] = set()
     resolved: list[_ResolvedProfile] = []
     for index, profile in enumerate(payload.profiles, start=1):
@@ -312,7 +300,6 @@ def _validate_partition(
 def _profile_groups(
     profiles: list[_ResolvedProfile],
 ) -> list[list[_ResolvedProfile]]:
-    """按固定上限把候选档案顺序分组，供跨批身份调和。"""
     return [
         profiles[start : start + MAX_CHARACTER_PROFILE_GROUP_ITEMS]
         for start in range(
@@ -327,7 +314,6 @@ def _validate_profile_partition(
     payload: CharacterReconciliationPayload,
     expected_ids: set[str],
 ) -> list[set[str]]:
-    """验证身份组对 expected_ids 严格分区，返回每组 ID 集合。"""
     seen: set[str] = set()
     groups: list[set[str]] = []
     for group in payload.groups:
@@ -348,7 +334,6 @@ def _validate_profile_partition(
 def _reconciliation_requests(
     profiles: list[_ResolvedProfile],
 ) -> list[list[_ResolvedProfile]]:
-    """构造相邻及边界候选比较组，控制跨批身份调和提示规模。"""
     groups = _profile_groups(profiles)
     return [
         (
@@ -369,12 +354,7 @@ def _same_identity_decisions(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> dict[frozenset[str], bool]:
-    """调用模型判断候选档案是否属于同一人物。
-
-    profiles 是本地候选，provider 执行严格分区响应，should_continue 负责取消，
-    record_generation_step 更新进度。返回以 frozenset 两 ID 为键的对称布尔映射；
-    不在本地凭名字相似度猜身份。
-    """
+    """不在本地凭名字相似度猜身份。"""
     decisions: dict[frozenset[str], bool] = {}
     requests = _reconciliation_requests(profiles)
     for request_index, candidates in enumerate(requests, start=1):
@@ -461,12 +441,7 @@ def _synthesize_identity_cluster(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> _ResolvedProfile:
-    """把一个确认同一身份的候选簇综合为单一规范档案。
-
-    cluster 可能仍超过一次提示预算，因此函数分层合并；每轮要求模型返回精确的
-    profile_id 分区并保留所有 observation_ids。返回新的 ResolvedProfile，ID 由
-    本地确定，文本由模型生成并经 Pydantic 校验。
-    """
+    """簇可能超出单次提示预算，故分层合并。"""
     current = list(cluster)
     round_index = 0
     while len(current) > 1:
@@ -536,7 +511,6 @@ def _reconcile_profiles_with_api(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> list[_ResolvedProfile]:
-    """跨归并批次调和同一人物，并综合多候选身份簇。"""
     if not profiles:
         return []
     decisions = _same_identity_decisions(
@@ -575,12 +549,6 @@ def _merge_profiles(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> tuple[list[_ResolvedProfile], list[_ObservationBatch]]:
-    """把全部逐章观察归并为全书规范人物。
-
-    prepared 是有序章节缓存；函数先按提示预算生成 ObservationBatch，各批严格
-    验证 observation_id 不重不漏，再跨批身份调和。返回 ``(最终档案, 原批次)``，
-    后者继续为关系证据范围和本地统计提供来源。
-    """
     batches = _observation_batches(prepared)
     batched_profiles: list[_ResolvedProfile] = []
     for batch_index, batch in enumerate(batches, start=1):
@@ -628,12 +596,7 @@ def _relationship_evidence_batches(
 ) -> list[list[
     tuple[_PreparedChapter, StoredCharacterObservation]
 ]]:
-    """按提示字符预算构造关系推理的章节证据批次。
-
-    prepared 提供逐章观察，profiles 给出合法人物白名单，base_request_characters
-    预留固定人物档案开销。返回批次保留章节序号和局部观察；未知 ID、空证据不会
-    被发给关系模型。
-    """
+    """未知 ID 与空证据不会发给关系模型。"""
     known_ids = {profile.profile_id for profile in profiles}
     relevant = [
         pair
@@ -695,7 +658,6 @@ def _relationship_call_specs(
     list[_ResolvedProfile],
     list[tuple[_PreparedChapter, StoredCharacterObservation]],
 ]]:
-    """组合人物分组和证据批次，返回每次关系模型调用的参数规格。"""
     groups = _profile_groups(profiles)
     all_observations = [
         pair
@@ -735,12 +697,6 @@ def _infer_relationships(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> list[CharacterRelationPayload]:
-    """推理并合并整书人物关系。
-
-    profiles 是合法端点，prepared/observation_batches 提供证据，provider 执行
-    结构化生成。每次结果验证端点、关系方向和证据章节白名单；同一边重复出现时
-    本地合并证据而不重复保存。返回最终 CharacterRelationPayload 列表。
-    """
     if not profiles:
         return []
     specs = _relationship_call_specs(profiles, batches)

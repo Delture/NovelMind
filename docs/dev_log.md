@@ -398,3 +398,8 @@
 - ORM 迁移到 DeclarativeBase/Mapped；v12 规范历史任务链时间并保留索引、微秒和时区语义。新增 macOS 双击入口、进程组/管道看护及真实生命周期测试。
 - 整理开发依赖、平台测试、文案、个人路径与 output 忽略，新增三平台 CI。最终全量：717 个、711 通过、6 个 Windows 专用跳过；Edge 通用16/阅读专项9项通过；Ruff F 类与 mypy backend 63文件无错误。
 - 未调用真实模型，未修改用户数据，未提交/推送或关闭 Issue；CI尚未在远端执行。完整清单和边界见 `issue_3_fixes_2026-10-08.md`。
+
+## 2026-10-10：精简注释与 docstring
+
+- 删除复述函数名、参数和实现的教学式 docstring/注释，仅保留事务、并发、取消、安全与付费调用等非显然原因，且压缩到 1–2 行；不改任何逻辑，所有模块去掉 docstring 后的 AST 与改动前逐一相同。
+- 移除 `tests/backend/test_code_documentation.py`：它强制所有公开接口和复杂函数都有 docstring，与本次精简方向相反。

@@ -1,4 +1,3 @@
-"""共享确定性测试数据与假提供商；不发送网络请求。"""
 import asyncio
 import json
 import threading
@@ -45,8 +44,6 @@ from backend.app.models.analysis import AnalysisJob, ChapterSummary
 from backend.app.models.novel import Chapter, Novel
 
 class FakeProvider:
-    """Deterministic provider used without any external API calls."""
-
     model = "deepseek-v4-pro"
 
     def __init__(

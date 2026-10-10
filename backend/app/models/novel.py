@@ -1,8 +1,5 @@
-"""小说与章节的 SQLAlchemy ORM 模型。
-
-ORM 模型描述数据库列、数据库约束和 Python 对象关系。``nullable=False`` 与
-``UniqueConstraint`` 是最终数据防线；关系不是数据副本，而是沿外键查询。
-``cascade`` 和 ``ondelete=CASCADE`` 分别照顾 ORM 层与数据库层的级联删除。
+"""``nullable=False`` 与 UniqueConstraint 是最终数据防线；
+``cascade`` 与 ``ondelete=CASCADE`` 分别照顾 ORM 层与数据库层的级联删除。
 """
 
 from __future__ import annotations
@@ -36,8 +33,6 @@ if TYPE_CHECKING:
 
 
 class Novel(Base):
-    """一份已上传小说的元数据根对象，不在本行重复保存整部全文。"""
-
     __tablename__ = "novels"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -60,7 +55,6 @@ class Novel(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
-    # ``uselist=False`` 将默认列表语义收紧为“一部小说一个当前快照”。
     character_analysis: Mapped["CharacterAnalysis"] = relationship(
         "CharacterAnalysis",
         back_populates="novel",

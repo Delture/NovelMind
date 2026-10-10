@@ -1,7 +1,5 @@
-"""启动时尽力清理不再被主数据库引用的本地向量集合。
-
-进程可能在新集合写完、主库指针切换前退出而留下孤儿集合。这里以主库的当前
-collection_name 为唯一保留依据。维护失败只记日志，不阻止后端启动。
+"""进程可能在新集合写完、主库指针切换前退出而留下孤儿集合；以主库的当前 collection_name 为唯一保留依据。
+维护失败只记日志，不阻止后端启动。
 """
 
 import logging
@@ -23,7 +21,6 @@ def cleanup_orphan_rag_collections(
     session_factory: Callable[[], Session],
     vector_store_path: str,
 ) -> int:
-    """Delete managed collections not referenced by current SQLite state."""
     if not Path(vector_store_path).expanduser().exists():
         return 0
     store = LocalVectorStore(vector_store_path)

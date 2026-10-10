@@ -1,9 +1,5 @@
-"""人物逐章缓存、当前快照、出场与关系的 ORM 模型。
-
-人物分析采用“两层持久化”：逐章抽取可增量复用，整书归并结果则作为一个当前
-快照原子替换。这样失败重试不必重复付费处理未变化章节，也不会让用户看到只
-更新了一半的人物网络。大量复合外键用于保证人物、章节、关系都属于同一小说
-和同一快照，而不是只验证某个整数 ID 恰好存在。
+"""人物分析两层持久化：逐章缓存可增量复用，整书归并结果作为当前快照原子替换，
+失败重试不重复付费，也不会出现半更新的人物网络。
 """
 
 from __future__ import annotations
@@ -93,8 +89,6 @@ class ChapterCharacterExtraction(Base):
 
 
 class CharacterAnalysis(Base):
-    """一部小说当前完整人物分析的快照根记录。"""
-
     __tablename__ = "character_analyses"
     __table_args__ = (
         UniqueConstraint(
@@ -306,8 +300,6 @@ class Character(Base):
 
 
 class CharacterAppearance(Base):
-    """One character's aggregate appearance in one chapter."""
-
     __tablename__ = "character_appearances"
     __table_args__ = (
         ForeignKeyConstraint(
@@ -376,8 +368,6 @@ class CharacterAppearance(Base):
 
 
 class CharacterRelationship(Base):
-    """One typed relationship between two characters in a snapshot."""
-
     __tablename__ = "character_relationships"
     __table_args__ = (
         ForeignKeyConstraint(

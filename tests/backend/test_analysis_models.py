@@ -1,4 +1,3 @@
-"""Tests for chapter summaries and unified analysis jobs."""
 
 from datetime import datetime
 from typing import Generator
@@ -17,7 +16,6 @@ from backend.app.models.novel import Chapter, Novel
 
 @pytest.fixture
 def db_session() -> Generator[Session, None, None]:
-    """Use a fresh SQLite schema with real foreign-key enforcement."""
     engine = create_db_engine(
         "sqlite://",
         poolclass=StaticPool,
@@ -33,7 +31,6 @@ def db_session() -> Generator[Session, None, None]:
 
 
 def add_novel(db_session: Session) -> Novel:
-    """Create one novel and chapter for analysis-model tests."""
     novel = Novel(
         filename="story.txt",
         encoding="utf-8",

@@ -1,4 +1,3 @@
-"""Integration tests for the dependency-light local vector store."""
 
 import sqlite3
 
