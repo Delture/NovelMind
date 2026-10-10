@@ -52,6 +52,7 @@ export function createPages({
         // Continue-reading helpers are optional; book cards still render.
       }
     }
+    if (!fresh()) return;
     shell('你的资料库', '让故事的每一条线索，都有迹可循。', `
     ${resume}
     <div class="section-bar"><div class="section-label">全部小说 · ${books.length} 本</div>${searchBox('搜索书名')}</div><div class="books"></div><p data-no-match class="empty" hidden>没有找到这本书。</p>
