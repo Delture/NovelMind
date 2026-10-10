@@ -4,6 +4,8 @@ import asyncio
 import threading
 from uuid import uuid4
 
+import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -107,10 +109,13 @@ def test_same_port_origin_required_and_spoofed_host_does_not_bypass_ip_gate(web)
     )
     from backend.app.main import app
 
-    with TestClient(
+    remote = TestClient(
         app, base_url="http://127.0.0.1", client=("192.0.2.10", 1234)
-    ) as remote:
+    )
+    try:
         assert remote.get("/api/workspace/tasks").status_code == 403
+    finally:
+        remote.close()
 
 
 def test_file_database_uses_wal_timeout_and_foreign_keys(tmp_path):
@@ -183,3 +188,54 @@ def test_cancel_between_dispatch_and_execution_does_not_send_model_request(web, 
         assert db.get(Workflow, response.json()["id"]).error_message == "用户已取消任务。"
         child = db.query(AnalysisJob).filter_by(novel_id=novel_id).one()
         assert child.status == "failed"
+
+def test_run_workflow_propagates_cancelled_error_after_failing(web, monkeypatch):
+    from types import SimpleNamespace
+    from backend.app.services import summaries, workflows
+
+    _, factory, novel_id, _ = web
+    key = str(uuid4())
+    with factory() as db:
+        db.add(Workflow(id=key, novel_id=novel_id, kind="report", created_at=utc_now()))
+        db.commit()
+
+    entered = asyncio.Event()
+
+    async def hang(*_args, **_kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    def fake_start(**_kwargs):
+        child_id = str(uuid4())
+        with factory() as db:
+            db.add(
+                AnalysisJob(
+                    id=child_id,
+                    novel_id=novel_id,
+                    job_type="chapter_summaries",
+                    status="running",
+                    progress_current=0,
+                    progress_total=1,
+                )
+            )
+            db.commit()
+        return SimpleNamespace(id=child_id)
+
+    monkeypatch.setattr(workflows, "_wait_for_child", hang)
+    monkeypatch.setattr(summaries, "start_chapter_summaries", fake_start)
+    execution = SimpleNamespace(
+        summary_factory=lambda: None,
+        report_factory=lambda: None,
+        settings=SimpleNamespace(),
+    )
+
+    async def exercise():
+        task = asyncio.create_task(run_workflow(key, factory, execution, True, True))
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+    with factory() as db:
+        assert db.get(Workflow, key).status == "failed"

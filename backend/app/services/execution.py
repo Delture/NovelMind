@@ -51,7 +51,14 @@ class JobExecutor:
                 self.stopped = False
 
     async def shutdown(self):
-        await asyncio.to_thread(self.pool.shutdown, wait=True, cancel_futures=True)
+        with self.lock:
+            handles = list(self.jobs.values())
+            for handle in handles:
+                handle.cancelled = True
+        for handle in handles:
+            if handle.future is not None:
+                handle.future.cancel()
+        await asyncio.to_thread(self.pool.shutdown, wait=False, cancel_futures=True)
         self.stopped = True
 
     def reserve(self, function, args, kwargs, parent_id):

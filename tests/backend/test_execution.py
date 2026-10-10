@@ -48,3 +48,28 @@ def test_bounded_executor_uses_dedicated_thread_and_cancels_pending_resource():
     finally:
         release.set()
         runner.pool.shutdown(wait=True)
+
+
+def test_shutdown_returns_while_worker_still_running():
+    runner = JobExecutor(workers=1, pending=1)
+    entered, release = threading.Event(), threading.Event()
+
+    def block(key):
+        entered.set()
+        assert release.wait(5)
+
+    handle = runner.reserve(block, ("blocking",), {}, None)
+
+    async def exercise():
+        task = asyncio.create_task(runner.run(handle))
+        while not entered.wait(0):
+            await asyncio.sleep(0.01)
+        await asyncio.wait_for(runner.shutdown(), timeout=2)
+        release.set()
+        await task
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
+
