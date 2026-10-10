@@ -1,5 +1,11 @@
 # 开发日志
 
+## 2026-10-10 — 阅读器抛光
+
+- header 收紧贴边、书名衬线；TOC 保持 tonal soft，dock 仍为玻璃浮层。
+- 跨 760px resize 断点变化时 re-applyPrefs，窄屏抽屉不写回桌面 sidebar 偏好。
+- 不可滚动章节显示「本章全文」而非 100%；末章页尾改为「已到全书末尾」。
+
 ## 2026-10-10 — Issue #3 遗留收尾
 
 - `run_workflow`：标记 failed 后对 `CancelledError` 再抛出，保留取消语义。

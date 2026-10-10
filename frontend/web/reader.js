@@ -134,8 +134,9 @@
     }
     function progress() {
       const range = scroll.scrollHeight - scroll.clientHeight;
-      const percent = range > 1 ? Math.round(scroll.scrollTop / range * 100) : 100;
-      $('[data-chapter-progress]').textContent = `本章 ${percent}%`;
+      $('[data-chapter-progress]').textContent = range > 1
+        ? `本章 ${Math.round(scroll.scrollTop / range * 100)}%`
+        : '本章全文';
       $('[data-pencil-name="chapter-counter"]').textContent = `${chapter} / ${total}`;
       const a = anchor();
       const exists = bookmarks.some(b => b.chapter === chapter && b.paragraph === a.paragraph);
@@ -222,7 +223,7 @@
         $('[data-r-action="prev"]').disabled = chapter === 1;
         $('[data-r-action="next"]').disabled = chapter === total;
         $('[data-r-action="end-next"]').hidden = chapter === total;
-        $('[data-end-label]').textContent = chapter === total ? '全书已读完 · 可以回到资料库选择下一本' : '本章已读完';
+        $('[data-end-label]').textContent = chapter === total ? '已到全书末尾 · 可以回到资料库选择下一本' : '本章已读完';
         $('[data-r-action="bookmark"]').disabled = false;
         search.value = '';
         filter();
@@ -544,8 +545,14 @@
     on(document, 'visibilitychange', () => {
       if (document.hidden) storePosition();
     });
+    let wasCompact = compactReader();
     on(window, 'resize', () => {
       const a = anchor();
+      const nowCompact = compactReader();
+      if (nowCompact !== wasCompact) {
+        wasCompact = nowCompact;
+        applyPrefs();
+      }
       requestAnimationFrame(() => restore(a));
     });
     if (state.returnTo) {
