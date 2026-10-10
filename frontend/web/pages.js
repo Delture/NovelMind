@@ -177,9 +177,13 @@ export function createPages({
     return keepalive ? write() : queueReading(id, write);
   }
   function saveBookmark(id, bookmark, remove = false) {
-    return queueReading(id, () => api(base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id), {
-      method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : {json:bookmark})
-    }));
+    const gen = readingSaveGeneration;
+    return queueReading(id, () => {
+      if (gen !== readingSaveGeneration) return Promise.resolve();
+      return api(base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id), {
+        method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : {json:bookmark})
+      });
+    });
   }
   async function reader(fresh, query) {
     const book = state.novel,

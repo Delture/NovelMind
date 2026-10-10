@@ -45,6 +45,7 @@ class Bookmark(Position):
     snippet: str = Field(default="", max_length=100)
     label: str = Field(default="", max_length=80)
     note: str = Field(default="", max_length=500)
+    expected_chapter_count: int | None = Field(default=None, ge=1, le=10000, exclude=True)
 
 
 class Preferences(BaseModel):
@@ -69,14 +70,21 @@ class ReadingPosition(BaseModel):
     prefs: Preferences
     position: Position
     # 客户端缓存的目录章数；目录复核合并后旧阅读器提交会因不匹配被拒绝。
-    expected_chapter_count: int | None = Field(default=None, ge=1, le=10000)
+    expected_chapter_count: int | None = Field(default=None, ge=1, le=10000, exclude=True)
 
 
 def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState]:
-    """先获取 SQLite 写锁再读 JSON，串行合并不同条目的修改。"""
-    novel = get_novel_or_404(db, novel_id)
+    """先拿写锁再读 Novel/JSON，避免目录复核提交后仍用旧 chapter_count 放行。"""
+    get_novel_or_404(db, novel_id)
     db.execute(insert(ReadingState).values(novel_id=novel_id, value=ReaderState().model_dump())
                .on_conflict_do_nothing(index_elements=["novel_id"]))
+    # INSERT 已占用 SQLite 写锁；此处再读 Novel，保证 chapter_count 与后续更新同临界区。
+    novel = (
+        db.query(Novel)
+        .filter(Novel.id == novel_id)
+        .populate_existing()
+        .one()
+    )
     row = db.query(ReadingState).filter(ReadingState.novel_id == novel_id).populate_existing().one()
     return novel, row
 
@@ -100,12 +108,18 @@ def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(g
 @router.put("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", response_model=Bookmark)
 def save_bookmark(novel_id: int, bookmark_id: str, value: Bookmark, db: Session = Depends(get_db)):
     novel, row = _reading_for_update(db, novel_id)
+    if (
+        value.expected_chapter_count is not None
+        and value.expected_chapter_count != novel.chapter_count
+    ):
+        raise HTTPException(409, "章节目录已更新，请重新打开阅读器。")
     if value.id != bookmark_id or value.chapter > novel.chapter_count:
         raise HTTPException(422, "书签标识或位置无效。")
     bookmarks = [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]
     if len(bookmarks) >= 500:
         raise HTTPException(422, "最多保存500个书签。")
-    row.value = {**row.value, "bookmarks": [*bookmarks, value.model_dump()]}
+    payload = value.model_dump(exclude={"expected_chapter_count"})
+    row.value = {**row.value, "bookmarks": [*bookmarks, payload]}
     db.commit()
     return value
 
