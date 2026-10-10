@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 from typing import Literal, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, StrictBool, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -125,8 +125,18 @@ def save_bookmark(novel_id: int, bookmark_id: str, value: Bookmark, db: Session 
 
 
 @router.delete("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", status_code=204)
-def delete_bookmark(novel_id: int, bookmark_id: str, db: Session = Depends(get_db)):
+def delete_bookmark(
+    novel_id: int,
+    bookmark_id: str,
+    expected_chapter_count: int | None = Query(default=None, ge=1, le=10000),
+    db: Session = Depends(get_db),
+):
     novel, row = _reading_for_update(db, novel_id)
+    if (
+        expected_chapter_count is not None
+        and expected_chapter_count != novel.chapter_count
+    ):
+        raise HTTPException(409, "章节目录已更新，请重新打开阅读器。")
     row.value = {**row.value, "bookmarks": [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]}
     db.commit()
 

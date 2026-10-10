@@ -7,7 +7,8 @@ export function createTasks({
   root,
   base,
   go,
-  getPageRefresh
+  getPageRefresh,
+  onCatalogChanged
 }) {
   const labels = {
     chapter_summaries: '章节摘要',
@@ -170,8 +171,16 @@ export function createTasks({
         const old = lastTasks.find(x => x.id === t.id);
         return old?.status !== t.status && ['succeeded', 'failed'].includes(t.status) || !old && t.kind === 'question';
       });
+      const previousTasks = lastTasks;
       taskSnapshot = signature;
       lastTasks = result;
+      if (onCatalogChanged) {
+        for (const task of result) {
+          if (task.kind !== 'chapter_review' || task.status !== 'succeeded') continue;
+          const prior = previousTasks.find(item => item.id === task.id);
+          if (!prior || prior.status !== 'succeeded') onCatalogChanged(task.novel_id);
+        }
+      }
       drawTasks();
       const running = result.filter(t => ['queued', 'running'].includes(t.status)).length;
       root.querySelectorAll('[data-action=tasks]').forEach(b => b.querySelector('span').textContent = running ? `任务 · ${running}` : '任务');

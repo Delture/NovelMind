@@ -96,8 +96,7 @@
       };
     }
     function pushBookmark(bookmark, remove) {
-      if (remove) return ctx.saveBookmark(bookmark, true);
-      return ctx.saveBookmark({...bookmark, expected_chapter_count: total});
+      return ctx.saveBookmark({...bookmark, expected_chapter_count: total}, remove);
     }
     function storePosition(options) {
       if (disposed || restoring || !loaded) return;

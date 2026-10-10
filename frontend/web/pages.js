@@ -180,7 +180,11 @@ export function createPages({
     const gen = readingSaveGeneration;
     return queueReading(id, () => {
       if (gen !== readingSaveGeneration) return Promise.resolve();
-      return api(base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id), {
+      let path = base(id) + '/reading/bookmarks/' + encodeURIComponent(bookmark.id);
+      if (remove && bookmark.expected_chapter_count != null) {
+        path += '?expected_chapter_count=' + encodeURIComponent(bookmark.expected_chapter_count);
+      }
+      return api(path, {
         method: remove ? 'DELETE' : 'PUT', ...(remove ? {} : {json:bookmark})
       });
     });
@@ -300,7 +304,7 @@ export function createPages({
         id
       })
     });
-    pageRefresh = () => summaries(fresh);
+    pageRefresh = () => { chapterCache.delete(id); return summaries(fresh); };
   }
   async function characters(fresh) {
     const id = state.novel.id;
@@ -347,7 +351,7 @@ export function createPages({
         id
       })
     });
-    pageRefresh = () => characters(fresh);
+    pageRefresh = () => { chapterCache.delete(id); return characters(fresh); };
   }
   function questionHTML(question) {
     return `<div class="question">${e(question.question)}</div><section class="answer"><small>NovelMind · ${e(statuses[question.status])}</small><p>${e(question.answer || question.error_message || '正在根据原文整理回答…')}</p>${question.insufficient_evidence ? '<p class="muted">现有证据不足以完整回答这个问题。</p>' : ''}<div class="citation-links">${question.citations.map((c, i) => `<button class="link" data-question="${e(question.id)}" data-citation="${i}">第 ${c.chapter_index} 章 · ${e(c.chapter_title)}</button>`).join('')}</div></section>`;
@@ -390,6 +394,7 @@ export function createPages({
       })
     });
     pageRefresh = async () => {
+      chapterCache.delete(id);
       const [questions, current] = await Promise.all([allPages(base(id) + '/rag/questions', 100), api(base(id) + '/rag/index')]);
       if (!fresh()) return;
       draw(questions);
@@ -428,7 +433,7 @@ export function createPages({
         id
       })
     });
-    pageRefresh = () => report(fresh);
+    pageRefresh = () => { chapterCache.delete(id); return report(fresh); };
   }
   return {
     library,
@@ -439,6 +444,9 @@ export function createPages({
     report,
     get refresh() {
       return pageRefresh;
+    },
+    invalidateChapters(novelId) {
+      chapterCache.delete(novelId);
     },
     cleanup() {
       readerCleanup?.();
