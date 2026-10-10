@@ -169,7 +169,7 @@ async def run_workflow(workflow_id, factory, execution, external, rights):
             {"status": "succeeded", "phase": "已完成"},
             ("running",),
         )
-    except (Exception, asyncio.CancelledError):
+    except (Exception, asyncio.CancelledError) as error:
         await run_in_threadpool(
             _update_workflow,
             factory,
@@ -180,6 +180,8 @@ async def run_workflow(workflow_id, factory, execution, external, rights):
             },
             ("running",) if claimed else ("queued",),
         )
+        if isinstance(error, asyncio.CancelledError):
+            raise
 
 
 from backend.app.services.dependencies import (

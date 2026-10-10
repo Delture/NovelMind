@@ -1,5 +1,12 @@
 # 开发日志
 
+## 2026-10-10 — Issue #3 遗留收尾
+
+- `run_workflow`：标记 failed 后对 `CancelledError` 再抛出，保留取消语义。
+- `JobExecutor.shutdown`：先标记取消并 `future.cancel()`，再 `shutdown(wait=False)`，避免关机卡在长任务。
+- `test_issue_fixes` 远端 403 用例不再用 `with TestClient`，避免触发 lifespan 写入真实 `data/novelmind.db`。
+- 预审后暂缓调整 `WORKFLOW_STEP_TIMEOUT`；killpg PermissionError / CI fail-fast / ProxyHandler 等此前已修，跳过。
+
 ## 2026-10-08：提交前验证
 
 - 将本地新版网页、共享后端服务、人物管线、历史迁移拆分、阅读与设置增强、测试和设计目录重组统一提交。
