@@ -1,7 +1,6 @@
 """Allow analysis_jobs.job_type = chapter_review for optional AI directory review."""
 
 from sqlalchemy import inspect, text
-from sqlalchemy.schema import CreateIndex
 
 
 def allow_chapter_review_job_type(connection) -> None:
@@ -12,13 +11,6 @@ def allow_chapter_review_job_type(connection) -> None:
         item.get("name"): "".join(str(item.get("sqltext", "")).casefold().split())
         for item in inspect(connection).get_check_constraints("analysis_jobs")
     }
-    expected = "".join(
-        "job_type IN ("
-        "'chapter_summaries', 'characters', 'rag_index', "
-        "'report', 'full_analysis', 'chapter_review'"
-        ")".casefold().split()
-    )
-    # SQLAlchemy may quote differently; accept substring presence.
     current = checks.get("ck_analysis_jobs_job_type", "")
     if "chapter_review" in current:
         return

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Callable, Optional
+from typing import Callable
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, StrictBool
