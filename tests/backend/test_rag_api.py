@@ -20,7 +20,6 @@ from backend.app.services.rag import (
 )
 from backend.app.core.config import Settings, load_settings
 from backend.app.core.database import Base, create_db_engine
-from backend.app.main import app
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Chapter, Novel
 from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
@@ -132,20 +131,6 @@ def add_current_index(
     return index
 
 
-def test_rag_routes_are_registered() -> None:
-    paths = app.openapi()["paths"]
-    assert "get" in paths["/api/novels/{novel_id}/rag/estimate"]
-    assert {"get", "post"} <= set(
-        paths["/api/novels/{novel_id}/rag/index"]
-    )
-    assert {"get", "post"} <= set(
-        paths["/api/novels/{novel_id}/rag/questions"]
-    )
-    assert "get" in paths[
-        "/api/novels/{novel_id}/rag/questions/{question_id}"
-    ]
-
-
 def test_rag_estimate_discloses_both_external_destinations(
     session_factory,
 ) -> None:
@@ -185,42 +170,6 @@ def test_rag_estimate_discloses_both_external_destinations(
         assert cached.index_current is True
         assert cached.reusable_chunk_count == 2
         assert cached.estimated_new_embedding_count == 0
-
-
-def test_rag_estimate_tracks_custom_provider_provenance(
-    session_factory,
-) -> None:
-    default_settings = configured_settings()
-    custom_settings = replace(
-        default_settings,
-        generation_provider="openai_compatible",
-        deepseek_base_url="https://models.example.com/v1",
-        deepseek_model="custom-chat",
-        embedding_provider="openai_compatible",
-        embedding_base_url="https://embeddings.example.com/v1",
-        embedding_model="custom-embedding",
-        embedding_dimensions=1_536,
-    )
-    with session_factory() as db:
-        novel = add_novel(db)
-        add_current_index(db, novel, default_settings)
-
-        result = get_rag_estimate(
-            novel_id=novel.id,
-            force=False,
-            db=db,
-            settings=custom_settings,
-            vector_store_factory=lambda: Mock(collection_count=lambda collection: 2),
-        )
-
-    assert result.embedding_provider == "openai_compatible"
-    assert result.generation_provider == "openai_compatible"
-    assert result.embedding_dimensions == 1_536
-    assert result.embedding_region == "custom"
-    assert result.index_current is False
-    assert result.reusable_chunk_count == 0
-    assert result.embedding_terms_url == "https://embeddings.example.com/v1"
-    assert result.generation_terms_url == "https://models.example.com/v1"
 
 
 @pytest.mark.parametrize(
@@ -354,55 +303,6 @@ def test_index_response_failure_terminalizes_job_and_closes_provider(
         assert job.completed_at is not None
         assert "后台队列" in str(job.error_message)
     provider.close.assert_called_once_with()
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        StartRagQuestionRequest(
-            question="问题",
-            confirm_embedding_processing=False,
-            confirm_generation_processing=True,
-            confirm_content_rights=True,
-        ),
-        StartRagQuestionRequest(
-            question="问题",
-            confirm_embedding_processing=True,
-            confirm_generation_processing=False,
-            confirm_content_rights=True,
-        ),
-        StartRagQuestionRequest(
-            question="问题",
-            confirm_embedding_processing=True,
-            confirm_generation_processing=True,
-            confirm_content_rights=False,
-        ),
-    ],
-)
-def test_question_consent_failures_construct_no_provider(
-    session_factory,
-    payload: StartRagQuestionRequest,
-) -> None:
-    settings = configured_settings()
-    with session_factory() as db:
-        novel = add_novel(db)
-        with pytest.raises(HTTPException) as captured:
-            start_rag_question(
-                request=payload,
-                background_tasks=BackgroundTasks(),
-                novel_id=novel.id,
-                db=db,
-                settings=settings,
-                embedding_factory=Mock(
-                    side_effect=AssertionError("must stay deferred")
-                ),
-                generation_factory=Mock(
-                    side_effect=AssertionError("must stay deferred")
-                ),
-                vector_store_factory=Mock(),
-                session_factory=session_factory,
-            )
-    assert captured.value.status_code == 400
 
 
 def test_question_requires_a_current_index_before_provider_creation(

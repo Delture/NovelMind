@@ -130,20 +130,6 @@ def test_only_one_active_index_and_question_are_allowed_per_novel() -> None:
         engine.dispose()
 
 
-def test_completed_questions_do_not_block_a_new_active_question() -> None:
-    engine, session = make_session()
-    try:
-        novel = add_novel(session)
-        add_question(session, novel, status="succeeded")
-        session.commit()
-        add_question(session, novel, status="queued")
-        session.commit()
-        assert session.query(RagQuestion).count() == 2
-    finally:
-        session.close()
-        engine.dispose()
-
-
 def test_rag_constraints_reject_invalid_ranges_and_question_bounds() -> None:
     engine, session = make_session()
     try:

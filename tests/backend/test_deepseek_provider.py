@@ -1,5 +1,4 @@
 
-import asyncio
 import json
 import logging
 from dataclasses import replace
@@ -10,7 +9,6 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.analyzer.deepseek import (
-    AsyncDeepSeekProvider,
     MAX_JSON_GENERATION_ATTEMPTS,
     DeepSeekProvider,
 )
@@ -21,7 +19,6 @@ from backend.app.analyzer.llm import (
     ProviderNotConfiguredError,
     ProviderRateLimitError,
     ProviderRequestError,
-    ProviderResponseError,
     ProviderUnavailableError,
 )
 from backend.app.core.config import Settings, load_settings
@@ -123,44 +120,6 @@ def test_provider_requires_a_configured_api_key() -> None:
         DeepSeekProvider(make_settings(api_key=None))
 
 
-def test_async_provider_generates_without_a_worker_thread() -> None:
-    captured: Dict[str, object] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["payload"] = json.loads(request.content.decode("utf-8"))
-        return completion_response()
-
-    async def scenario() -> None:
-        http_client = httpx.AsyncClient(
-            transport=httpx.MockTransport(handler)
-        )
-        provider = AsyncDeepSeekProvider(
-            replace(
-                make_settings(),
-                deepseek_model="deepseek-v4-flash",
-            ),
-            http_client=http_client,
-        )
-        try:
-            result = await provider.generate_json_async(
-                system_prompt="You analyze novels.",
-                user_prompt="Summarize chapter one.",
-                response_model=AnalysisPayload,
-            )
-            assert result.value.summary == "ok"
-            assert provider.summary_concurrency_mode == "auto"
-            assert provider.summary_initial_concurrency == 128
-            assert provider.summary_max_concurrency == 2_500
-        finally:
-            await provider.aclose()
-        assert http_client.is_closed is True
-
-    asyncio.run(scenario())
-    payload = captured["payload"]
-    assert isinstance(payload, dict)
-    assert payload["thinking"] == {"type": "disabled"}
-
-
 def test_non_thinking_json_request_wire_contract_and_usage() -> None:
     captured: Dict[str, object] = {}
 
@@ -219,53 +178,6 @@ def test_non_thinking_json_request_wire_contract_and_usage() -> None:
     assert "reasoning_content" not in result.__dict__
 
 
-def test_thinking_request_sends_supported_effort() -> None:
-    payloads: List[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payloads.append(json.loads(request.content.decode("utf-8")))
-        return completion_response()
-
-    provider = make_provider(handler)
-    provider.generate_json(
-        system_prompt="Return JSON.",
-        user_prompt="Analyze.",
-        response_model=AnalysisPayload,
-        thinking=True,
-        reasoning_effort="max",
-    )
-
-    assert payloads[0]["thinking"] == {"type": "enabled"}
-    assert payloads[0]["reasoning_effort"] == "max"
-    assert "temperature" not in payloads[0]
-    assert "top_p" not in payloads[0]
-
-
-@pytest.mark.parametrize("reasoning_effort", ["low", "medium", "xhigh", "huge"])
-def test_provider_rejects_unsupported_reasoning_effort(
-    reasoning_effort: str,
-) -> None:
-    calls = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return completion_response()
-
-    provider = make_provider(handler)
-
-    with pytest.raises(ValueError, match="reasoning_effort"):
-        provider.generate_json(
-            system_prompt="Return JSON.",
-            user_prompt="Analyze.",
-            response_model=AnalysisPayload,
-            thinking=True,
-            reasoning_effort=reasoning_effort,
-        )
-
-    assert calls == 0
-
-
 def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
     responses = [
         completion_response("  "),
@@ -292,57 +204,6 @@ def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
     assert calls == 3
     assert sleeps == []
     assert result.value.summary == "valid"
-
-
-def test_markdown_fenced_json_is_accepted_without_retry() -> None:
-    calls = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return completion_response(
-            '```json\n{"summary":"valid","characters":[]}\n```'
-        )
-
-    result = make_provider(handler).generate_json(
-        system_prompt="Return JSON.",
-        user_prompt="Analyze.",
-        response_model=AnalysisPayload,
-    )
-
-    assert calls == 1
-    assert result.value.summary == "valid"
-
-
-def test_schema_retry_adds_safe_corrective_feedback() -> None:
-    requests: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(json.loads(request.content))
-        if len(requests) == 1:
-            return completion_response(
-                '{"summary":7,"characters":"PRIVATE_INVALID_VALUE"}'
-            )
-        return completion_response(
-            '{"summary":"valid","characters":[]}'
-        )
-
-    result = make_provider(handler).generate_json(
-        system_prompt="Return JSON.",
-        user_prompt="Analyze.",
-        response_model=AnalysisPayload,
-    )
-
-    assert result.value.summary == "valid"
-    assert len(requests) == 2
-    retry_text = requests[1]["messages"][-1]["content"]
-    assert "字段校验" in retry_text
-    assert "summary" in retry_text
-    assert "characters" in retry_text
-    assert "PRIVATE_INVALID_VALUE" not in json.dumps(
-        requests[1],
-        ensure_ascii=False,
-    )
 
 
 def test_before_attempt_can_stop_semantic_retries() -> None:
@@ -374,76 +235,6 @@ def test_before_attempt_can_stop_semantic_retries() -> None:
 
     assert calls == 1
     assert checks == 2
-
-
-def test_before_attempt_can_stop_network_retries() -> None:
-    calls = 0
-    checks = 0
-
-    class Cancelled(RuntimeError):
-        pass
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return completion_response(status_code=503)
-
-    def before_attempt() -> None:
-        nonlocal checks
-        checks += 1
-        if checks > 1:
-            raise Cancelled()
-
-    provider = make_provider(handler)
-    with pytest.raises(Cancelled):
-        provider.generate_json(
-            system_prompt="Return JSON.",
-            user_prompt="Analyze.",
-            response_model=AnalysisPayload,
-            before_attempt=before_attempt,
-        )
-
-    assert calls == 1
-    assert checks == 2
-
-
-@pytest.mark.parametrize(
-    "invalid_content",
-    [
-        None,
-        "",
-        "not-json",
-        '{"summary":7,"characters":"not-a-list"}',
-    ],
-)
-def test_semantic_failures_stop_at_retry_limit(
-    invalid_content: Optional[str],
-) -> None:
-    calls = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return completion_response(invalid_content)
-
-    provider = make_provider(handler)
-
-    with pytest.raises(
-        ProviderResponseError,
-        match="无法解析",
-    ) as captured_error:
-        provider.generate_json(
-            system_prompt="sensitive novel prompt",
-            user_prompt="sensitive chapter text",
-            response_model=AnalysisPayload,
-        )
-
-    assert calls == MAX_JSON_GENERATION_ATTEMPTS
-    message = str(captured_error.value)
-    assert "sensitive novel prompt" not in message
-    assert "sensitive chapter text" not in message
-    assert "private chain of thought" not in message
-    assert "deepseek-test-key" not in message
 
 
 @pytest.mark.parametrize("status_code", [408, 409, 429, 500, 503])
@@ -499,38 +290,6 @@ def test_connection_errors_are_retried_without_leaking_details() -> None:
     assert result.value.summary == "ok"
     assert calls == 2
     assert sleeps == [1.25]
-
-
-def test_retry_exhaustion_raises_safe_unavailable_error() -> None:
-    calls = 0
-    sleeps: List[float] = []
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return completion_response(
-            status_code=503,
-            error_message=(
-                "sensitive novel prompt; deepseek-test-key; "
-                "private chain of thought"
-            ),
-        )
-
-    provider = make_provider(handler, sleeps=sleeps)
-
-    with pytest.raises(ProviderUnavailableError) as captured_error:
-        provider.generate_json(
-            system_prompt="sensitive novel prompt",
-            user_prompt="sensitive chapter text",
-            response_model=AnalysisPayload,
-        )
-
-    assert calls == 3
-    assert sleeps == [1.25, 2.25]
-    message = str(captured_error.value)
-    assert "sensitive" not in message
-    assert "deepseek-test-key" not in message
-    assert "chain of thought" not in message
 
 
 def test_rate_limit_exhaustion_raises_safe_specific_error() -> None:

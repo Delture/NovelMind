@@ -1,12 +1,4 @@
-from datetime import datetime
-from typing import Callable, Generator
-from unittest.mock import Mock
-import pytest
-from backend.app.services.errors import ServiceError as HTTPException
-from pydantic import ValidationError
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
@@ -14,20 +6,6 @@ from backend.app.analyzer.characters import (
     character_analysis_source_hash,
     character_chapter_source_hash,
 )
-from backend.app.services.characters import (
-    StartCharacterAnalysisRequest,
-    _schedule_character_job,
-    get_character,
-    get_character_estimate,
-    list_character_appearances,
-    list_character_relationships,
-    list_characters,
-    start_character_analysis,
-)
-from backend.app.core.config import load_settings
-from backend.app.core.database import Base, create_db_engine
-from backend.app.main import app
-from backend.app.models.analysis import AnalysisJob
 from backend.app.models.character import (
     ChapterCharacterExtraction,
     Character,

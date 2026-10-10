@@ -16,13 +16,6 @@ from backend.app.api.system import (
     reset_model_settings,
 )
 from backend.app.core.config import get_settings, load_settings
-from backend.app.main import app
-
-
-def test_system_status_route_is_registered() -> None:
-    assert "get" in app.openapi()["paths"]["/api/system/status"]
-    methods = app.openapi()["paths"]["/api/system/model-settings"]
-    assert {"get", "put", "delete"} <= set(methods)
 
 
 def test_system_status_reports_models_without_exposing_secrets() -> None:

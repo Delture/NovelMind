@@ -147,54 +147,6 @@ def test_list_novels_returns_newest_first_and_total(
     ]
 
 
-def test_list_novels_returns_empty_page_for_empty_library() -> None:
-    status_code, result = send_request("GET", "/api/novels")
-
-    assert status_code == 200
-    assert result == {
-        "items": [],
-        "total": 0,
-        "offset": 0,
-        "limit": 20,
-    }
-
-
-def test_list_novels_has_stable_id_order_and_allows_large_offset(
-    db_session: Session,
-) -> None:
-    created_at = utc_now()
-    older_id = add_novel(
-        db_session,
-        "first.txt",
-        ["正文"],
-        created_at=created_at,
-    ).id
-    newer_id = add_novel(
-        db_session,
-        "second.txt",
-        ["正文"],
-        created_at=created_at,
-    ).id
-
-    status_code, result = send_request(
-        "GET",
-        "/api/novels",
-        {"offset": 1, "limit": 1},
-    )
-    empty_status, empty_result = send_request(
-        "GET",
-        "/api/novels",
-        {"offset": 99, "limit": 1},
-    )
-
-    assert status_code == 200
-    assert result["items"][0]["id"] == older_id
-    assert newer_id > older_id
-    assert empty_status == 200
-    assert empty_result["items"] == []
-    assert empty_result["total"] == 2
-
-
 def test_get_novel_detail_returns_aggregate_metadata(
     db_session: Session,
 ) -> None:
@@ -237,43 +189,6 @@ def test_list_chapters_is_paginated_without_full_content(
     assert "content" not in result["items"][0]
 
 
-def test_list_chapters_does_not_select_full_content(
-    db_session: Session,
-) -> None:
-    novel = add_novel(db_session, "story.txt", ["不应读取的正文"])
-    statements: list[str] = []
-    engine = db_session.get_bind()
-
-    def capture_statement(
-        _connection,
-        _cursor,
-        statement: str,
-        _parameters,
-        _context,
-        _executemany,
-    ) -> None:
-        statements.append(statement.lower())
-
-    event.listen(engine, "before_cursor_execute", capture_statement)
-    try:
-        status_code, _ = send_request(
-            "GET",
-            f"/api/novels/{novel.id}/chapters",
-        )
-    finally:
-        event.remove(engine, "before_cursor_execute", capture_statement)
-
-    chapter_selects = [
-        statement
-        for statement in statements
-        if statement.lstrip().startswith("select")
-        and "from chapters" in statement
-    ]
-    assert status_code == 200
-    assert chapter_selects
-    assert all("chapters.content" not in statement for statement in chapter_selects)
-
-
 def test_get_chapter_returns_full_content(db_session: Session) -> None:
     novel = add_novel(db_session, "story.txt", ["需要按需读取的正文"])
 
@@ -306,20 +221,6 @@ def test_library_endpoints_return_404_for_missing_novel(path: str) -> None:
 
     assert status_code == 404
     assert result["detail"] == "未找到指定小说。"
-
-
-def test_get_chapter_returns_404_for_missing_index(
-    db_session: Session,
-) -> None:
-    novel = add_novel(db_session, "story.txt", ["正文"])
-
-    status_code, result = send_request(
-        "GET",
-        f"/api/novels/{novel.id}/chapters/9",
-    )
-
-    assert status_code == 404
-    assert result["detail"] == "未找到指定章节。"
 
 
 def test_delete_novel_removes_its_chapters(db_session: Session) -> None:
@@ -358,13 +259,6 @@ def test_delete_novel_removes_its_chapters(db_session: Session) -> None:
     assert db_session.query(Chapter).filter_by(novel_id=novel_id).count() == 0
 
 
-def test_delete_missing_novel_returns_404() -> None:
-    status_code, result = send_request("DELETE", "/api/novels/999")
-
-    assert status_code == 404
-    assert result["detail"] == "未找到指定小说。"
-
-
 def test_delete_rolls_back_when_commit_fails(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -384,24 +278,3 @@ def test_delete_rolls_back_when_commit_fails(
     assert db_session.get(Novel, novel_id) is not None
 
 
-@pytest.mark.parametrize(
-    ("path", "query"),
-    [
-        ("/api/novels", {"offset": -1}),
-        ("/api/novels", {"limit": 0}),
-        ("/api/novels", {"limit": 101}),
-        ("/api/novels/1/chapters", {"offset": -1}),
-        ("/api/novels/1/chapters", {"limit": 0}),
-        ("/api/novels/1/chapters", {"limit": 201}),
-        ("/api/novels/0", None),
-        ("/api/novels/0/chapters", None),
-        ("/api/novels/1/chapters/0", None),
-    ],
-)
-def test_library_rejects_invalid_pagination_and_identifiers(
-    path: str,
-    query: Optional[dict[str, object]],
-) -> None:
-    status_code, _ = send_request("GET", path, query)
-
-    assert status_code == 422

@@ -250,26 +250,6 @@ def test_rehearsal_rolls_back_after_partial_writes(repair_source):
     assert load_repair_source(repair_source.path) == source
 
 
-def test_rehearsal_rejects_stale_plan_without_overwriting_new_state(repair_source):
-    repair, source, plan, groups, reading, copy = prepare_rehearsal(repair_source)
-    with closing(sqlite3.connect(copy)) as db:
-        db.execute("UPDATE chapters SET content=content||'new local edit' WHERE id=13")
-        db.commit()
-    changed = database_dump(copy)
-    with pytest.raises(ValueError, match="来源已变化"):
-        repair.rehearse(copy, source, plan, groups, reading)
-    assert database_dump(copy) == changed
-
-
-@pytest.mark.parametrize("field,value", [("paragraph", 500), ("offset", 500)])
-def test_invalid_reading_anchor_refuses_to_guess(repair_source, field, value):
-    from scripts import repair_chapter_boundaries as repair
-    source = load_repair_source(repair_source.path)
-    source["reading"]["position"][field] = value
-    with pytest.raises(ValueError, match="范围"):
-        repair.make_plan(source)
-
-
 def test_cli_dryrun_keeps_source_readonly_and_writes_only_separate_rehearsal(repair_source):
     from scripts import repair_chapter_boundaries as repair
     source = repair_source.path

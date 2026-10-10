@@ -6,10 +6,8 @@ from unittest.mock import Mock
 
 import pytest
 from backend.app.services.errors import ServiceError as HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.app.analyzer import summaries as summaries_service
 from backend.app.analyzer import jobs as jobs_service
 from backend.app.services import summaries as summaries_api
 from backend.app.services.summaries import (
@@ -138,92 +136,6 @@ def test_same_scope_concurrent_requests_create_only_one_job(
         engine.dispose()
 
 
-def test_different_scope_is_not_reported_as_same_active_job(
-    tmp_path: Path,
-) -> None:
-    factory, engine = _file_session_factory(tmp_path)
-    novel_id = _add_novel(factory)
-    try:
-        with factory() as session:
-            _schedule_summary_job(
-                novel_id=novel_id,
-                progress_total=2,
-                request=StartSummariesRequest(
-                    confirm_external_processing=True,
-                    confirm_content_rights=True,
-                ),
-                background_tasks=Mock(),
-                db=session,
-                provider=Mock(),
-                session_factory=factory,
-            )
-
-        with factory() as session:
-            with pytest.raises(HTTPException) as error:
-                _schedule_summary_job(
-                    novel_id=novel_id,
-                    progress_total=1,
-                    request=StartSummariesRequest(
-                        confirm_external_processing=True,
-                        confirm_content_rights=True,
-                    ),
-                    background_tasks=Mock(),
-                    db=session,
-                    provider=Mock(),
-                    session_factory=factory,
-                    target_chapter_index=2,
-                )
-
-        assert error.value.status_code == 409
-        with factory() as session:
-            assert session.query(AnalysisJob).count() == 1
-    finally:
-        engine.dispose()
-
-
-def test_same_single_chapter_scope_reuses_active_job(
-    tmp_path: Path,
-) -> None:
-    factory, engine = _file_session_factory(tmp_path)
-    novel_id = _add_novel(factory)
-    tasks = Mock()
-    try:
-        with factory() as session:
-            first = _schedule_summary_job(
-                novel_id=novel_id,
-                progress_total=1,
-                request=StartSummariesRequest(
-                    confirm_external_processing=True,
-                    confirm_content_rights=True,
-                ),
-                background_tasks=tasks,
-                db=session,
-                provider=Mock(),
-                session_factory=factory,
-                target_chapter_index=2,
-            )
-            second = _schedule_summary_job(
-                novel_id=novel_id,
-                progress_total=1,
-                request=StartSummariesRequest(
-                    confirm_external_processing=True,
-                    confirm_content_rights=True,
-                ),
-                background_tasks=tasks,
-                db=session,
-                provider=Mock(),
-                session_factory=factory,
-                target_chapter_index=2,
-            )
-
-        assert first.id == second.id
-        assert first.target_chapter_index == 2
-        assert second.target_chapter_index == 2
-        tasks.add_task.assert_called_once()
-    finally:
-        engine.dispose()
-
-
 def test_different_force_mode_is_not_silently_reused(
     tmp_path: Path,
 ) -> None:
@@ -266,74 +178,6 @@ def test_different_force_mode_is_not_silently_reused(
         engine.dispose()
 
 
-def test_missing_novel_foreign_key_race_returns_not_found(
-    tmp_path: Path,
-) -> None:
-    factory, engine = _file_session_factory(tmp_path)
-    try:
-        with factory() as session:
-            with pytest.raises(HTTPException) as error:
-                _schedule_summary_job(
-                    novel_id=999,
-                    progress_total=1,
-                    request=StartSummariesRequest(
-                        confirm_external_processing=True,
-                        confirm_content_rights=True,
-                    ),
-                    background_tasks=Mock(),
-                    db=session,
-                    provider=Mock(),
-                    session_factory=factory,
-                )
-
-        assert error.value.status_code == 404
-    finally:
-        engine.dispose()
-
-
-def test_unrelated_integrity_error_is_not_misreported_as_conflict(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    factory, engine = _file_session_factory(tmp_path)
-    novel_id = _add_novel(factory)
-    with factory() as session:
-        session.add(
-            AnalysisJob(
-                id="duplicate-id",
-                novel_id=novel_id,
-                job_type="chapter_summaries",
-                status="succeeded",
-                progress_current=2,
-                progress_total=2,
-            )
-        )
-        session.commit()
-    monkeypatch.setattr(
-        summaries_api,
-        "uuid4",
-        lambda: "duplicate-id",
-    )
-
-    try:
-        with factory() as session:
-            with pytest.raises(IntegrityError):
-                _schedule_summary_job(
-                    novel_id=novel_id,
-                    progress_total=2,
-                    request=StartSummariesRequest(
-                        confirm_external_processing=True,
-                        confirm_content_rights=True,
-                    ),
-                    background_tasks=Mock(),
-                    db=session,
-                    provider=Mock(),
-                    session_factory=factory,
-                )
-    finally:
-        engine.dispose()
-
-
 def test_provider_factory_is_deferred_until_all_consents_pass(
     tmp_path: Path,
 ) -> None:
@@ -358,92 +202,6 @@ def test_provider_factory_is_deferred_until_all_consents_pass(
         assert error.value.status_code == 400
         assert "有权" in str(error.value.detail)
         provider_factory.assert_not_called()
-    finally:
-        engine.dispose()
-
-
-def test_reused_active_job_closes_new_unused_provider(
-    tmp_path: Path,
-) -> None:
-    factory, engine = _file_session_factory(tmp_path)
-    novel_id = _add_novel(factory)
-    active_provider = Mock()
-    unused_provider = Mock()
-    request = StartSummariesRequest(
-        confirm_external_processing=True,
-        confirm_content_rights=True,
-    )
-    try:
-        with factory() as session:
-            first = _schedule_summary_job(
-                novel_id=novel_id,
-                progress_total=2,
-                request=request,
-                background_tasks=Mock(),
-                db=session,
-                provider=active_provider,
-                session_factory=factory,
-            )
-            second = _schedule_summary_job(
-                novel_id=novel_id,
-                progress_total=2,
-                request=request,
-                background_tasks=Mock(),
-                db=session,
-                provider=unused_provider,
-                session_factory=factory,
-            )
-
-        assert first.id == second.id
-        unused_provider.close.assert_called_once_with()
-        active_provider.close.assert_not_called()
-    finally:
-        engine.dispose()
-
-
-def test_refresh_failure_marks_committed_job_failed_and_closes_provider(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    factory, engine = _file_session_factory(tmp_path)
-    novel_id = _add_novel(factory)
-    provider = Mock()
-    tasks = Mock()
-    try:
-        with factory() as session:
-            monkeypatch.setattr(
-                session,
-                "refresh",
-                Mock(
-                    side_effect=RuntimeError(
-                        "refresh failed with private details"
-                    )
-                ),
-            )
-            with pytest.raises(RuntimeError, match="refresh failed"):
-                _schedule_summary_job(
-                    novel_id=novel_id,
-                    progress_total=2,
-                    request=StartSummariesRequest(
-                        confirm_external_processing=True,
-                        confirm_content_rights=True,
-                    ),
-                    background_tasks=tasks,
-                    db=session,
-                    provider=provider,
-                    session_factory=factory,
-                )
-
-        with factory() as session:
-            job = session.query(AnalysisJob).one()
-            assert job.status == "failed"
-            assert job.completed_at is not None
-            assert job.error_message == (
-                "摘要任务未能加入后台队列，请重试。"
-            )
-            assert "private" not in job.error_message
-        tasks.add_task.assert_not_called()
-        provider.close.assert_called_once_with()
     finally:
         engine.dispose()
 

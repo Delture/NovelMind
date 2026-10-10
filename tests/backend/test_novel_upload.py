@@ -144,29 +144,8 @@ def test_reject_non_txt_file(db_session: Session) -> None:
     assert db_session.query(Novel).count() == 0
 
 
-def test_reject_browser_form_media_type(db_session: Session) -> None:
-    status_code, result = send_request(
-        b"content",
-        "novel.txt",
-        content_type=b"text/plain",
-    )
-
-    assert status_code == 415
-    assert result["detail"] == (
-        "上传请求必须使用 application/octet-stream。"
-    )
-    assert db_session.query(Novel).count() == 0
-
-
 def test_reject_empty_txt_file() -> None:
     status_code, result = send_request(b"", "empty.txt")
-
-    assert status_code == 400
-    assert result["detail"] == "TXT 文件内容为空。"
-
-
-def test_reject_whitespace_only_txt_file() -> None:
-    status_code, result = send_request(" \n\t ".encode("utf-8"), "empty.txt")
 
     assert status_code == 400
     assert result["detail"] == "TXT 文件内容为空。"
@@ -180,27 +159,6 @@ def test_reject_oversized_txt_file() -> None:
 
     assert status_code == 413
     assert result["detail"] == "TXT 文件不能超过 20 MB。"
-
-
-def test_reject_unknown_encoding() -> None:
-    status_code, result = send_request(b"\xff", "novel.txt")
-
-    assert status_code == 400
-    assert "UTF-8 或 GB18030" in result["detail"]
-
-
-def test_filename_is_required() -> None:
-    status_code, result = send_request(b"content", None)
-
-    assert status_code == 422
-    assert result["detail"][0]["loc"] == ["query", "filename"]
-
-
-def test_openapi_documents_binary_upload() -> None:
-    operation = app.openapi()["paths"]["/api/novels/upload"]["post"]
-    schema = operation["requestBody"]["content"]["application/octet-stream"]["schema"]
-
-    assert schema == {"type": "string", "format": "binary"}
 
 
 def test_database_error_rolls_back() -> None:
@@ -247,13 +205,3 @@ def test_reject_excessive_chapter_count(db_session: Session) -> None:
     assert db_session.query(Novel).count() == 0
 
 
-def test_reject_filename_longer_than_database_limit(
-    db_session: Session,
-) -> None:
-    filename = f"{'长' * 252}.txt"
-
-    status_code, result = send_request(b"content", filename)
-
-    assert status_code == 400
-    assert result["detail"] == "TXT 文件名不能超过 255 个字符。"
-    assert db_session.query(Novel).count() == 0

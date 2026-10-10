@@ -8,7 +8,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.app.analyzer.llm import JsonGenerationResult
 from backend.app.core.database import create_db_engine, init_db
 from backend.app.models.novel import Chapter, Novel
 from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion

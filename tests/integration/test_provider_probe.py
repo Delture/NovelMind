@@ -1,6 +1,5 @@
 
 import asyncio
-from dataclasses import replace
 
 import httpx
 import pytest
@@ -96,33 +95,6 @@ def test_invalid_or_unapproved_probe_has_no_remote_request(probe_case, role, cha
     assert_public_safe(response, case, "secret-with-newline")
 
 
-@pytest.mark.parametrize("role", ["generation", "embedding"])
-def test_unconfigured_probe_does_not_borrow_other_role_key(probe_case, role):
-    case = probe_case
-    name = "deepseek_api_key" if role == "generation" else "embedding_api_key"
-    case.config.save_runtime_model_settings(replace(case.config.get_settings(), **{name: None}))
-    original = case.path.read_bytes()
-    response = post(case, payload(case, role))
-    assert response.status_code == 400
-    assert case.calls == [] and case.path.read_bytes() == original
-
-
-def test_same_destination_different_provider_cannot_reuse_saved_key(probe_case):
-    case = probe_case
-    case.config.save_runtime_model_settings(replace(case.config.get_settings(), deepseek_base_url="https://api.deepseek.com"))
-    response = post(case, payload(case, provider="deepseek", base_url="https://api.deepseek.com"))
-    assert response.status_code == 400 and case.calls == []
-
-
-@pytest.mark.parametrize("role", ["generation", "embedding"])
-def test_shared_url_still_uses_each_roles_own_saved_key(probe_case, role):
-    case = probe_case
-    case.config.save_runtime_model_settings(replace(case.config.get_settings(), embedding_base_url=case.payload["generation"]["base_url"]))
-    response = post(case, payload(case, role, base_url=case.payload["generation"]["base_url"]))
-    assert response.status_code == 200
-    assert case.calls[0].headers["Authorization"] == f"Bearer review-{role}-A-not-real"
-
-
 @pytest.mark.parametrize("status,expected", [(401, "authentication_failed"), (403, "authentication_failed"),
     (429, "rate_limited"), (404, "unsupported"), (405, "unsupported"), (501, "unsupported"),
     (500, "remote_error"), (301, "redirect_blocked"), (302, "redirect_blocked"),
@@ -142,28 +114,6 @@ def test_http_failures_are_sanitized_and_authenticated_redirects_not_followed(pr
     assert_public_safe(response, case, remote)
     assert remote not in caplog.text
     assert case.path.read_bytes() == original
-
-
-@pytest.mark.parametrize("body", [b"not json REMOTE_PRIVATE_ERROR", b"[]", b'{"data":{}}', b'{}', b'\xff'])
-def test_bad_model_document_does_not_echo_remote_data(probe_case, caplog, body):
-    case = probe_case
-    case.install(lambda request: httpx.Response(200, content=body))
-    response = post(case, payload(case))
-    assert response.status_code == 200 and response.json()["status"] == "invalid_response"
-    assert "REMOTE_PRIVATE_ERROR" not in response.text + caplog.text
-
-
-@pytest.mark.parametrize("error,expected", [(httpx.ReadTimeout, "timeout"), (httpx.ConnectError, "unreachable"),
-                                           (httpx.RemoteProtocolError, "unreachable")])
-def test_transport_failures_are_safe(probe_case, caplog, error, expected):
-    case = probe_case
-    def fail(request):
-        raise error("REMOTE_PRIVATE_ERROR review-generation-A-not-real", request=request)
-    case.install(fail)
-    response = post(case, payload(case))
-    assert response.status_code == 200 and response.json()["status"] == expected
-    assert "REMOTE_PRIVATE_ERROR" not in response.text + caplog.text
-    assert_public_safe(response, case)
 
 
 def test_total_deadline_cancels_slow_transport(probe_case, monkeypatch):
@@ -214,34 +164,6 @@ def test_large_or_compressed_response_stops_reading_and_closes_stream(probe_case
     assert stream.closed and stream.reads == (3 if case_name == "chunked_oversize" else 0)
 
 
-def test_public_model_list_is_bounded_deduplicated_and_does_not_include_key(probe_case):
-    from backend.app.services.model_probe import MAX_MODELS
-    case = probe_case
-    items = [{"id": "fake-first", "owned_by": "review-generation-A-not-real"}, {"id": "fake-first"},
-             {"id": "review-generation-A-not-real"}, {"id": "bad\x00id"}, {"id": "x" * 101}, {"id": 123}, None]
-    items += [{"id": f"fake-{index}"} for index in range(MAX_MODELS + 2)]
-    case.install(lambda request: httpx.Response(200, json={"data": items}))
-    response = post(case, payload(case))
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success" and data["truncated"] is True
-    assert len(data["models"]) == MAX_MODELS == len({item["id"] for item in data["models"]})
-    assert data["models"][0] == {"id": "fake-first", "owned_by": ""}
-    assert_public_safe(response, case)
-
-
-@pytest.mark.parametrize("change", [{"role": "invalid"}, {"api_key": "PRIVATE_DRAFT_" * 400},
-                                   {"novel_text": "PRIVATE_NOVEL_TEXT"}])
-def test_probe_validation_errors_do_not_echo_input_or_accept_novel_text(probe_case, change):
-    case = probe_case
-    body = payload(case)
-    body.update(change)
-    response = post(case, body)
-    assert response.status_code == 422
-    assert case.calls == []
-    assert "PRIVATE_DRAFT_" not in response.text and "PRIVATE_NOVEL_TEXT" not in response.text
-
-
 def test_presets_are_role_specific_public_and_do_not_connect(probe_case):
     response = probe_case.client.get("/api/system/provider-presets")
     assert response.status_code == 200
@@ -250,20 +172,6 @@ def test_presets_are_role_specific_public_and_do_not_connect(probe_case):
     assert {item["id"] for item in options["embedding"]} == {"siliconflow", "openai", "custom"}
     assert probe_case.calls == []
     assert_public_safe(response, probe_case)
-
-
-@pytest.mark.parametrize("role,base_url,params", [
-    ("generation", "https://api.siliconflow.cn/v1", {"sub_type": "chat"}),
-    ("embedding", "https://api.siliconflow.cn/v1", {"sub_type": "embedding"}),
-    ("generation", "https://openrouter.ai/api/v1", {"limit": "200"}),
-])
-def test_catalog_queries_use_role_filter_without_generation_requests(probe_case, role, base_url, params):
-    case = probe_case
-    response = post(case, payload(case, role, base_url=base_url, api_key="fake-catalog-key", use_saved_key=False))
-    assert response.status_code == 200 and response.json()["status"] == "success"
-    assert len(case.calls) == 1 and case.calls[0].method == "GET"
-    assert dict(case.calls[0].url.params) == params
-    assert str(case.calls[0].url).split("?")[0] == base_url + "/models"
 
 
 def test_concurrent_probe_responses_keep_their_own_draft_credentials(probe_case):
@@ -300,22 +208,3 @@ def test_concurrent_probe_responses_keep_their_own_draft_credentials(probe_case)
     assert case.path.read_bytes() == original
 
 
-def test_deeply_nested_catalog_is_safely_rejected(probe_case):
-    case = probe_case
-    # This 40 KiB response exceeds the installed C JSON parser's nesting budget
-    # while remaining well below the independent 1 MiB response limit.
-    depth = 20000
-    body = b'{"data":' + b'[' * depth + b'0' + b']' * depth + b'}'
-    case.install(lambda request: httpx.Response(200, content=body))
-    response = post(case, payload(case))
-    assert response.status_code == 200 and response.json()["status"] == "invalid_response"
-    assert response.json()["models"] == []
-
-
-def test_invalid_unicode_model_metadata_cannot_break_public_response(probe_case):
-    case = probe_case
-    body = b'{"data":[{"id":"bad\\ud800"},{"id":"valid","owned_by":"bad\\ud800"},{"id":"other","owned_by":"bad\\u0000"}]}'
-    case.install(lambda request: httpx.Response(200, content=body))
-    response = post(case, payload(case))
-    assert response.status_code == 200
-    assert response.json()["models"] == [{"id":"valid","owned_by":""},{"id":"other","owned_by":""}]

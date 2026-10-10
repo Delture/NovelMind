@@ -15,7 +15,7 @@ import httpx
 from sqlalchemy.engine import make_url
 from backend.app.main import app
 from backend.app.api import rag, summaries, system
-from backend.app.core.config import get_settings, settings, save_runtime_model_settings
+from backend.app.core.config import settings, save_runtime_model_settings
 from backend.app.core.database import SessionLocal
 from backend.app.models.rag import RagChunkRecord
 from backend.app.rag.vector_store import LocalVectorStore

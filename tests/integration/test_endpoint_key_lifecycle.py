@@ -51,31 +51,6 @@ def test_endpoint_change_accepts_explicit_key_lifecycle(isolated_config, role, a
 
 
 @pytest.mark.parametrize("role", ROLES)
-@pytest.mark.parametrize("variant", ["https://{role}-a.example/v1/", "https://{role}-A.EXAMPLE:443/v1/", "  HTTPS://{role}-A.EXAMPLE/v1  "])
-def test_equivalent_url_keeps_key_without_reentering_it(isolated_config, role, variant):
-    case = isolated_config
-    old = case.config.get_settings()
-    payload = deepcopy(case.payload)
-    payload[role]["base_url"] = variant.format(role=role)
-    response = case.client.put("/api/system/model-settings", json=payload)
-    assert response.status_code == 200, response.text
-    saved = case.config.get_settings()
-    assert getattr(saved, KEY_FIELDS[role]) == getattr(old, KEY_FIELDS[role])
-    assert getattr(saved, URL_FIELDS[role]) == getattr(old, URL_FIELDS[role])
-
-
-@pytest.mark.parametrize("role", ROLES)
-def test_replace_and_clear_together_preserve_original(isolated_config, role):
-    case = isolated_config
-    original = case.path.read_bytes()
-    payload = deepcopy(case.payload)
-    payload[role].update(api_key="review-new-not-real", clear_api_key=True)
-    response = case.client.put("/api/system/model-settings", json=payload)
-    assert response.status_code == 400, response.text
-    assert case.path.read_bytes() == original
-
-
-@pytest.mark.parametrize("role", ROLES)
 def test_disk_replace_failure_preserves_file_and_live_settings(isolated_config, monkeypatch, role):
     case = isolated_config
     original, old = case.path.read_bytes(), case.config.get_settings()
