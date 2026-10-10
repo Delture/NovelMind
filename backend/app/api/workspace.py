@@ -68,6 +68,8 @@ class ReadingPosition(BaseModel):
     """小体积位置与偏好更新，不携带或覆盖其他标签页的书签。"""
     prefs: Preferences
     position: Position
+    # 客户端缓存的目录章数；目录复核合并后旧阅读器提交会因不匹配被拒绝。
+    expected_chapter_count: int | None = Field(default=None, ge=1, le=10000)
 
 
 def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState]:
@@ -82,9 +84,15 @@ def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState
 @router.put("/novels/{novel_id}/reading/position", response_model=ReadingPosition)
 def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(get_db)):
     novel, row = _reading_for_update(db, novel_id)
+    if (
+        value.expected_chapter_count is not None
+        and value.expected_chapter_count != novel.chapter_count
+    ):
+        raise HTTPException(409, "章节目录已更新，请重新打开阅读器。")
     if value.position.chapter > novel.chapter_count:
         raise HTTPException(422, "阅读位置超出章节范围。")
-    row.value = {**row.value, **value.model_dump()}
+    payload = value.model_dump(exclude={"expected_chapter_count"})
+    row.value = {**row.value, **payload}
     db.commit()
     return value
 

@@ -30,6 +30,7 @@ export function createPages({
   let readerCleanup, pageRefresh;
   const chapterCache = new Map(),
     readingWrites = new Map();
+  let readingSaveGeneration = 0;
   function searchBox(placeholder) {
     return `<div class="search">${icon('search')}<input type="search" placeholder="${e(placeholder)}" aria-label="${e(placeholder)}"></div>`;
   }
@@ -167,7 +168,11 @@ export function createPages({
     return next;
   }
   function saveReading(id, value, {keepalive = false} = {}) {
-    const write = () => api(base(id) + '/reading/position', {method:'PUT', json:value, keepalive});
+    const gen = readingSaveGeneration;
+    const write = () => {
+      if (gen !== readingSaveGeneration) return Promise.resolve();
+      return api(base(id) + '/reading/position', {method:'PUT', json:value, keepalive});
+    };
     // pagehide must start the request immediately, before the document is discarded.
     return keepalive ? write() : queueReading(id, write);
   }
@@ -217,6 +222,7 @@ export function createPages({
     });
     readerCleanup = (options) => {cleanup(options);loader.dispose();};
     pageRefresh = async () => {
+      readingSaveGeneration += 1;
       chapterCache.delete(id);
       if (readerCleanup) {readerCleanup({skipSave: true});readerCleanup = null;}
       if (fresh()) await reader(fresh, query);

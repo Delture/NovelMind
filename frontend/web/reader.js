@@ -108,7 +108,8 @@
         },
         position: {
           ...position
-        }
+        },
+        expected_chapter_count: total
       }, options).then(() => {
         if (!disposed) $('.r-save-status').textContent = '阅读位置已保存到本机资料库';
       }).catch(() => {
