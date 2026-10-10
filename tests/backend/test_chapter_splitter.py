@@ -87,3 +87,48 @@ def test_chapter_reference_sentence_is_preserved_without_a_false_boundary(inside
         ]
     else:
         assert split_chapters(body) == [Chapter(index=1, title="第1章", content=body)]
+
+@pytest.mark.parametrize(
+    ("title_a", "title_b"),
+    [
+        ("第一回　甄士隐梦幻识通灵", "第二回　贾夫人仙逝扬州城"),
+        ("第1节 开端", "第2节 转折"),
+        ("第一章 来信", "第二章 启程"),
+    ],
+)
+def test_chinese_heading_units_split(title_a, title_b) -> None:
+    text = f"{title_a}\n甲段。\n\n{title_b}\n乙段。"
+    chapters = split_chapters(text)
+    assert [c.title for c in chapters] == [title_a, title_b]
+    assert chapters[0].content == "甲段。"
+    assert chapters[1].content == "乙段。"
+
+
+def test_hui_period_sentence_is_not_a_title() -> None:
+    """Body lines that start with 第N回 and end with 。 stay in the chapter."""
+    text = (
+        "第五回　开生面梦演红楼梦\n"
+        "开头。\n"
+        "第四回中既将薛家母子在荣府内寄居等事略已表明，此回则暂时不提。\n"
+        "继续。\n"
+        "第六回　贾宝玉初试云雨情\n"
+        "下章。"
+    )
+    chapters = split_chapters(text)
+    assert len(chapters) == 2
+    assert "第四回中既将" in chapters[0].content
+    assert chapters[1].title.startswith("第六回")
+
+
+def test_hongloumeng_first_twelve_hui_without_rewriting() -> None:
+    from pathlib import Path
+
+    path = Path("/workspace/nm-live/红楼梦-前十二回-raw.txt")
+    if not path.is_file():
+        pytest.skip("local 红楼梦 fixture unavailable")
+    chapters = split_chapters(path.read_text(encoding="utf-8"))
+    assert len(chapters) == 12
+    assert chapters[0].title.startswith("第一回")
+    assert chapters[11].title.startswith("第十二回")
+    assert all(len(c.content) > 1000 for c in chapters)
+    assert "第四回中既将" in chapters[4].content
