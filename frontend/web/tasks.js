@@ -15,7 +15,8 @@ export function createTasks({
     rag_index: '原文索引',
     report: '全书报告',
     question: '原文问答',
-    ask: '准备原文并提问'
+    ask: '准备原文并提问',
+    chapter_review: '目录复核'
   };
   const statuses = {
     queued: '等待处理',
@@ -59,7 +60,8 @@ export function createTasks({
       characters: 'characters',
       report: 'summaries',
       ask: 'rag',
-      index: 'rag'
+      index: 'rag',
+      review: 'chapters/review'
     }[kind];
     const estimate = await api(base(id) + `/${endpoint}/estimate`);
     const title = {
@@ -68,7 +70,8 @@ export function createTasks({
       characters: '更新人物分析',
       report: '补齐摘要并更新报告',
       ask: estimate.index_current ? '提问' : '准备原文并提问',
-      index: '准备原文索引'
+      index: '准备原文索引',
+      review: 'AI 复核章节目录'
     }[kind];
     let extra = '';
     if (kind === 'report') {
@@ -106,7 +109,8 @@ export function createTasks({
         } else path = {
           summary: 'summaries',
           characters: 'characters',
-          index: 'rag/index'
+          index: 'rag/index',
+          review: 'chapters/review'
         }[kind];
         try {
           await api(base(id) + '/' + path, {
@@ -128,7 +132,7 @@ export function createTasks({
     if (taskError) return `<p role="alert">${e(taskError)}</p><p class="muted">正在自动重连…</p>`;
     if (!lastTasks.length) return '<p class="empty">目前没有后台任务。</p>';
     return lastTasks.map(t => {
-      const page = t.kind === 'report' ? 'report' : t.kind === 'ask' || t.kind === 'question' || t.kind === 'rag_index' ? 'ask' : t.kind === 'characters' ? 'characters' : 'summary';
+      const page = t.kind === 'report' ? 'report' : t.kind === 'ask' || t.kind === 'question' || t.kind === 'rag_index' ? 'ask' : t.kind === 'characters' ? 'characters' : t.kind === 'chapter_review' ? 'reader' : 'summary';
       const count = t.progress_total ? `<small>${t.progress_current} / ${t.progress_total}</small>` : '';
       const cancel = ['queued', 'running'].includes(t.status) ? `<button class="link" data-task-cancel="${e(t.id)}">取消任务</button>` : '';
       return `<section class="task"><div class="task-heading"><strong>${e(t.phase ? t.kind === 'report' ? '摘要与报告' : labels[t.kind] : labels[t.kind] || t.kind)}</strong><span>${statuses[t.status] || e(t.status)}</span></div><p>${e(t.filename)}</p>${t.phase ? `<p class="muted">${e(t.phase)}</p>` : ''}${t.progress_total ? `<progress value="${t.progress_current}" max="${t.progress_total}"></progress>` : ''}${t.error_message ? `<p class="error">${e(t.error_message)}</p>` : ''}<div class="task-actions">${count}${cancel}<button class="link" data-task-book="${t.novel_id}" data-task-page="${page}">查看结果${t.status === 'failed' ? ' / 重新发起' : ''}</button></div></section>`;

@@ -84,7 +84,7 @@ class AnalysisJob(Base):
         CheckConstraint(
             "job_type IN ("
             "'chapter_summaries', 'characters', 'rag_index', "
-            "'report', 'full_analysis'"
+            "'report', 'full_analysis', 'chapter_review'"
             ")",
             name="ck_analysis_jobs_job_type",
         ),

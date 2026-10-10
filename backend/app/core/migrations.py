@@ -9,6 +9,7 @@ from .migration_steps.v06_rag import _add_rag_index_tables, _add_rag_question_ta
 from .migration_steps.v08_reports import _add_novel_report_table
 from .migration_steps.v10_workspace import add_workspace_tables, explicit_appearance_ownership
 from .migration_steps.v12_workflow_time import workflow_datetime
+from .migration_steps.v13_chapter_review_job import allow_chapter_review_job_type
 MigrationFunction = Callable[[Connection], None]
 
 MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
@@ -48,6 +49,7 @@ MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
     (10, "add workspace reading and workflows", add_workspace_tables),
     (11, "explicit character appearance ownership", explicit_appearance_ownership),
     (12, "normalize workflow timestamps", workflow_datetime),
+    (13, "allow chapter review job type", allow_chapter_review_job_type),
 )
 
 

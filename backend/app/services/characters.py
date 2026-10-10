@@ -484,6 +484,8 @@ def start_character_analysis(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"请确认你有权把该小说提交给 {provider_label} API，并已了解其数据处理条款。",
         )
+    from backend.app.services.chapter_review import ensure_no_active_chapter_review
+    ensure_no_active_chapter_review(db, novel_id)
     active_job = _active_character_job(db, novel_id)
     if active_job is not None:
         if bool(active_job.force_refresh) != bool(request.force):

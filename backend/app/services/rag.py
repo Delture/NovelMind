@@ -675,6 +675,8 @@ def start_rag_index(request: StartRagIndexRequest, background_tasks: TaskDispatc
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="强制重建前必须再次确认会重新发送全部原文片段。",
         )
+    from backend.app.services.chapter_review import ensure_no_active_chapter_review
+    ensure_no_active_chapter_review(db, novel_id)
     active = _active_index_job(db, novel_id)
     if active is not None:
         if bool(active.force_refresh) != bool(request.force):

@@ -84,12 +84,16 @@ export function createPages({
     });
   }
   function importBook() {
-    const d = modal('导入小说', `<div class="drop-zone"><p data-file-title>将 TXT 文件拖到这里</p><p class="muted">或从电脑中选择一本小说</p><input type="file" accept=".txt,text/plain" hidden aria-label="选择 TXT 文件"><button data-action="choose">选择文件</button></div><p class="muted">最大 20 MB · UTF-8 / GB18030 · 在本机解析</p><p data-status role="status"></p><footer><button class="primary" data-action="upload" disabled>导入</button></footer>`);
+    const d = modal('导入小说', `<div class="drop-zone"><p data-file-title>将 TXT 文件拖到这里</p><p class="muted">或从电脑中选择一本小说</p><input type="file" accept=".txt,text/plain" hidden aria-label="选择 TXT 文件"><button data-action="choose">选择文件</button></div><p class="muted">最大 20 MB · UTF-8 / GB18030 · 在本机解析</p><label class="check-row"><input type="checkbox" data-ai-review disabled> 导入后用 AI 复核目录</label><p class="muted" data-ai-hint>需先配置生成模型。默认关闭；约 1 次模型请求，失败则保留规则分章，不阻塞导入。</p><p data-status role="status"></p><footer><button class="primary" data-action="upload" disabled>导入</button></footer>`);
     let file;
-    const input = d.querySelector('input'),
+    const input = d.querySelector('input[type=file]'),
       zone = d.querySelector('.drop-zone'),
       status = d.querySelector('[data-status]'),
-      submit = d.querySelector('[data-action=upload]');
+      submit = d.querySelector('[data-action=upload]'),
+      aiReview = d.querySelector('[data-ai-review]');
+    api('/system/model-settings').then(settings => {
+      if (settings?.generation?.configured) aiReview.disabled = false;
+    }).catch(() => {});
     const pick = selected => {
       file = selected;
       const valid = file && /\.txt$/i.test(file.name) && file.size > 0 && file.size <= 20 * 1024 * 1024;
@@ -122,7 +126,15 @@ export function createPages({
           });
           d.closeSheet();
           toast(`已导入 ${result.chapter_count} 章`);
+          const wantReview = aiReview.checked && !aiReview.disabled;
           go('reader', result.novel_id);
+          if (wantReview) {
+            try {
+              await plan('review', {id: result.novel_id, onStart: () => chapterCache.delete(result.novel_id)});
+            } catch (error) {
+              toast(error.message || '目录复核未启动，已保留规则分章');
+            }
+          }
         } catch (error) {
           status.textContent = error.message;
         }
