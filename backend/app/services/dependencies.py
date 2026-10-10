@@ -20,14 +20,12 @@ VectorStoreFactory = Callable[[], VectorStore]
 
 
 def get_session_factory() -> Callable[[], Session]:
-    """以依赖形式提供会话工厂，便于测试替换为隔离数据库。"""
     return SessionLocal
 
 
 def get_llm_provider(
     settings: Settings = Depends(get_settings),
 ) -> LLMProvider:
-    """Build the synchronous provider used by non-summary analyzers."""
     if not settings.deepseek_configured:
         raise ServiceError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -42,7 +40,6 @@ def get_llm_provider(
 def get_summary_llm_provider(
     settings: Settings = Depends(get_settings),
 ) -> LLMProvider:
-    """Build the async-capable provider used by summary workers."""
     if not settings.deepseek_configured:
         raise ServiceError(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

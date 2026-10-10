@@ -1,4 +1,3 @@
-"""HTTP 声明；任务链直接调用 services 中同一业务入口。"""
 from backend.app.api.service_route import ServiceRoute
 from backend.app.services.tasks import (
     AnalysisJobResponse,
@@ -25,7 +24,6 @@ def get_report_estimate(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> ReportEstimateResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.get_report_estimate(novel_id=novel_id, settings=settings, db=db)
 
 
@@ -34,7 +32,6 @@ def get_report_estimate(
     response_model=AnalysisJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-# 路由只做授权、来源准备和任务创建；昂贵生成在后台执行。
 def start_report(
     request: StartReportRequest,
     background_tasks: BackgroundTasks,
@@ -46,7 +43,6 @@ def start_report(
     ),
     session_factory: Callable[[], Session] = Depends(get_session_factory),
 ) -> AnalysisJobResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.start_report(request=request, background_tasks=JobTasks(background_tasks), novel_id=novel_id, settings=settings, db=db, provider_factory=provider_factory, session_factory=session_factory)
 
 
@@ -59,5 +55,4 @@ def get_report(
     settings: Settings = Depends(get_settings),
     db: Session = Depends(get_db),
 ) -> ReportResponse:
-    """委托共享业务服务处理校验、缓存和派发。"""
     return service.get_report(novel_id=novel_id, settings=settings, db=db)

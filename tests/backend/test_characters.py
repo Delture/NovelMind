@@ -1,4 +1,3 @@
-"""Tests for API-backed character extraction and local orchestration."""
 
 import json
 from collections import deque
@@ -55,8 +54,6 @@ ResponseFactory = Callable[
 
 
 class QueueProvider:
-    """Return queued strict payloads without making network requests."""
-
     model = "deepseek-v4-pro"
 
     def __init__(self, responses: list[object]) -> None:

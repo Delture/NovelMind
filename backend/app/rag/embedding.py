@@ -1,9 +1,4 @@
-"""外部 OpenAI 兼容 embedding 客户端、契约与错误分类。
-
-Embedding 把文本变成固定维度浮点向量，本项目不在本地运行模型。客户端负责
-批量请求、超时/退避、错误映射，并严格验证返回条数、顺序、有限数值和维度。
-某些兼容端点不接受 ``dimensions``，只在明确 HTTP 400 时有限回退一次。
-"""
+"""不在本地运行模型。某些兼容端点不接受 dimensions，只在明确 HTTP 400 时有限回退一次。"""
 
 import logging
 import math
@@ -40,17 +35,13 @@ class EmbeddingProviderError(RuntimeError):
         code: str,
         retryable: bool = False,
     ) -> None:
-        """保存安全用户消息、稳定错误码和可重试标志。"""
         super().__init__(message)
         self.code = code
         self.retryable = retryable
 
 
 class EmbeddingNotConfiguredError(EmbeddingProviderError):
-    """Raised when Model Studio credentials are incomplete."""
-
     def __init__(self) -> None:
-        """构造 embedding 密钥或端点未配置错误。"""
         super().__init__(
             "向量模型 API 未配置，请前往“模型与密钥”完成设置"
             "（或设置 EMBEDDING_API_KEY 与 EMBEDDING_BASE_URL）。",
@@ -59,10 +50,7 @@ class EmbeddingNotConfiguredError(EmbeddingProviderError):
 
 
 class EmbeddingAuthenticationError(EmbeddingProviderError):
-    """Raised when Model Studio rejects the configured credential."""
-
     def __init__(self) -> None:
-        """构造供应商拒绝密钥/权限错误，不标记自动重试。"""
         super().__init__(
             "向量模型 API 认证失败，请检查供应商、密钥与端点配置。",
             code="embedding_authentication_failed",
@@ -70,10 +58,7 @@ class EmbeddingAuthenticationError(EmbeddingProviderError):
 
 
 class EmbeddingBalanceError(EmbeddingProviderError):
-    """Raised when the provider account cannot fund the request."""
-
     def __init__(self) -> None:
-        """构造 embedding 账户额度不足错误。"""
         super().__init__(
             "向量模型账户额度或余额不足，请处理后重试。",
             code="embedding_balance_insufficient",
@@ -81,10 +66,7 @@ class EmbeddingBalanceError(EmbeddingProviderError):
 
 
 class EmbeddingRateLimitError(EmbeddingProviderError):
-    """Raised after provider throttling exhausts bounded retries."""
-
     def __init__(self) -> None:
-        """构造限流重试耗尽错误，并标记稍后可重试。"""
         super().__init__(
             "向量模型请求频率已达上限，请稍后重试。",
             code="embedding_rate_limited",
@@ -93,10 +75,7 @@ class EmbeddingRateLimitError(EmbeddingProviderError):
 
 
 class EmbeddingRequestError(EmbeddingProviderError):
-    """Raised when Model Studio rejects a non-retryable request."""
-
     def __init__(self) -> None:
-        """构造供应商拒绝参数/输入的不可重试错误。"""
         super().__init__(
             "向量模型服务拒绝了本次请求，请检查配置或输入。",
             code="embedding_request_rejected",
@@ -104,10 +83,7 @@ class EmbeddingRequestError(EmbeddingProviderError):
 
 
 class EmbeddingUnavailableError(EmbeddingProviderError):
-    """Raised when transient failures exhaust bounded retries."""
-
     def __init__(self) -> None:
-        """构造连接或服务端暂时不可用错误。"""
         super().__init__(
             "向量模型服务暂时不可用，请稍后重试。",
             code="embedding_unavailable",
@@ -116,10 +92,7 @@ class EmbeddingUnavailableError(EmbeddingProviderError):
 
 
 class EmbeddingResponseError(EmbeddingProviderError):
-    """Raised when vectors fail strict response validation."""
-
     def __init__(self) -> None:
-        """构造向量条数、维度或数值无法通过严格校验的错误。"""
         super().__init__(
             "向量模型返回了无法安全使用的结果，请重试。",
             code="embedding_response_invalid",
@@ -128,8 +101,6 @@ class EmbeddingResponseError(EmbeddingProviderError):
 
 @dataclass(frozen=True)
 class EmbeddingBatchResult:
-    """一批按输入顺序排列的向量及不敏感供应商元数据。"""
-
     vectors: tuple[tuple[float, ...], ...]
     model: str
     prompt_tokens: int
@@ -138,16 +109,12 @@ class EmbeddingBatchResult:
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
-    """索引器与问答器依赖的最小向量化能力，便于测试注入假实现。"""
-
     @property
     def model(self) -> str:
-        """Return the configured model identifier."""
         ...
 
     @property
     def dimensions(self) -> int:
-        """Return the required vector width."""
         ...
 
     def embed(
@@ -156,17 +123,13 @@ class EmbeddingProvider(Protocol):
         *,
         before_attempt: Optional[Callable[[], None]] = None,
     ) -> EmbeddingBatchResult:
-        """Embed one bounded batch, checking before every network send."""
         ...
 
     def close(self) -> None:
-        """Release provider-owned network resources."""
         ...
 
 
 class OpenAIEmbeddingProvider:
-    """调用兼容 ``/embeddings`` 接口并严格校验响应。"""
-
     def __init__(
         self,
         settings: Settings,
@@ -175,11 +138,7 @@ class OpenAIEmbeddingProvider:
         sleep: Callable[[float], None] = time.sleep,
         random: Callable[[], float] = random_module.random,
     ) -> None:
-        """从不可变 Settings 构造同步 SDK 客户端。
-
-        ``http_client``、``sleep``、``random`` 是测试注入点；生产默认使用真实网络、
-        time.sleep 和随机抖动。配置不完整立即抛 NotConfigured，不发送请求。
-        """
+        """配置不完整立即抛 NotConfigured，不发送请求。"""
         if not settings.embedding_configured:
             raise EmbeddingNotConfiguredError()
 
@@ -210,21 +169,17 @@ class OpenAIEmbeddingProvider:
 
     @property
     def model(self) -> str:
-        """Return the configured embedding model identifier."""
         return self._model
 
     @property
     def provider_id(self) -> str:
-        """Return the configured provider identifier for provenance."""
         return self._provider
 
     @property
     def dimensions(self) -> int:
-        """Return the fixed vector width."""
         return self._dimensions
 
     def close(self) -> None:
-        """Close the OpenAI-compatible client exactly once."""
         if self._closed:
             return
         self._client.close()
@@ -236,11 +191,6 @@ class OpenAIEmbeddingProvider:
         *,
         before_attempt: Optional[Callable[[], None]] = None,
     ) -> EmbeddingBatchResult:
-        """把 SDK 响应严格转换为按输入顺序排列的 EmbeddingBatchResult。
-
-        ``expected_count`` 是本次输入文本数；函数校验模型名、索引连续性、条数、
-        每个向量维度及有限数值，任一不符抛 EmbeddingResponseError。
-        """
         """Embed at most ten non-empty texts and strictly validate output."""
         normalized_texts = list(texts)
         if (
@@ -327,11 +277,7 @@ class OpenAIEmbeddingProvider:
         *,
         expected_count: int,
     ) -> EmbeddingBatchResult:
-        """严格校验 SDK 响应并按输入索引重排向量。
-
-        ``expected_count`` 是本批文本数。校验模型名、索引连续性、条数、维度和有限
-        数值；任一不符抛 EmbeddingResponseError。
-        """
+        """校验模型名、索引连续性、条数、维度和有限数值；任一不符抛 EmbeddingResponseError。"""
         response_model = getattr(response, "model", None)
         if (
             self._provider == "siliconflow"
@@ -411,7 +357,6 @@ class OpenAIEmbeddingProvider:
 
     @staticmethod
     def _raise_terminal_status(status_code: int) -> None:
-        """把不可重试 HTTP 状态映射为认证、余额或普通请求错误并抛出。"""
         if status_code in {401, 403}:
             raise EmbeddingAuthenticationError()
         if status_code == 402:
@@ -419,7 +364,6 @@ class OpenAIEmbeddingProvider:
         raise EmbeddingRequestError()
 
     def _wait_before_retry(self, failed_attempt: int) -> None:
-        """按失败次数执行有上限指数退避加 0..1 秒随机抖动。"""
         delay = min(
             _MAX_BACKOFF_SECONDS,
             float(2 ** (failed_attempt - 1)) + self._random(),

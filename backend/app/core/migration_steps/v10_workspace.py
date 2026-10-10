@@ -8,7 +8,6 @@ from .validation import (
 
 
 def add_workspace_tables(connection):
-    """兼容已经 create_all 的网页预览库；缺表创建，已有记录原样保留。"""
     from backend.app.models.workspace import WorkspaceSetting, ReadingState, Workflow
     for model in (WorkspaceSetting, ReadingState, Workflow):
         model.__table__.create(connection, checkfirst=True)
@@ -25,11 +24,7 @@ def add_workspace_tables(connection):
 
 
 def explicit_appearance_ownership(connection):
-    """验证/补齐历史占位归属，原子重建表以移除 0 默认值和填充触发器。
-
-    子表没有下游引用；复制完整字段后替换，保持所有记录 ID、外键、索引和检查。
-    任一已有非零归属不匹配便拒绝升级，事务回滚，不猜测更正用户历史数据。
-    """
+    """任一已有非零归属不匹配便拒绝升级并回滚，不猜测更正用户历史数据。"""
     from backend.app.models.character import CharacterAppearance
     invalid = connection.execute(text("""
         SELECT a.id FROM character_appearances a

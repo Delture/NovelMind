@@ -1,4 +1,3 @@
-"""专用长任务池的容量、线程归属与等待中取消。"""
 
 import asyncio
 import threading

@@ -1,7 +1,4 @@
-"""只读清点已合并章节，并在系统临时 SQLite 副本预演拆分。
-
-此工具没有真实库 apply 命令：源始终以 URI mode=ro 打开。只对带相同重复数字的
-独占章标题提出拆分；保存来源指纹、完整旧→新映射和阅读锚点映射，供人复核。
+"""源始终以 URI mode=ro 打开；只对带相同重复数字的独占章标题提出拆分。
 存在任何分析/任务依赖便拒绝预演写入，绝不删除派生结果来让修复通过。
 """
 
@@ -38,7 +35,6 @@ def open_readonly(path):
 
 
 def snapshot(db, novel_id):
-    """读取一部小说的源记录、阅读状态及所有已知章节派生依赖数量。"""
     novel = db.execute("SELECT * FROM novels WHERE id=?", (novel_id,)).fetchone()
     if novel is None:
         raise ValueError("未找到指定小说。")
@@ -66,7 +62,7 @@ def snapshot(db, novel_id):
 
 
 def paragraphs(content):
-    """与 reader.js 的非空行段落规则一致，保留每段在原字符串中的范围。"""
+    """与 reader.js 的非空行段落规则一致。"""
     result = []
     for match in re.finditer(r"([^\n]*)(?:\n|$)", content):
         value = match.group(1)
@@ -108,11 +104,7 @@ def split_existing(row):
 
 
 def relocate_anchor(anchor, old, sections):
-    """用段落原文和范围迁移锚点；正文段落的 UTF-16 字符偏移保持原值。
-
-    若锚点恰好落在提升为标题的那一行，转到新章顶部。其余情况逐段比对，无法
-    精确匹配时拒绝预演，避免静默把阅读位置移到另一段。
-    """
+    """无法精确匹配时拒绝预演，避免静默把阅读位置移到另一段。"""
     result = deepcopy(anchor)
     paragraph = anchor.get("paragraph", -1)
     if paragraph == -1:
@@ -139,7 +131,6 @@ def relocate_anchor(anchor, old, sections):
 
 
 def make_plan(source):
-    """生成仅含标题、范围、指纹和计数的计划，以及驻内存的完整拆分记录。"""
     groups = {}
     new_index = 0
     mapping = []

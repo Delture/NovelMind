@@ -1,8 +1,5 @@
-"""系统状态及本机模型配置接口。
-
-状态读取只公开供应商、模型、端点和“密钥是否存在”，绝不返回密钥正文。配置
-写入/重置只接受回环地址请求；即使后端被误监听到局域网，远端也不能借此更换
-API 端点并诱导程序发送密钥。
+"""配置写入/重置只接受回环地址请求，避免远端借此更换 API 端点诱导程序发送密钥；
+状态接口绝不返回密钥正文。
 """
 
 from backend.app.api.service_route import ServiceRoute
@@ -29,8 +26,6 @@ router = APIRouter(route_class=ServiceRoute, prefix="/system", tags=["system"])
 
 # 状态模型与可编辑模型分开，避免为了编辑方便把 API Key 加入公开响应。
 class GenerationStatus(BaseModel):
-    """Public generation-provider configuration."""
-
     provider: str
     model: str
     configured: bool
@@ -40,8 +35,6 @@ class GenerationStatus(BaseModel):
 
 
 class EmbeddingStatus(BaseModel):
-    """Public embedding-provider configuration."""
-
     provider: str
     model: str
     dimensions: int
@@ -50,23 +43,17 @@ class EmbeddingStatus(BaseModel):
 
 
 class SystemStatusResponse(BaseModel):
-    """Non-secret backend capability status."""
-
     status: str
     generation: GenerationStatus
     embedding: EmbeddingStatus
 
 
 class ProviderOption(BaseModel):
-    """One selectable provider type."""
-
     id: str
     label: str
 
 
 class EditableProviderStatus(BaseModel):
-    """Editable non-secret settings for one model role."""
-
     provider: str
     provider_label: str
     model: str
@@ -76,8 +63,6 @@ class EditableProviderStatus(BaseModel):
 
 
 class EditableGenerationStatus(EditableProviderStatus):
-    """Generation settings plus chapter-summary scheduling controls."""
-
     summary_concurrency_mode: str
     summary_initial_concurrency: int
     summary_max_concurrency: int
@@ -85,13 +70,10 @@ class EditableGenerationStatus(EditableProviderStatus):
 
 
 class EditableEmbeddingStatus(EditableProviderStatus):
-    """配置页 embedding 状态，在通用供应商字段上增加向量维度。"""
     dimensions: int
 
 
 class ModelSettingsResponse(BaseModel):
-    """Frontend-safe model configuration; credentials are never returned."""
-
     generation: EditableGenerationStatus
     embedding: EditableEmbeddingStatus
     generation_provider_options: list[ProviderOption]
@@ -100,8 +82,6 @@ class ModelSettingsResponse(BaseModel):
 
 
 class ProviderSettingsUpdate(BaseModel):
-    """Provider form values with explicit key lifecycle."""
-
     model_config = ConfigDict(extra="forbid")
 
     provider: str = Field(min_length=1, max_length=50)
@@ -112,8 +92,6 @@ class ProviderSettingsUpdate(BaseModel):
 
 
 class GenerationSettingsUpdate(ProviderSettingsUpdate):
-    """Generation-provider values and summary scheduling controls."""
-
     summary_concurrency_mode: str = Field(
         default="auto",
         pattern="^(auto|manual)$",
@@ -126,13 +104,10 @@ class GenerationSettingsUpdate(ProviderSettingsUpdate):
 
 
 class EmbeddingSettingsUpdate(ProviderSettingsUpdate):
-    """embedding 更新请求，额外限制 dimensions 必须在 1 到 8192。"""
     dimensions: int = Field(ge=1, le=8_192)
 
 
 class ModelSettingsUpdate(BaseModel):
-    """Complete editable settings submitted by the local frontend."""
-
     model_config = ConfigDict(extra="forbid")
 
     generation: GenerationSettingsUpdate
@@ -142,11 +117,6 @@ class ModelSettingsUpdate(BaseModel):
 def _model_settings_response(
     settings: Settings,
 ) -> ModelSettingsResponse:
-    """把 Settings 转换成不含密钥正文的配置页响应。
-
-    API Key 只表现为 configured 布尔值；响应同时包含供应商选项及当前是否来自
-    runtime override，供前端显示但不能反推出密钥。
-    """
     return ModelSettingsResponse(
         generation=EditableGenerationStatus(
             provider=settings.generation_provider,
@@ -197,7 +167,6 @@ def _model_settings_response(
 def get_system_status(
     settings: Settings = Depends(get_settings),
 ) -> SystemStatusResponse:
-    """Describe configured AI providers without exposing credentials."""
     return SystemStatusResponse(
         status="ok",
         generation=GenerationStatus(
@@ -232,7 +201,6 @@ def get_system_status(
 def get_model_settings(
     settings: Settings = Depends(get_settings),
 ) -> ModelSettingsResponse:
-    """Return editable provider values without returning either API key."""
     return _model_settings_response(settings)
 
 
@@ -241,7 +209,6 @@ def put_model_settings(
     payload: ModelSettingsUpdate,
     request: Request,
 ) -> ModelSettingsResponse:
-    """Validate and atomically save settings for subsequent model jobs."""
     current = get_settings()
     generation_api_key = (
         payload.generation.api_key.strip()
@@ -328,7 +295,6 @@ def put_model_settings(
 
 @router.delete("/model-settings", response_model=ModelSettingsResponse)
 def reset_model_settings(request: Request) -> ModelSettingsResponse:
-    """Discard frontend overrides and restore environment configuration."""
     try:
         clear_runtime_model_settings()
         restored = get_settings()
@@ -341,7 +307,6 @@ def reset_model_settings(request: Request) -> ModelSettingsResponse:
 
 
 class ModelProbeRequest(BaseModel):
-    """主动读取服务目录的草稿；不写配置，也不接收小说数据。"""
     model_config = ConfigDict(extra="forbid")
     role: Literal["generation", "embedding"]
     provider: str = Field(min_length=1, max_length=50)
@@ -352,13 +317,12 @@ class ModelProbeRequest(BaseModel):
 
 
 def get_model_probe_transport():
-    """测试覆盖此依赖注入假传输，默认只在用户主动操作时建立外部连接。"""
+    """默认只在用户主动操作时建立外部连接；测试覆盖此依赖。"""
     return None
 
 
 @router.get("/provider-presets")
 def get_provider_presets():
-    """公开服务端点建议；模型名称和密钥由用户自行选择。"""
     from backend.app.services.model_probe import PRESETS
     return PRESETS
 
@@ -367,6 +331,6 @@ def get_provider_presets():
 async def post_model_probe(payload: ModelProbeRequest, request: Request,
                            settings: Settings = Depends(get_settings),
                            transport=Depends(get_model_probe_transport)):
-    """本机主动连接草稿目的地读取目录；不发送正文或生成请求。"""
+    """不发送正文或生成请求。"""
     from backend.app.services.model_probe import probe_models
     return await probe_models(payload, settings, transport)

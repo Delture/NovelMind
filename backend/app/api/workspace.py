@@ -1,4 +1,3 @@
-"""新前端的本机状态、统一任务列表和真实任务链。"""
 
 from backend.app.api.service_route import ServiceRoute
 import logging
@@ -36,16 +35,12 @@ class Privacy(BaseModel):
 
 
 class Position(BaseModel):
-    """逻辑阅读锚点，不依赖屏幕尺寸和滚动像素。"""
-
     chapter: int = Field(default=1, ge=1, le=10000)
     paragraph: int = Field(default=-1, ge=-1, le=2000000)
     offset: int = Field(default=0, ge=0, le=20000000)
 
 
 class Bookmark(Position):
-    """一个具有短摘录的阅读锚点。"""
-
     id: str = Field(max_length=80)
     snippet: str = Field(default="", max_length=100)
     label: str = Field(default="", max_length=80)
@@ -53,8 +48,6 @@ class Bookmark(Position):
 
 
 class Preferences(BaseModel):
-    """仅接受阅读器实际支持的主题和排版范围。"""
-
     theme: Literal["paper", "sepia", "dark"] = "paper"
     font: Literal["serif", "sans", "pingfang"] = "serif"
     size: float = Field(default=18, ge=16, le=28)
@@ -71,7 +64,7 @@ class Preferences(BaseModel):
 
 
 class ReaderState(BaseModel):
-    """有界的阅读状态请求，防止任意大 JSON 写入数据库。"""
+    """防止任意大 JSON 写入数据库。"""
 
     prefs: Preferences = Field(default_factory=Preferences)
     position: Position = Field(default_factory=Position)
@@ -95,7 +88,6 @@ def _reading_for_update(db: Session, novel_id: int) -> tuple[Novel, ReadingState
 
 @router.put("/novels/{novel_id}/reading/position", response_model=ReadingPosition)
 def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(get_db)):
-    """只合并位置和偏好，保留资料库里的现有书签。"""
     novel, row = _reading_for_update(db, novel_id)
     if value.position.chapter > novel.chapter_count:
         raise HTTPException(422, "阅读位置超出章节范围。")
@@ -106,7 +98,6 @@ def save_position(novel_id: int, value: ReadingPosition, db: Session = Depends(g
 
 @router.put("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", response_model=Bookmark)
 def save_bookmark(novel_id: int, bookmark_id: str, value: Bookmark, db: Session = Depends(get_db)):
-    """在短写事务中新增或替换一条书签，保留其他条目。"""
     novel, row = _reading_for_update(db, novel_id)
     if value.id != bookmark_id or value.chapter > novel.chapter_count:
         raise HTTPException(422, "书签标识或位置无效。")
@@ -120,7 +111,6 @@ def save_bookmark(novel_id: int, bookmark_id: str, value: Bookmark, db: Session 
 
 @router.delete("/novels/{novel_id}/reading/bookmarks/{bookmark_id}", status_code=204)
 def delete_bookmark(novel_id: int, bookmark_id: str, db: Session = Depends(get_db)):
-    """按标识删除单条书签，重复删除仍然成功。"""
     novel, row = _reading_for_update(db, novel_id)
     row.value = {**row.value, "bookmarks": [b for b in row.value["bookmarks"] if b["id"] != bookmark_id]}
     db.commit()
@@ -128,7 +118,6 @@ def delete_bookmark(novel_id: int, bookmark_id: str, db: Session = Depends(get_d
 
 @router.get("/workspace/privacy", response_model=Privacy)
 def get_privacy(db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    """读取本机统一授权，缺少记录时默认仅本地阅读。"""
     row = db.get(WorkspaceSetting, "privacy")
     if row is None or row.value.get("scope") != privacy_scope(settings):
         return Privacy()
@@ -137,7 +126,6 @@ def get_privacy(db: Session = Depends(get_db), settings: Settings = Depends(get_
 
 @router.put("/workspace/privacy", response_model=Privacy)
 def save_privacy(value: Privacy, db: Session = Depends(get_db), settings: Settings = Depends(get_settings)):
-    """保存明确的授权选择，不生成文本或触发任何付费调用。"""
     db.merge(WorkspaceSetting(key="privacy", value={**value.model_dump(), "scope": privacy_scope(settings)}))
     db.commit()
     return value
@@ -145,7 +133,6 @@ def save_privacy(value: Privacy, db: Session = Depends(get_db), settings: Settin
 
 @router.get("/novels/{novel_id}/reading", response_model=ReaderState)
 def get_reading(novel_id: int, db: Session = Depends(get_db)):
-    """加载小说的阅读状态，不存在时返回第一章默认状态。"""
     get_novel_or_404(db, novel_id)
     row = db.get(ReadingState, novel_id)
     return row.value if row else ReaderState()
@@ -153,7 +140,6 @@ def get_reading(novel_id: int, db: Session = Depends(get_db)):
 
 @router.put("/novels/{novel_id}/reading", response_model=ReaderState)
 def save_reading(novel_id: int, value: ReaderState, db: Session = Depends(get_db)):
-    """校验章节边界后原子写入阅读状态，包括偏好和全部书签。"""
     novel = get_novel_or_404(db, novel_id)
     if any(p.chapter > novel.chapter_count for p in [value.position, *value.bookmarks]):
         raise HTTPException(422, "阅读位置超出章节范围。")
@@ -163,14 +149,14 @@ def save_reading(novel_id: int, value: ReaderState, db: Session = Depends(get_db
 
 
 def workflow_data(row):
-    """把任务链转换为公开字段，问题正文不进入任务列表。"""
+    """问题正文不进入任务列表。"""
     return {**{k: getattr(row, k) for k in
             ("id", "novel_id", "kind", "status", "phase", "error_message")}, "created_at": row.created_at.isoformat()}
 
 
 @router.get("/workspace/tasks")
 def tasks(db: Session = Depends(get_db)):
-    """统一展示全资料库最近任务；后端持续执行，浏览器只轮询记录。"""
+    """后端持续执行，浏览器只轮询记录。"""
     names = {key: name for key, name in db.query(Novel.id, Novel.filename).all()}
     rows = []
     for job in db.query(AnalysisJob).order_by(AnalysisJob.created_at.desc()).limit(100):
@@ -207,8 +193,6 @@ def cancel_task(task_id: str, db: Session = Depends(get_db)):
 
 
 class WorkflowRequest(BaseModel):
-    """用户一次批准的工作范围，报告或索引后提问。"""
-
     model_config = ConfigDict(extra="forbid")
     kind: Literal["report", "ask"]
     question: str = Field(default="", max_length=2000)
@@ -232,11 +216,7 @@ def fail_interrupted_workflows(factory):
 def start_workflow(novel_id: int, value: WorkflowRequest, background: BackgroundTasks,
                    db: Session = Depends(get_db), factory=Depends(get_workflow_session_factory),
                    execution: WorkflowExecution = Depends(get_workflow_execution)):
-    """检查双授权和小说后持久化并派发任务链，数据库唯一索引阻止重复启动。
-
-    本接口只接受明确的用户请求，不从阅读或页面加载中隐式触发；每步仍经过共享
-    业务服务门禁。异常中断不会自动续跑，用户可以检查错误后复用缓存重新发起。
-    """
+    """不从阅读或页面加载中隐式触发；异常中断不会自动续跑。数据库唯一索引阻止重复启动。"""
     get_novel_or_404(db, novel_id)
     if not value.confirm_external_processing or not value.confirm_content_rights:
         raise HTTPException(400, "请先确认外部处理和内容处理权利。")

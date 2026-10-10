@@ -1,4 +1,3 @@
-"""Tests for the TXT chapter splitter."""
 
 import pytest
 

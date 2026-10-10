@@ -1,4 +1,3 @@
-"""人物分析 persistence 阶段；保留有界抽取、确定性统计与失败原子性。"""
 import logging
 from collections import defaultdict
 from typing import Callable, Optional
@@ -43,10 +42,7 @@ def _persist_snapshot(
     profiles: list[_ResolvedProfile],
     relationships: list[CharacterRelationPayload],
 ) -> CharacterAnalysis:
-    """在单事务中替换人物快照、人物、出场和关系。
-
-    保存前复核逐章来源；任一失败 rollback 并保留旧快照。返回新快照根记录。
-    """
+    """保存前复核逐章来源；任一失败 rollback 并保留旧快照。"""
     for item in prepared:
         if not item.changed:
             continue
@@ -185,7 +181,6 @@ def _persist_snapshot(
 
 
 def analyze_novel_characters(
-# 这是纯业务编排入口；任务状态的 claim/失败落盘由下面的 job runner 负责。
     db: Session,
     novel: Novel,
     provider: LLMProvider,

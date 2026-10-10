@@ -1,7 +1,4 @@
-"""RAG 索引、提问、估算、状态与证据历史接口。
-
-建索引把章节分块发送给 embedding 服务并保存本地向量；提问先向量化问题、
-本地检索，再把少量证据交给生成模型。两条路径分别披露外发数据并校验授权。
+"""两条路径分别披露外发数据并校验授权。
 索引可用性不仅检查 SQLite 指针，还要验证向量集合真实存在且数量匹配。
 """
 
@@ -67,10 +64,7 @@ DEEPSEEK_TERMS_URL = (
 DEEPSEEK_PRIVACY_URL = "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
 
 
-# 建索引与提问的授权范围、force 语义和参数不同，因此使用不同请求模型。
 class StartRagIndexRequest(BaseModel):
-    """Consent and refresh controls for external source embedding."""
-
     model_config = ConfigDict(extra="forbid")
 
     confirm_external_processing: StrictBool
@@ -80,8 +74,6 @@ class StartRagIndexRequest(BaseModel):
 
 
 class StartRagQuestionRequest(BaseModel):
-    """Question plus explicit consent for both external providers."""
-
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(min_length=1, max_length=2_000)
@@ -93,7 +85,6 @@ class StartRagQuestionRequest(BaseModel):
     @field_validator("question")
     @classmethod
     def question_cannot_be_whitespace(cls, value: str) -> str:
-        """去除问题首尾空白；清理后为空则拒绝，否则返回规范文本。"""
         stripped = value.strip()
         if not stripped:
             raise ValueError("question cannot be blank")
@@ -101,8 +92,6 @@ class StartRagQuestionRequest(BaseModel):
 
 
 class RagJobResponse(BaseModel):
-    """Persistent RAG indexing job progress."""
-
     id: str
     novel_id: int
     status: str
@@ -116,8 +105,6 @@ class RagJobResponse(BaseModel):
 
 
 class RagEstimateResponse(BaseModel):
-    """Bounded external-work estimate shown before consent."""
-
     novel_id: int
     chapter_count: int
     character_count: int
@@ -147,8 +134,6 @@ class RagEstimateResponse(BaseModel):
 
 
 class RagIndexStatusResponse(BaseModel):
-    """Current index readiness and non-secret provenance."""
-
     novel_id: int
     ready: bool
     current: bool
@@ -162,8 +147,6 @@ class RagIndexStatusResponse(BaseModel):
 
 
 class RagCitationResponse(BaseModel):
-    """One exact source citation selected by DeepSeek."""
-
     chunk_id: str
     chapter_index: int
     chapter_title: str
@@ -173,8 +156,6 @@ class RagCitationResponse(BaseModel):
 
 
 class RagQuestionResponse(BaseModel):
-    """One persisted question, answer state, and selected citations."""
-
     id: str
     novel_id: int
     question: str
@@ -192,7 +173,6 @@ class RagQuestionResponse(BaseModel):
 
 
 class RagQuestionListResponse(BaseModel):
-    """问答历史分页响应，包含当前页 items、总数、offset 与 limit。"""
     items: list[RagQuestionResponse]
     total: int
     offset: int
@@ -208,7 +188,6 @@ class RagQuestionListResponse(BaseModel):
 
 
 def _get_novel(db: Session, novel_id: int) -> Novel:
-    """按主键读取小说；不存在统一抛 HTTP 404。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -219,7 +198,6 @@ def _get_novel(db: Session, novel_id: int) -> Novel:
 
 
 def _rag_job_response(job: AnalysisJob) -> RagJobResponse:
-    """把内部索引 AnalysisJob 映射为 RAG 专用公开响应。"""
     return RagJobResponse(
         id=job.id,
         novel_id=job.novel_id,
@@ -238,7 +216,6 @@ def _active_index_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
-    """返回某小说当前 queued/running 的索引任务；没有则返回 None。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -255,7 +232,7 @@ def _active_question(
     db: Session,
     novel_id: int,
 ) -> Optional[RagQuestion]:
-    """返回某小说当前活动问答，用于阻止同小说并行问答争用资源。"""
+    """阻止同小说并行问答争用资源。"""
     return (
         db.query(RagQuestion)
         .filter(
@@ -272,11 +249,7 @@ def _source_state(
     novel_id: int,
     settings: Settings,
 ):
-    """读取有序章节，返回章节、确定性分块及当前来源哈希。
-
-    ``settings`` 提供影响哈希的模型/维度；估算、状态和启动接口共享本函数，避免
-    三条路径采用不同的数据范围。
-    """
+    """估算、状态和启动接口共享本函数，避免三条路径采用不同的数据范围。"""
     chapters = (
         db.query(Chapter)
         .filter(Chapter.novel_id == novel_id)
@@ -331,11 +304,6 @@ def _build_estimate(
     settings: Settings,
     vector_store_factory: Optional[VectorStoreFactory] = None,
 ) -> RagEstimateResponse:
-    """纯本地估算总块、可复用块、外发字符和最大 embedding 请求数。
-
-    ``force`` 决定是否必须刷新；可选工厂便于测试注入临时向量库。本函数不构造
-    embedding provider，因此不会产生外部调用。
-    """
     _get_novel(db, novel_id)
     chapters, chunks, source_hash = _source_state(
         db,
@@ -454,7 +422,6 @@ def _build_estimate(
 
 
 def _close_unused(provider: object, description: str) -> None:
-    """关闭尚未移交的可选 provider；description 仅用于安全日志。"""
     close = getattr(provider, "close", None)
     if callable(close):
         try:
@@ -469,11 +436,9 @@ def _mark_undispatched_index_failed(
     db: Session,
     session_factory: Callable[[], Session],
 ) -> bool:
-    """通过共享补偿结束未派发任务。"""
     return fail_dispatch(db=db, session_factory=session_factory, job_id=job_id, job_type="rag_index", message="索引任务未能加入后台队列，请重试。")
 
 
-# 新集合在后台构建；提交后的派发失败会被显式终结，便于界面恢复和排障。
 def _schedule_index(
     *,
     novel_id: int,
@@ -485,10 +450,7 @@ def _schedule_index(
     vector_store: VectorStore,
     session_factory: Callable[[], Session],
 ) -> RagJobResponse:
-    """持久化索引任务并移交 provider/vector store 给后台 worker。
-
-    成功后 worker 负责资源；移交前失败则本函数关闭资源并补偿任务。
-    """
+    """成功后 worker 负责资源；移交前失败则本函数关闭资源并补偿任务。"""
     transferred = False
     try:
         active = _active_index_job(db, novel_id)
@@ -575,12 +537,6 @@ def _schedule_index(
 
 
 def _question_response(row: RagQuestion) -> RagQuestionResponse:
-    """把 RagQuestion ORM 行转换成公开问答响应。
-
-    ``row`` 中 evidence/citation_ids 是可变 JSON，函数先用 Pydantic 逐项验证，
-    再复制状态、答案、错误和时间字段。旧数据库若含畸形 JSON 会返回安全协议错误，
-    而不是让 Streamlit 在深层字段访问时崩溃。
-    """
     try:
         evidence = [
             RagEvidence.model_validate(item)
@@ -634,7 +590,6 @@ def _question_response(row: RagQuestion) -> RagQuestionResponse:
 
 
 def get_rag_estimate(novel_id: int, force: bool, db: Session, settings: Settings, vector_store_factory: VectorStoreFactory) -> RagEstimateResponse:
-    """Estimate local chunks and worst-case paid attempts."""
     return _build_estimate(
         db,
         novel_id=novel_id,
@@ -645,12 +600,6 @@ def get_rag_estimate(novel_id: int, force: bool, db: Session, settings: Settings
 
 
 def get_rag_index_status(novel_id: int, db: Session, settings: Settings, vector_store_factory: VectorStoreFactory) -> RagIndexStatusResponse:
-    """读取一部小说的完整 RAG 索引状态。
-
-    ``novel_id`` 来自路径，``db/settings/vector_store_factory`` 由 Depends 注入。
-    函数比较来源哈希、供应商、模型、维度、分块版本，并实际打开向量库核对集合
-    存在和数量；返回 ready/current/rebuild 提示，不调用外部 embedding。
-    """
     _get_novel(db, novel_id)
     _, chunks, source_hash = _source_state(db, novel_id, settings)
     current = (
@@ -777,7 +726,6 @@ def start_rag_index(request: StartRagIndexRequest, background_tasks: TaskDispatc
 
 
 def list_rag_index_jobs(novel_id: int, limit: int, db: Session) -> list[RagJobResponse]:
-    """按时间倒序返回最多 ``limit`` 条索引任务历史。"""
     _get_novel(db, novel_id)
     jobs = (
         db.query(AnalysisJob)
@@ -977,7 +925,6 @@ def start_rag_question(request: StartRagQuestionRequest, background_tasks: TaskD
 
 
 def list_rag_questions(novel_id: int, offset: int, limit: int, db: Session) -> RagQuestionListResponse:
-    """按 offset/limit 分页读取问答历史，并逐项验证响应。"""
     _get_novel(db, novel_id)
     query = db.query(RagQuestion).filter(
         RagQuestion.novel_id == novel_id
@@ -1001,7 +948,6 @@ def list_rag_questions(novel_id: int, offset: int, limit: int, db: Session) -> R
 
 
 def get_rag_question(novel_id: int, question_id: str, db: Session) -> RagQuestionResponse:
-    """读取指定问题并确认归属；不存在或小说不匹配均返回 404。"""
     _get_novel(db, novel_id)
     row = (
         db.query(RagQuestion)

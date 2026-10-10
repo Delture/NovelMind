@@ -1,4 +1,3 @@
-"""Tests for RAG consent gates, estimates, and background scheduling."""
 
 from dataclasses import replace
 from typing import Callable, Generator

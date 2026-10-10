@@ -1,4 +1,3 @@
-"""Check browser-server isolation and probe wiring without launching a browser."""
 
 import json
 import os

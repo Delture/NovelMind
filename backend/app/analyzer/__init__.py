@@ -1,4 +1,3 @@
-"""Novel analysis providers and shared contracts."""
 
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,

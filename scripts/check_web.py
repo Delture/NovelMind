@@ -12,18 +12,12 @@ import urllib.request
 
 
 def free_port():
-    """向系统申请一个空闲回环端口用于临时验收。"""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
 
 
 def main():
-    """运行真实前后端和 Playwright 检查，使用临时数据库与空密钥。
-
-    进程输出、截图和检查结果默认保存在系统临时目录，可用 QA_OUTPUT 指定。无论检查
-    成功、失败还是超时，都只清理本次创建的进程；临时目录由标准库安全释放。
-    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reader-alignment", action="store_true",
                         help="仅检查阅读目录对齐、选中态及已有点击/键盘操作")

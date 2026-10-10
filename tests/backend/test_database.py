@@ -1,4 +1,3 @@
-"""Tests for database engine configuration."""
 
 from importlib import import_module
 
@@ -783,7 +782,6 @@ def test_v4_rejects_wrong_force_refresh_check() -> None:
 
 
 def _build_v4_database(engine) -> None:
-    """Create the last pre-character schema with migrations 1 through 4."""
     migrations = import_module("backend.app.core.migrations")
     with engine.begin() as connection:
         connection.execute(

@@ -71,16 +71,13 @@ def select_probe_credentials(payload, settings):
 
 async def probe_models(payload, settings, transport=None):
     """有界流式读取目录；不跟随跳转，不返回远端错误正文或认证头。
-
-    transport 可注入 httpx.MockTransport。总时限独立于连接/读取时限；拒绝
-    压缩响应避免解压膨胀。所有失败映射为本机固定文案，不记录远端异常原文。
+    拒绝压缩响应避免解压膨胀；所有失败映射为本机固定文案，不记录远端异常原文。
     """
     base_url, key = select_probe_credentials(payload, settings)
     started = time.monotonic()
     http_status = None
 
     def result(status, models=None, truncated=False):
-        """仅输出公开目录和有限状态。"""
         return dict(status=status, message=MESSAGES[status],
                     latency_ms=round((time.monotonic() - started) * 1000),
                     models=models or [], truncated=truncated, http_status=http_status)

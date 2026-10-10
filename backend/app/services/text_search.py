@@ -1,4 +1,3 @@
-"""本机正文搜索：逐章扫描、字面匹配、分页片段与 UTF-16 阅读锚点。"""
 
 import re
 
@@ -16,10 +15,8 @@ def utf16_length(value: str) -> int:
 
 
 def search_text(db, novel_id: int, query: str, offset: int, limit: int) -> dict:
-    """只读扫描候选章节，每章最多三个命中，仅累积一页加一个前瞻项。
-
-    SQLite instr 按字面过滤；段落规则与 reader.js 的非空行切分一致。
-    空行不占段落序号，缩进保留，片段不替代完整原文与原始锚点。
+    """SQLite instr 按字面过滤；段落规则与 reader.js 的非空行切分一致。
+    空行不占段落序号，缩进保留。
     """
     seen = 0
     hits = []

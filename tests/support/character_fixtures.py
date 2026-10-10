@@ -1,4 +1,3 @@
-"""共享确定性测试数据与假提供商；不发送网络请求。"""
 from datetime import datetime
 from typing import Callable, Generator
 from unittest.mock import Mock

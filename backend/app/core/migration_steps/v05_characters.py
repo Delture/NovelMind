@@ -1,4 +1,3 @@
-"""v05_characters：保留历史数据升级和约束检查。"""
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 from .validation import (
@@ -43,8 +42,6 @@ END
 
 
 def _add_character_analysis_tables(connection: Connection) -> None:
-    """Create and strictly validate the character snapshot schema."""
-
     connection.execute(
         text(
             """

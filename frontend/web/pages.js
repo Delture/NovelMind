@@ -4,7 +4,6 @@ import {appearanceControls} from './appearance.js';
 import { api, allPages, optional } from './api.js';
 import { modal, captureModalFocus, escape as e, button, icon, bind, toast, taskStatuses as statuses } from "./ui.js";
 
-// 页面负责获取数据、绑定操作和阅读状态，导航由 app.js 提供。
 const toneCount = 6;
 // Cover title: split at a separator when there is one, otherwise in half; each line stays short enough to typeset.
 function coverLines(title) {

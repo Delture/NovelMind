@@ -1,4 +1,3 @@
-"""Parser/upload and read-only repair rehearsal regressions on authored temporary data."""
 
 from contextlib import closing
 from copy import deepcopy
@@ -62,7 +61,6 @@ def test_upload_persists_punctuated_chapter_boundary_without_losing_text(isolate
 
 @pytest.fixture
 def repair_source(isolated_config):
-    """Three old records, two embedded boundaries, and an unrelated second book."""
     from backend.app.core.database import create_db_engine, init_db
     from backend.app.models.novel import Novel, Chapter
     from backend.app.models.workspace import ReadingState

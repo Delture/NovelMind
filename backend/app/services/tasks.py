@@ -11,8 +11,6 @@ ProviderFactory = Callable[[], LLMProvider]
 DEEPSEEK_TERMS_URL = "https://cdn.deepseek.com/policies/zh-CN/deepseek-terms-of-use.html"
 DEEPSEEK_PRIVACY_URL = "https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html"
 class AnalysisJobResponse(BaseModel):
-    """Persistent progress for one background analysis task."""
-
     id: str
     novel_id: int
     job_type: str
@@ -38,7 +36,6 @@ class AnalysisJobResponse(BaseModel):
 
 
 def _job_response(job: AnalysisJob) -> AnalysisJobResponse:
-    """把内部 AnalysisJob 复制为公开响应模型，避免直接序列化 ORM。"""
     return AnalysisJobResponse(
         id=job.id,
         novel_id=job.novel_id,

@@ -1,4 +1,3 @@
-"""v08_reports：保留历史数据升级和约束检查。"""
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from .validation import (
@@ -9,7 +8,6 @@ from .validation import (
 )
 
 def _add_novel_report_table(connection: Connection) -> None:
-    """Create and strictly validate the current report snapshot."""
     connection.execute(
         text(
             """

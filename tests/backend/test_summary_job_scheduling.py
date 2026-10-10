@@ -1,4 +1,3 @@
-"""Concurrency and scope tests for summary job scheduling."""
 
 from pathlib import Path
 from threading import Barrier, Lock, Thread

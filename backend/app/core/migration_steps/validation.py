@@ -1,4 +1,3 @@
-"""validation：保留历史数据升级和约束检查。"""
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
@@ -7,7 +6,6 @@ def _has_columns(
     table_name: str,
     expected_columns: set[str],
 ) -> None:
-    """Raise a readable error when an existing table is incomplete."""
     actual_columns = {
         column["name"]
         for column in inspect(connection).get_columns(table_name)
@@ -27,7 +25,6 @@ def _has_cascade_foreign_key(
     local_column: str,
     referred_table: str,
 ) -> bool:
-    """Return whether an expected cascading foreign key exists."""
     for foreign_key in inspect(connection).get_foreign_keys(table_name):
         ondelete = str(
             foreign_key.get("options", {}).get("ondelete", "")
@@ -46,7 +43,6 @@ def _has_unique_columns(
     table_name: str,
     expected_columns: list[str],
 ) -> bool:
-    """Return whether a table enforces uniqueness for exact columns."""
     inspector = inspect(connection)
     candidates = (
         inspector.get_unique_constraints(table_name)
@@ -68,7 +64,6 @@ def _validate_index(
     index_name: str,
     expected_columns: list[str],
 ) -> None:
-    """Validate a named non-unique lookup index."""
     matching = [
         item
         for item in inspect(connection).get_indexes(table_name)
@@ -86,7 +81,6 @@ def _validate_index(
 
 
 def _normalized_sql(sqltext: object) -> str:
-    """Normalize a reflected SQL expression for strict comparison."""
     return (
         "".join(str(sqltext).casefold().split())
         .replace('"', "")
@@ -97,7 +91,6 @@ def _normalized_sql(sqltext: object) -> str:
 def _validate_active_job_index(
     connection: Connection,
 ) -> bool:
-    """Validate the partial unique index, returning whether it exists."""
     index_name = "ux_analysis_jobs_active_novel_type"
     matching = [
         item
@@ -129,7 +122,6 @@ def _validate_exact_columns(
     table_name: str,
     expected: dict[str, tuple[str, bool, int, str | None]],
 ) -> None:
-    """Validate column identities and meaningful type/null/key/default contracts."""
     actual_columns = inspect(connection).get_columns(table_name)
     if {item["name"] for item in actual_columns} != set(expected):
         raise RuntimeError(
@@ -171,7 +163,6 @@ def _validate_named_unique(
     constraint_name: str,
     expected_columns: list[str],
 ) -> None:
-    """Validate one named unique constraint with exact column order."""
     inspector = inspect(connection)
     candidates = (
         inspector.get_unique_constraints(table_name)
@@ -203,7 +194,6 @@ def _ensure_named_unique_index(
     index_name: str,
     expected_columns: list[str],
 ) -> None:
-    """Create a legacy-compatible parent key or validate its name."""
     inspector = inspect(connection)
     if table_name not in inspector.get_table_names():
         raise RuntimeError(
@@ -248,12 +238,6 @@ def _validate_exact_cascade_foreign_key(
     referred_table: str,
     referred_columns: list[str],
 ) -> None:
-    """严格校验一个复合级联外键的本地列、目标表和目标列。
-
-    ``connection`` 用于反射，``table_name`` 是待查表，``local_columns`` 与
-    ``referred_columns`` 必须按约束顺序对应，``referred_table`` 是父表。缺失、重复
-    或 ondelete 不是 CASCADE 都抛 RuntimeError，防止损坏结构继续运行。
-    """
     matching = [
         item
         for item in inspect(connection).get_foreign_keys(table_name)
@@ -287,7 +271,6 @@ def _validate_exact_checks(
     table_name: str,
     expected: dict[str, str],
 ) -> None:
-    """Validate the complete named CHECK-constraint set."""
     actual = {
         item.get("name"): _normalized_sql(item.get("sqltext", ""))
         for item in inspect(connection).get_check_constraints(table_name)

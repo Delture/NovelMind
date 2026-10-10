@@ -1,4 +1,3 @@
-"""v06_rag：保留历史数据升级和约束检查。"""
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 from .validation import (
@@ -11,7 +10,6 @@ from .validation import (
 )
 
 def _add_rag_index_tables(connection: Connection) -> None:
-    """Create and strictly validate active RAG snapshot provenance."""
     connection.execute(
         text(
             """
@@ -229,7 +227,6 @@ def _add_rag_index_tables(connection: Connection) -> None:
 
 
 def _add_rag_question_table(connection: Connection) -> None:
-    """Create persisted RAG answer jobs and strict evidence provenance."""
     connection.execute(
         text(
             """
@@ -403,7 +400,6 @@ def _add_rag_question_table(connection: Connection) -> None:
 
 
 def _allow_configurable_embedding_models(connection: Connection) -> None:
-    """Relax the original fixed-provider checks while preserving RAG data."""
     connection.execute(
         text(
             """

@@ -1,4 +1,3 @@
-"""Tests for application configuration loading and validation."""
 
 import pytest
 

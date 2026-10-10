@@ -1,4 +1,3 @@
-"""Tests for deterministic exact-source RAG chunking."""
 
 from dataclasses import dataclass
 

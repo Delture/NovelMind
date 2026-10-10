@@ -1,4 +1,3 @@
-"""Exercise real workflow services while another request changes model configuration."""
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy

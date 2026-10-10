@@ -27,8 +27,6 @@ class ReadingState(Base):
 
 
 class Workflow(Base):
-    """持久记录摘要到报告、索引到问答的串联步骤及错误。"""
-
     __tablename__ = "workflows"
     __table_args__ = (Index("uq_active_workflow", "novel_id", unique=True,
                            sqlite_where=text("status IN ('queued', 'running')")),)

@@ -1,4 +1,3 @@
-"""Tests for the TXT novel upload API."""
 
 import asyncio
 import json
@@ -20,7 +19,6 @@ from backend.app.models.novel import Novel
 
 @pytest.fixture(autouse=True)
 def db_session() -> Generator[Session, None, None]:
-    """Use a fresh in-memory SQLite database for each test."""
     test_engine = create_db_engine(
         "sqlite://",
         poolclass=StaticPool,
@@ -51,7 +49,6 @@ def send_request(
     *,
     content_type: bytes = b"application/octet-stream",
 ) -> tuple[int, dict]:
-    """Send one HTTP request directly to the FastAPI ASGI application."""
     query_string = urlencode({"filename": filename}).encode() if filename else b""
     messages: list[dict] = []
     request_sent = False

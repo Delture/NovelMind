@@ -1,8 +1,4 @@
-"""人物分析估算/启动，以及当前人物快照的本地查询接口。
-
-写路径会调用外部模型，必须确认数据范围和内容权利；读路径只查询本地 SQLite。
-把昂贵生成与便宜读取分开，既便于测试，也避免每次打开人物页都产生 API 费用。
-"""
+"""写路径调用外部模型，须确认数据范围和内容权利；读路径只查本地 SQLite，打开人物页不产生 API 费用。"""
 
 from backend.app.services.tasks import _close_provider, fail_dispatch
 from backend.app.services.errors import ServiceError
@@ -65,8 +61,6 @@ DEEPSEEK_PRIVACY_URL = (
 
 # Pydantic 负责无数据库参与的类型检查；跨表归属和活动任务冲突仍由业务层验证。
 class StartCharacterAnalysisRequest(BaseModel):
-    """Explicit consent and refresh options for whole-novel analysis."""
-
     model_config = ConfigDict(extra="forbid")
 
     confirm_external_processing: StrictBool
@@ -75,8 +69,6 @@ class StartCharacterAnalysisRequest(BaseModel):
 
 
 class CharacterEstimateResponse(BaseModel):
-    """External work and disclosure shown before generation starts."""
-
     novel_id: int
     chapter_count: int
     character_count: int
@@ -101,8 +93,6 @@ class CharacterEstimateResponse(BaseModel):
 
 
 class CharacterListItemResponse(BaseModel):
-    """One canonical character with deterministic local statistics."""
-
     id: int
     canonical_name: str
     aliases: list[str]
@@ -115,8 +105,6 @@ class CharacterListItemResponse(BaseModel):
 
 
 class CharacterListResponse(BaseModel):
-    """Paginated characters and snapshot-level totals."""
-
     items: list[CharacterListItemResponse]
     total: int
     offset: int
@@ -128,15 +116,11 @@ class CharacterListResponse(BaseModel):
 
 
 class CharacterDetailResponse(CharacterListItemResponse):
-    """One character plus snapshot provenance safe for display."""
-
     model: str
     updated_at: datetime
 
 
 class CharacterAppearanceResponse(BaseModel):
-    """One character's aggregate appearance in a chapter."""
-
     id: int
     chapter_index: int
     chapter_title: str
@@ -145,8 +129,6 @@ class CharacterAppearanceResponse(BaseModel):
 
 
 class CharacterAppearanceListResponse(BaseModel):
-    """Paginated appearance records."""
-
     items: list[CharacterAppearanceResponse]
     total: int
     offset: int
@@ -154,8 +136,6 @@ class CharacterAppearanceListResponse(BaseModel):
 
 
 class CharacterRelationshipResponse(BaseModel):
-    """One model-inferred relationship using local character IDs."""
-
     id: int
     source_character_id: int
     source_character_name: str
@@ -168,8 +148,6 @@ class CharacterRelationshipResponse(BaseModel):
 
 
 class CharacterRelationshipListResponse(BaseModel):
-    """Paginated relationships involving one character."""
-
     items: list[CharacterRelationshipResponse]
     total: int
     offset: int
@@ -180,7 +158,6 @@ def _active_character_job(
     db: Session,
     novel_id: int,
 ) -> Optional[AnalysisJob]:
-    """查询该小说 queued/running 的人物任务；没有时返回 ``None``。"""
     return (
         db.query(AnalysisJob)
         .filter(
@@ -199,7 +176,6 @@ def _mark_committed_character_job_failed(
     db: Session,
     session_factory: Callable[[], Session],
 ) -> bool:
-    """通过共享补偿结束未派发任务。"""
     return fail_dispatch(
         db=db,
         session_factory=session_factory,
@@ -220,11 +196,7 @@ def _schedule_character_job(
     provider: LLMProvider,
     session_factory: Callable[[], Session],
 ) -> AnalysisJobResponse:
-    """持久化并移交人物任务，返回供前端轮询的任务响应。
-
-    ``progress_total`` 来自本地估算，``request`` 带授权/force 选择，provider 在
-    成功移交后归 worker 所有；移交前异常会关闭它并补偿任务状态。
-    """
+    """provider 在成功移交后归 worker 所有；移交前异常会关闭它并补偿任务状态。"""
     provider_transferred = False
     try:
         active_job = _active_character_job(db, novel_id)
@@ -329,12 +301,6 @@ def _build_character_estimate(
     db: Session,
     settings: Settings,
 ) -> CharacterEstimateResponse:
-    """生成授权页所需的人物分析本地估算。
-
-    ``novel`` 确定范围，``db`` 读取章节与逐章缓存，``settings`` 提供当前模型和
-    提示限制。返回章节数、字符数、可复用章数、预计步骤及安全上限；函数不构造
-    provider，因而不会发送正文或产生 API 费用。
-    """
     rows = (
         db.query(Chapter, ChapterCharacterExtraction)
         .outerjoin(
@@ -483,7 +449,6 @@ def _build_character_estimate(
 def get_character_estimate(
     novel_id: int, *, settings: Settings, db: Session
 ) -> CharacterEstimateResponse:
-    """Estimate external character-analysis work before consent."""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -502,7 +467,6 @@ def start_character_analysis(
     provider_factory: ProviderFactory,
     session_factory: Callable[[], Session],
 ) -> AnalysisJobResponse:
-    """Start one whole-novel DeepSeek character-analysis job."""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -563,7 +527,6 @@ def _get_character_for_novel(
     novel_id: int,
     character_id: int,
 ) -> tuple[CharacterAnalysis, Character]:
-    """按小说和人物 ID 联表查找，返回 ``(当前快照, 人物)``；不存在抛 404。"""
     row = (
         db.query(CharacterAnalysis, Character)
         .join(Character, Character.analysis_id == CharacterAnalysis.id)
@@ -591,7 +554,6 @@ def _relationship_counts(
     analysis_id: int,
     character_ids: list[int],
 ) -> dict[int, int]:
-    """批量返回 ``character_id -> 参与关系数``；无关系人物也保留值 0。"""
     counts = {character_id: 0 for character_id in character_ids}
     if not character_ids:
         return counts
@@ -629,7 +591,6 @@ def _character_item(
     *,
     relationship_count: int,
 ) -> CharacterListItemResponse:
-    """把人物 ORM 行和预计算关系数映射成稳定列表响应，不暴露内部关系对象。"""
     return CharacterListItemResponse(
         id=character.id,
         canonical_name=character.canonical_name,
@@ -652,7 +613,6 @@ def list_characters(
     sort: Literal["mention_count", "chapter_count", "first_chapter"] = "mention_count",
     db: Session,
 ) -> CharacterListResponse:
-    """Return current characters without loading novel bodies."""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise ServiceError(
@@ -740,7 +700,6 @@ def list_characters(
 def get_character(
     novel_id: int, character_id: int, *, db: Session
 ) -> CharacterDetailResponse:
-    """Return one character from the current novel snapshot."""
     analysis, character = _get_character_for_novel(
         db, novel_id=novel_id, character_id=character_id
     )
@@ -756,7 +715,6 @@ def get_character(
 def list_character_appearances(
     novel_id: int, character_id: int, *, offset: int = 0, limit: int = 50, db: Session
 ) -> CharacterAppearanceListResponse:
-    """Return chapter appearances for one current character."""
     _, character = _get_character_for_novel(
         db, novel_id=novel_id, character_id=character_id
     )
@@ -793,7 +751,6 @@ def list_character_appearances(
 def list_character_relationships(
     novel_id: int, character_id: int, *, offset: int = 0, limit: int = 50, db: Session
 ) -> CharacterRelationshipListResponse:
-    """Return current relationships involving one character."""
     analysis, character = _get_character_for_novel(
         db, novel_id=novel_id, character_id=character_id
     )

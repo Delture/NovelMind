@@ -1,9 +1,3 @@
-"""小说上传、资料库分页、章节读取和删除接口。
-
-这是最适合初学者先读的完整 CRUD 流程：FastAPI 接收请求，Pydantic 描述响应，
-SQLAlchemy Session 执行事务，异常再转换为稳定 HTTP 错误。上传使用原始
-``application/octet-stream``，文件名放查询参数，正文保留原始字节供后端判定编码。
-"""
 
 import logging
 from datetime import datetime
@@ -47,16 +41,12 @@ MAX_UPLOAD_RESPONSE_CHAPTERS = 200
 
 # API 响应模型是对外合同。显式列出字段，避免数据库新增内部字段后意外泄露。
 class ChapterResponse(BaseModel):
-    """Chapter metadata returned after parsing an uploaded novel."""
-
     index: int
     title: str
     character_count: int
 
 
 class NovelUploadResponse(BaseModel):
-    """Result of uploading and parsing one TXT novel."""
-
     novel_id: int
     filename: str
     encoding: str
@@ -66,8 +56,6 @@ class NovelUploadResponse(BaseModel):
 
 
 class NovelSummaryResponse(BaseModel):
-    """Metadata for one novel in the saved library."""
-
     id: int
     filename: str
     encoding: str
@@ -77,8 +65,6 @@ class NovelSummaryResponse(BaseModel):
 
 
 class NovelListResponse(BaseModel):
-    """One page of saved novels."""
-
     items: list[NovelSummaryResponse]
     total: int
     offset: int
@@ -86,8 +72,6 @@ class NovelListResponse(BaseModel):
 
 
 class ChapterSummaryResponse(BaseModel):
-    """Chapter metadata returned without the full original text."""
-
     id: int
     index: int
     title: str
@@ -95,8 +79,6 @@ class ChapterSummaryResponse(BaseModel):
 
 
 class ChapterListResponse(BaseModel):
-    """One page of chapter metadata."""
-
     items: list[ChapterSummaryResponse]
     total: int
     offset: int
@@ -104,14 +86,11 @@ class ChapterListResponse(BaseModel):
 
 
 class ChapterDetailResponse(ChapterSummaryResponse):
-    """One complete chapter loaded on demand."""
-
     novel_id: int
     content: str
 
 
 def get_novel_or_404(db: Session, novel_id: int) -> Novel:
-    """集中实现资源查找，并统一不存在时的 404 行为。"""
     novel = db.get(Novel, novel_id)
     if novel is None:
         raise HTTPException(
@@ -122,7 +101,6 @@ def get_novel_or_404(db: Session, novel_id: int) -> Novel:
 
 
 def decode_txt(content: bytes) -> tuple[str, str]:
-    """用受控候选编码解码 TXT，并返回文本及实际采用的编码名。"""
     try:
         return content.decode("utf-8-sig"), "utf-8"
     except UnicodeDecodeError:
@@ -180,17 +158,11 @@ def validate_decoded_text(text: str) -> None:
     },
 )
 async def upload_novel(
-    # 参数由 FastAPI 按路径、查询参数、请求体和依赖分别注入。
     request: Request,
     filename: str = Query(..., description="上传的 TXT 文件名"),
     db: Session = Depends(get_db),
 ) -> NovelUploadResponse:
-    """接收原始 TXT 字节，校验、解码、切章并原子保存小说。
-
-    ``filename`` 来自查询参数，``request`` 提供流式请求体，``db`` 由 Depends
-    注入。函数限制扩展名/Content-Type/20MB，检测编码和乱码；小说与全部章节在
-    同一事务提交。成功返回元数据和章节，任何数据库错误 rollback 后返回 500。
-    """
+    """任何数据库错误 rollback 后返回 500；小说与全部章节在同一事务提交。"""
     content_type = request.headers.get("content-type", "")
     media_type = content_type.partition(";")[0].strip().lower()
     if media_type != "application/octet-stream":
@@ -229,7 +201,7 @@ async def upload_novel(
 
 
 def _save_uploaded_novel(content: bytes, safe_filename: str, db: Session) -> NovelUploadResponse:
-    """在线程内完成解码、切章与事务，不占用 ASGI 事件循环。"""
+    """在线程内完成，不占用 ASGI 事件循环。"""
     text, encoding = decode_txt(content)
     validate_decoded_text(text)
     chapters = split_chapters(text)
@@ -298,7 +270,6 @@ def list_novels(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> NovelListResponse:
-    """Return saved novels without loading their chapter text."""
     chapter_totals = (
         db.query(
             ChapterModel.novel_id.label("novel_id"),
@@ -343,7 +314,6 @@ def get_novel(
     novel_id: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
 ) -> NovelSummaryResponse:
-    """Return aggregate metadata for one saved novel."""
     novel = get_novel_or_404(db, novel_id)
     character_count = (
         db.query(func.coalesce(func.sum(ChapterModel.character_count), 0))
@@ -370,7 +340,6 @@ def list_chapters(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> ChapterListResponse:
-    """Return chapter metadata without loading the full body text."""
     get_novel_or_404(db, novel_id)
     total = (
         db.query(func.count(ChapterModel.id))
@@ -416,7 +385,6 @@ def get_chapter(
     chapter_index: int = PathParameter(..., ge=1),
     db: Session = Depends(get_db),
 ) -> ChapterDetailResponse:
-    """Return one full chapter by its display index."""
     get_novel_or_404(db, novel_id)
     chapter = (
         db.query(ChapterModel)
@@ -450,7 +418,6 @@ def delete_novel(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    """Delete one novel and all of its dependent records."""
     novel = get_novel_or_404(db, novel_id)
     collection_name = db.query(RagIndex.collection_name).filter(
         RagIndex.novel_id == novel_id
@@ -487,7 +454,7 @@ def search_novel_text(novel_id: int = PathParameter(..., ge=1),
                       offset: int = Query(0, ge=0, le=10000),
                       limit: int = Query(20, ge=1, le=50),
                       db: Session = Depends(get_db)) -> dict:
-    """返回有界本机原文片段和 UTF-16 锚点；不调用外部模型或写阅读状态。"""
+    """不调用外部模型或写阅读状态。"""
     from backend.app.services.text_search import search_text
     get_novel_or_404(db, novel_id)
     query = q.strip()

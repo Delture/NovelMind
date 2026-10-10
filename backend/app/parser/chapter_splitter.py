@@ -1,8 +1,5 @@
-"""使用可预测的本地规则把 TXT 小说拆成章节。
-
-项目没有让大模型猜章节，而是要求章标题独占一行并使用确定性正则：同一文件
-每次处理都得到相同结果，测试也无需联网。规则宁可保守少切，也不要把正文中
-偶然出现的“第十章……”误判为新章节。
+"""不让大模型猜章节：章标题须独占一行并用确定性正则，结果可复现。
+规则宁可少切，也不把正文中偶然出现的“第十章……”误判为新章节。
 """
 
 from dataclasses import dataclass
@@ -11,8 +8,6 @@ import re
 
 @dataclass(frozen=True)
 class Chapter:
-    """解析阶段的轻量、不可变章节值对象，此时尚未写入数据库。"""
-
     index: int
     title: str
     content: str
@@ -33,7 +28,6 @@ _ENGLISH_CHAPTER_TITLE_PATTERN = re.compile(
 
 
 def _is_chapter_title(line: str) -> bool:
-    """判断一整行是否像章节标题，同时过滤过长正文和明显句子。"""
     title = line.strip()
     if not title or len(title) > _MAX_CHAPTER_TITLE_CHARACTERS:
         return False
@@ -67,17 +61,12 @@ def _is_chapter_title(line: str) -> bool:
 
 
 def split_chapters(raw_text: str) -> list[Chapter]:
-    """按独占一行的章标题切分全文，返回从 1 开始的连续章节。
-
-    没找到标题不代表失败：短篇会整体作为第 1 章。首个标题前的简介或序言归入
-    首章，保证输入原文不会因为解析规则而静默丢失。
-    """
+    """短篇没有标题时整体作为第 1 章；首个标题前的简介或序言归入首章，保证原文不会被解析规则静默丢失。"""
     text = raw_text.strip()
     if not text:
         return []
 
     lines = text.splitlines()
-    # 先收集全部边界，再按“当前标题到下一标题”切片，逻辑更易验证。
     title_positions = [
         index
         for index, line in enumerate(lines)

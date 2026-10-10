@@ -1,4 +1,3 @@
-"""人物分析 extraction 阶段；保留有界抽取、确定性统计与失败原子性。"""
 import hashlib
 import json
 import logging
@@ -35,7 +34,6 @@ from .payloads import (
 logger = logging.getLogger(__name__)
 
 def _canonical_json(value: object) -> str:
-    """稳定序列化 JSON，确保同一人物来源数据产生同一哈希。"""
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -45,7 +43,6 @@ def _canonical_json(value: object) -> str:
 
 
 def character_chapter_source_hash(title: str, content: str) -> str:
-    """为单章抽取缓存计算稳定来源标识。"""
     material = _canonical_json(
         {
             "title": title,
@@ -58,7 +55,6 @@ def character_chapter_source_hash(title: str, content: str) -> str:
 def character_analysis_source_hash(
     extractions: list[dict[str, object]],
 ) -> str:
-    """Hash a strict chapter-ordered sequence of extraction results."""
     try:
         validated = [
             _AnalysisSourceItem.model_validate(item)
@@ -91,12 +87,6 @@ def _character_extraction_request_data(
     previous_observations: list[dict[str, object]],
     text: str,
 ) -> dict[str, object]:
-    """组装一次逐章抽取请求的 JSON 材料。
-
-    chapter_index/title 标识章节，fragment 是当前片段，known_observation_ids 防止
-    后续分页重复人物，part/page_number 标识位置，continuation 说明是否承接上一页。
-    返回字典只用于序列化提示，不修改任何输入。
-    """
     return {
         "title": title,
         "chapter_index": chapter_index,
@@ -115,7 +105,6 @@ def _extraction_request_fits(
     chapter_index: int,
     part_marker: int,
 ) -> bool:
-    """序列化一次抽取请求，返回它是否落在单次提示字符预算内。"""
     request_data = _character_extraction_request_data(
         title=title,
         chapter_index=chapter_index,
@@ -139,7 +128,6 @@ def _largest_fitting_prefix(
     chapter_index: int,
     part_marker: int,
 ) -> int:
-    """用二分搜索找出从 start 开始可装入请求预算的最长文本前缀长度。"""
     lower = 1
     upper = len(text)
     best = 0
@@ -164,7 +152,6 @@ def _split_character_text(
     title: str = "",
     chapter_index: int = 1,
 ) -> list[str]:
-    """Split in order using the serialized extraction JSON budget."""
     marker_digits = len(str(max(1, len(content))))
     part_marker = (10 ** marker_digits) - 1
     if not _extraction_request_fits(
@@ -288,7 +275,6 @@ def maximum_character_generation_steps(
 
 
 def _extraction_system_prompt() -> str:
-    """构造逐章人物观察提示，要求分页信号和局部事实，不提前跨章合并。"""
     return novelmind_system_prompt(
         role="中文小说人物观察提取助手",
         material_scope=(
@@ -320,7 +306,7 @@ def _extraction_system_prompt() -> str:
 def _ensure_can_continue(
     should_continue: Optional[Callable[[], bool]],
 ) -> None:
-    """调用可选任务存活回调；失效时抛取消异常，避免继续付费调用。"""
+    """失效时抛取消异常，避免继续付费调用。"""
     if should_continue is not None and not should_continue():
         raise _CharacterJobCancelled()
 
@@ -334,11 +320,6 @@ def _generate_payload(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> T:
-    """统一调用 provider.generate_json 并返回已验证 Pydantic 值。
-
-    ``response_model`` 指定本步骤合同，thinking/reasoning 传给供应商；生成前调用
-    should_continue。泛型 T 让调用者得到具体 payload 类型而非 BaseModel。
-    """
     _ensure_can_continue(should_continue)
     result = provider.generate_json(
         system_prompt=system_prompt,
@@ -367,12 +348,7 @@ def _extract_chapter(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> StoredChapterExtractionData:
-    """切分并分页抽取一章，返回可持久化的完整观察缓存。
-
-    ``chapter`` 提供序号/标题/正文，provider 调用外部模型，should_continue 在每次
-    付费请求前检测取消。每个片段可能多页；函数拒绝重复页面与超出安全上限，并
-    为观察分配包含章、片段、序号的稳定本地 ID。
-    """
+    """每次付费请求前检测取消；拒绝重复页面与超出安全上限。"""
     chunks = _split_character_text(
         chapter.content,
         title=chapter.title,
@@ -487,7 +463,6 @@ def _persist_chapter_extraction(
     *,
     provider_model: str,
 ) -> ChapterCharacterExtraction:
-    """Upsert one completed chapter extraction without touching snapshots."""
     extraction = (
         db.query(ChapterCharacterExtraction)
         .filter(
@@ -523,10 +498,7 @@ def _prepare_chapters(
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
 ) -> list[_PreparedChapter]:
-    """读取全部章节、计算来源哈希、复用有效缓存并抽取变化章节。
-
-    返回按章节顺序的 PreparedChapter 列表；新抽取会增量落盘，使失败后可恢复。
-    """
+    """新抽取增量落盘，失败后可恢复。"""
     chapters = (
         db.query(Chapter)
         .filter(Chapter.novel_id == novel.id)
@@ -594,7 +566,6 @@ def _prepare_chapters(
 def _analysis_hash_input(
     prepared: list[_PreparedChapter],
 ) -> list[dict[str, object]]:
-    """把准备后章节压缩为稳定字典列表，作为整书人物来源哈希输入。"""
     return [
         {
             "chapter_index": item.chapter.chapter_index,
@@ -614,7 +585,6 @@ def _analysis_cache_is_current(
     provider_model: str,
     chapter_count: int,
 ) -> bool:
-    """比较现有人物快照的来源哈希、模型和三段提示版本，判断是否可复用。"""
     return bool(
         analysis is not None
         and analysis.source_hash == source_hash
@@ -636,12 +606,7 @@ def _planned_character_generation_steps(
     provider_model: str,
     force: bool,
 ) -> int:
-    """估算一次人物任务在正常路径需要的模型生成步骤。
-
-    读取章节并判断哪些单章缓存仍有效；变化章节按与执行器相同的切分算法计数，
-    再加入观察归并、身份调和、综合与关系批次。返回值用于进度初始 total，不把
-    极端安全上限伪装成预计进度。
-    """
+    """估算值作进度初始 total，不含极端安全上限。"""
     chapters = (
         db.query(Chapter)
         .filter(Chapter.novel_id == novel.id)
@@ -691,10 +656,8 @@ def _planned_character_generation_steps(
         )
 
     if not all_current:
-        # This is a user-facing progress estimate, not the combinatorial
-        # safety ceiling used for request-bound disclosure. Pagination and
-        # reconciliation can add calls at runtime; record_generation_step
-        # expands the total if that happens.
+        # 面向用户的进度估算，不是请求披露所用的组合安全上限；
+        # 分页和调和在运行时增加调用，由 record_generation_step 扩大总数。
         return extraction_steps + 2
 
     source_hash = character_analysis_source_hash(current_inputs)
