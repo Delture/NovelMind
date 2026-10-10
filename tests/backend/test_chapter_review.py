@@ -225,3 +225,12 @@ def test_remap_paragraph_across_merge() -> None:
     assert out["position"]["paragraph"] == 3  # a1,a2,title,b1
     assert out["bookmarks"][0]["chapter"] == 1
     assert out["bookmarks"][0]["paragraph"] == 4  # + b2
+    assert out["bookmarks"][0]["id"] == "1:4"
+
+    start = _remap_reading(
+        {"position": {"chapter": 2, "paragraph": -1, "offset": 0}, "bookmarks": []},
+        plan,
+        chapters,
+    )
+    assert start["position"]["chapter"] == 1
+    assert start["position"]["paragraph"] == 2  # after a1,a2 → title of ch2

@@ -510,26 +510,32 @@ def _paragraph_count(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip())
 
 
+def _preceding_paragraphs(old_chapter: int, item, snapshots_by_index: dict) -> int:
+    """Non-empty lines before old_chapter's section in a merged chapter body."""
+    offset = 0
+    for src in range(item.from_index, old_chapter):
+        snap = snapshots_by_index[src]
+        if src > item.from_index and snap.title.strip():
+            offset += 1
+        offset += _paragraph_count(snap.content)
+    return offset
+
+
 def _remap_anchor(old_chapter: int, paragraph, plan, snapshots_by_index: dict) -> tuple[int, int]:
     new_chapter = map_chapter_index(old_chapter, plan)
-    if not isinstance(paragraph, int) or paragraph < 0:
-        return new_chapter, paragraph if isinstance(paragraph, int) else -1
     for item in plan:
         if item.from_index <= old_chapter <= item.to_index:
             if item.from_index == item.to_index:
-                return new_chapter, paragraph
-            offset = 0
-            for src in range(item.from_index, old_chapter):
-                snap = snapshots_by_index[src]
-                if src > item.from_index and snap.title.strip():
-                    offset += 1
-                offset += _paragraph_count(snap.content)
-            if old_chapter > item.from_index:
-                snap = snapshots_by_index[old_chapter]
-                if snap.title.strip():
-                    offset += 1
-            return new_chapter, offset + paragraph
-    return new_chapter, paragraph
+                return new_chapter, paragraph if isinstance(paragraph, int) else -1
+            preceding = _preceding_paragraphs(old_chapter, item, snapshots_by_index)
+            if not isinstance(paragraph, int) or paragraph < 0:
+                # 被合入章的章首对准内部标题（或无标题时的首段），不是整章开头。
+                return new_chapter, -1 if old_chapter == item.from_index else preceding
+            title_pad = 0
+            if old_chapter > item.from_index and snapshots_by_index[old_chapter].title.strip():
+                title_pad = 1
+            return new_chapter, preceding + title_pad + paragraph
+    return new_chapter, paragraph if isinstance(paragraph, int) else -1
 
 
 def _remap_reading(value: dict, plan, snapshots: list) -> dict:
@@ -553,11 +559,16 @@ def _remap_reading(value: dict, plan, snapshots: list) -> dict:
                 continue
             item = dict(bookmark)
             if isinstance(item.get("chapter"), int):
+                old_chapter = item["chapter"]
+                old_paragraph = item.get("paragraph", -1)
                 chapter, paragraph = _remap_anchor(
-                    item["chapter"], item.get("paragraph", -1), plan, by_index
+                    old_chapter, old_paragraph, plan, by_index
                 )
                 item["chapter"] = chapter
                 item["paragraph"] = paragraph
+                # Keep id aligned with chapter:paragraph keys the reader generates.
+                if item.get("id") == f"{old_chapter}:{old_paragraph}":
+                    item["id"] = f"{chapter}:{paragraph}"
             remapped.append(item)
         updated["bookmarks"] = remapped
     return updated
