@@ -419,6 +419,9 @@ def run_chapter_review_job(
                 job = db.get(AnalysisJob, job_id)
                 if job is None or job.status != "running":
                     return "cancelled"
+                # 先写住任务行拿 SQLite 写锁，避免取消事务插在校验与合章之间。
+                job.updated_at = utc_now()
+                db.flush()
                 current = (
                     db.query(Chapter)
                     .filter(Chapter.novel_id == novel_id)
