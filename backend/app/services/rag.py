@@ -64,6 +64,7 @@ DEEPSEEK_TERMS_URL = (
 DEEPSEEK_PRIVACY_URL = "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
 
 
+# Index and ask use different consent/force fields, so they keep separate request models.
 class StartRagIndexRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

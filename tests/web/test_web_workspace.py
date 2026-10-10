@@ -94,6 +94,30 @@ def test_reading_and_privacy_persist_and_cascade(web):
         assert db.get(ReadingState, novel_id) is None
 
 
+def test_reading_font_rejects_invalid_and_round_trips(web):
+    client, factory, novel_id, _ = web
+    path = f"/api/novels/{novel_id}/reading"
+    base = client.get(path).json()
+    for font in ("serif", "sans", "pingfang"):
+        payload = {**base, "prefs": {**base["prefs"], "font": font}}
+        assert client.put(path, json=payload).status_code == 200
+        assert client.get(path).json()["prefs"]["font"] == font
+    for bad in ("comic", [], {}, None, 1):
+        payload = {**base, "prefs": {**base["prefs"], "font": bad}}
+        assert client.put(path, json=payload).status_code == 422
+    # Dirty stored value is coerced only on read; writes stay strict.
+    with factory() as db:
+        from backend.app.models.workspace import ReadingState
+        row = db.get(ReadingState, novel_id)
+        if row is None:
+            db.add(ReadingState(novel_id=novel_id, value={**base, "prefs": {**base["prefs"], "font": "legacy-unknown"}}))
+        else:
+            row.value = {**row.value, "prefs": {**row.value["prefs"], "font": "legacy-unknown"}}
+        db.commit()
+    assert client.get(path).json()["prefs"]["font"] == "serif"
+
+
+
 def test_web_origin_gates_and_api_consent(web):
     client, _, novel_id, providers = web
     for origin in ['https://untrusted.example', 'null', 'http://127.0.0.1:3333']:

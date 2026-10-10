@@ -6,11 +6,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Generator, Optional
+from typing import Callable, Generator, Optional, Type
 from unittest.mock import Mock
 
 import httpx
 import pytest
+from pydantic import BaseModel
 from backend.app.services.errors import ServiceError as HTTPException
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -51,6 +52,39 @@ class CloseTrackingFakeProvider(FakeProvider):
 
     def close(self) -> None:
         self.close_calls += 1
+
+
+class BlockingFakeProvider(FakeProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.entry_count = 0
+        self._entry_lock = threading.Lock()
+
+    def generate_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: Type[BaseModel],
+        thinking: bool = False,
+        reasoning_effort: Optional[str] = None,
+        before_attempt: Optional[Callable[[], None]] = None,
+    ) -> JsonGenerationResult:
+        with self._entry_lock:
+            self.entry_count += 1
+            self.entered.set()
+        if not self.release.wait(timeout=5):
+            raise RuntimeError("Timed out waiting to release fake provider.")
+        return super().generate_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model=response_model,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+            before_attempt=before_attempt,
+        )
 
 
 class ConcurrentAsyncFakeProvider(FakeProvider):
@@ -476,6 +510,70 @@ def test_run_summary_job_does_not_reclaim_terminal_job(
         assert session.query(ChapterSummary).count() == 0
     assert provider.calls == []
     assert provider.close_calls == 1
+
+
+def test_run_summary_job_allows_only_one_concurrent_callback(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "summary-callback-race.sqlite3"
+    engine = create_db_engine(
+        f"sqlite:///{database_path.as_posix()}",
+        connect_args={"timeout": 5.0},
+    )
+    Base.metadata.create_all(bind=engine)
+    file_session_factory = sessionmaker(
+        bind=engine,
+        autocommit=False,
+        autoflush=False,
+    )
+    provider = BlockingFakeProvider()
+    try:
+        with file_session_factory() as session:
+            novel = add_novel(session, chapter_count=1)
+            session.add(
+                AnalysisJob(
+                    id="concurrent-callback",
+                    novel_id=novel.id,
+                    job_type="chapter_summaries",
+                    status="queued",
+                    progress_current=0,
+                    progress_total=1,
+                )
+            )
+            session.commit()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(
+                run_summary_job,
+                "concurrent-callback",
+                provider,
+                file_session_factory,
+            )
+            try:
+                assert provider.entered.wait(timeout=5)
+                duplicate = executor.submit(
+                    run_summary_job,
+                    "concurrent-callback",
+                    provider,
+                    file_session_factory,
+                )
+                duplicate.result(timeout=5)
+                assert provider.entry_count == 1
+            finally:
+                provider.release.set()
+            first.result(timeout=5)
+
+        with file_session_factory() as session:
+            job = session.get(AnalysisJob, "concurrent-callback")
+            assert job is not None
+            assert job.status == "succeeded"
+            assert job.progress_current == 1
+            assert session.query(ChapterSummary).count() == 1
+        assert len(provider.calls) == 1
+    finally:
+        provider.release.set()
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 def test_run_summary_job_stops_after_source_is_deleted_mid_chapter(

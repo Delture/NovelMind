@@ -1,5 +1,6 @@
 
 import asyncio
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -114,6 +115,15 @@ def test_http_failures_are_sanitized_and_authenticated_redirects_not_followed(pr
     assert_public_safe(response, case, remote)
     assert remote not in caplog.text
     assert case.path.read_bytes() == original
+
+
+def test_same_destination_different_provider_cannot_reuse_saved_key(probe_case):
+    case = probe_case
+    case.config.save_runtime_model_settings(
+        replace(case.config.get_settings(), deepseek_base_url="https://api.deepseek.com")
+    )
+    response = post(case, payload(case, provider="deepseek", base_url="https://api.deepseek.com"))
+    assert response.status_code == 400 and case.calls == []
 
 
 def test_total_deadline_cancels_slow_transport(probe_case, monkeypatch):
