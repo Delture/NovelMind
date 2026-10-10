@@ -1,5 +1,5 @@
 """不让大模型猜章节：章标题须独占一行并用确定性正则，结果可复现。
-规则宁可少切，也不把正文中偶然出现的“第十章……”误判为新章节。
+识别第N章/回/节；宁可少切，也不把正文中偶然出现的“第十章……”误判为新章节。
 """
 
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ class Chapter:
 _CHINESE_NUMBER = "0-9零〇一二三四五六七八九十百千万两"
 _MAX_CHAPTER_TITLE_CHARACTERS = 255
 _CHINESE_CHAPTER_PREFIX_PATTERN = re.compile(
-    rf"^第(?P<number>[{_CHINESE_NUMBER}]+)章",
+    rf"^第(?P<number>[{_CHINESE_NUMBER}]+)[章回节]",
 )
 _REPEATED_NUMBER_SUFFIX_PATTERN = re.compile(
     r"^\s*(?P<number>[0-9０-９]+)\s*[.．、:：]\s*\S",
