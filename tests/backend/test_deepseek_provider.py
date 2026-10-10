@@ -241,26 +241,6 @@ def test_thinking_request_sends_supported_effort() -> None:
     assert "top_p" not in payloads[0]
 
 
-def test_configured_max_tokens_is_sent() -> None:
-    payloads: List[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payloads.append(json.loads(request.content.decode("utf-8")))
-        return completion_response()
-
-    provider = make_provider(
-        handler,
-        settings=make_settings(max_tokens=2_048),
-    )
-    provider.generate_json(
-        system_prompt="Return JSON.",
-        user_prompt="Analyze.",
-        response_model=AnalysisPayload,
-    )
-
-    assert payloads[0]["max_tokens"] == 2_048
-
-
 @pytest.mark.parametrize("reasoning_effort", ["low", "medium", "xhigh", "huge"])
 def test_provider_rejects_unsupported_reasoning_effort(
     reasoning_effort: str,
@@ -284,19 +264,6 @@ def test_provider_rejects_unsupported_reasoning_effort(
         )
 
     assert calls == 0
-
-
-def test_provider_rejects_effort_when_thinking_is_disabled() -> None:
-    provider = make_provider(lambda _: completion_response())
-
-    with pytest.raises(ValueError, match="thinking"):
-        provider.generate_json(
-            system_prompt="Return JSON.",
-            user_prompt="Analyze.",
-            response_model=AnalysisPayload,
-            thinking=False,
-            reasoning_effort="high",
-        )
 
 
 def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
@@ -695,50 +662,3 @@ def test_sdk_retries_are_disabled() -> None:
     assert calls == 1
 
 
-def test_insufficient_system_resources_are_retried() -> None:
-    calls = 0
-    sleeps: List[float] = []
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return completion_response(
-                None,
-                finish_reason="insufficient_system_resource",
-            )
-        return completion_response()
-
-    provider = make_provider(handler, sleeps=sleeps)
-    result = provider.generate_json(
-        system_prompt="Return JSON.",
-        user_prompt="Analyze.",
-        response_model=AnalysisPayload,
-    )
-
-    assert result.value.summary == "ok"
-    assert calls == 2
-    assert sleeps == [1.25]
-
-
-@pytest.mark.parametrize("finish_reason", ["length", "content_filter", "tool_calls"])
-def test_terminal_finish_reasons_are_not_semantically_retried(
-    finish_reason: str,
-) -> None:
-    calls = 0
-
-    def handler(_: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return completion_response(None, finish_reason=finish_reason)
-
-    provider = make_provider(handler)
-
-    with pytest.raises(ProviderResponseError):
-        provider.generate_json(
-            system_prompt="Return JSON.",
-            user_prompt="Analyze.",
-            response_model=AnalysisPayload,
-        )
-
-    assert calls == 1

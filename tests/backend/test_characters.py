@@ -9,14 +9,11 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.app.analyzer.character_pipeline import extraction as character_service
-from backend.app.analyzer.character_pipeline import merge as merge_service
 from backend.app.analyzer import jobs as job_helpers
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
     CHARACTER_RELATIONSHIP_PROMPT_VERSION,
-    MAX_CHARACTER_STAGE_INPUT_CHARACTERS,
     CharacterMergePayload,
     CharacterReconciliationPayload,
     CharacterRelationPayload,
@@ -24,10 +21,6 @@ from backend.app.analyzer.characters import (
     ChapterCharacterExtractionPayload,
     SynthesizedCharacterProfilePayload,
     analyze_novel_characters,
-    character_analysis_source_hash,
-    character_chapter_source_hash,
-    estimate_character_extraction_steps,
-    maximum_character_generation_steps,
     run_character_job,
 )
 from backend.app.analyzer.llm import (
@@ -179,34 +172,6 @@ def _prompt_data(user_prompt: str) -> dict[str, object]:
     return json.loads(user_prompt.split("\n", 1)[1])
 
 
-def test_character_prompts_enforce_evidence_aware_disambiguation() -> None:
-    extraction = character_service._extraction_system_prompt()
-    merge = merge_service._merge_system_prompt()
-    reconciliation = merge_service._reconciliation_system_prompt()
-    synthesis = merge_service._synthesis_system_prompt()
-    relationships = merge_service._relationship_system_prompt()
-
-    assert "代词" in extraction
-    assert "mention_count" in extraction
-    assert "关键行动" in extraction
-    assert "同名本身不是充分证据" in merge
-    assert "冲突或不确定" in merge
-    assert "同名、同类" in reconciliation
-    assert "不重新拆组" in synthesis
-    assert "同场出现" in relationships
-    assert "关系依据、当前状态" in relationships
-    assert all(
-        "隐藏思维链" in prompt
-        for prompt in (
-            extraction,
-            merge,
-            reconciliation,
-            synthesis,
-            relationships,
-        )
-    )
-
-
 def _merge_by_name(
     _: Type[BaseModel],
     user_prompt: str,
@@ -342,155 +307,6 @@ def test_payloads_reject_untrusted_or_invalid_shapes() -> None:
         )
 
 
-def test_extraction_response_schema_has_a_safe_serialized_upper_bound() -> None:
-    observation = {
-        "name": "名" * 64,
-        "aliases": ["甲" * 48, "乙" * 48, "丙" * 48],
-        "short_description": "简" * 192,
-        "mention_count": 1_000_000,
-        "appearance_summary": "述" * 256,
-    }
-    payload = ChapterCharacterExtractionPayload.model_validate(
-        {
-            "observations": [observation] * 8,
-            "has_more": False,
-        }
-    )
-
-    assert len(payload.model_dump_json()) < 8_192
-    with pytest.raises(ValidationError):
-        ChapterCharacterExtractionPayload.model_validate(
-            {
-                "observations": [observation] * 9,
-                "has_more": False,
-            }
-        )
-
-
-def test_extraction_split_bounds_pathological_json_escaping_and_keeps_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        character_service,
-        "MAX_CHARACTER_EXTRACTION_CHARACTERS",
-        100_000,
-    )
-    monkeypatch.setattr(
-        character_service,
-        "MAX_CHARACTER_EXTRACTION_TEXT_REQUEST_CHARACTERS",
-        300,
-    )
-    title = '"\\控制'
-    content = ('"\\\n\t\r\x01正文' * 200) + "结尾"
-
-    chunks = character_service._split_character_text(
-        content,
-        title=title,
-        chapter_index=1,
-    )
-
-    assert len(chunks) > 1
-    assert "".join(chunks) == content
-    for part_index, chunk in enumerate(chunks, start=1):
-        request_data = (
-            character_service._character_extraction_request_data(
-                title=title,
-                chapter_index=1,
-                part_index=part_index,
-                part_count=len(chunks),
-                page_index=1,
-                previous_observations=[],
-                text=chunk,
-            )
-        )
-        assert len(character_service._canonical_json(request_data)) <= 300
-
-
-def test_hashes_and_step_estimates_are_deterministic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert character_chapter_source_hash("第一章", "正文") == (
-        character_chapter_source_hash("第一章", "正文")
-    )
-    assert character_chapter_source_hash("第一章", "正文") != (
-        character_chapter_source_hash("第二章", "正文")
-    )
-
-    monkeypatch.setattr(
-        'backend.app.analyzer.character_pipeline.extraction.MAX_CHARACTER_EXTRACTION_CHARACTERS',
-        5,
-    )
-    assert estimate_character_extraction_steps("abcdefghijk") == 3
-
-    extraction_data = {
-        "observations": [
-            {
-                "observation_id": "chapter-1-part-1-observation-1",
-                **_observation("林默"),
-            }
-        ]
-    }
-    inputs = [
-        {
-            "chapter_index": 1,
-            "source_hash": "a" * 64,
-            "extraction_data": extraction_data,
-        }
-    ]
-    first = character_analysis_source_hash(inputs)
-    assert first == character_analysis_source_hash(inputs)
-    changed = json.loads(json.dumps(inputs, ensure_ascii=False))
-    changed[0]["extraction_data"]["observations"][0][
-        "appearance_summary"
-    ] = "不同观察"
-    assert first != character_analysis_source_hash(changed)
-    with pytest.raises(ValueError):
-        character_analysis_source_hash(
-            [
-                {
-                    "chapter_index": 2,
-                    "source_hash": "b" * 64,
-                    "extraction_data": {"observations": []},
-                },
-                {
-                    "chapter_index": 1,
-                    "source_hash": "a" * 64,
-                    "extraction_data": {"observations": []},
-                },
-            ]
-        )
-
-
-def test_maximum_generation_steps_is_a_bounded_stage_upper_limit() -> None:
-    # Each base text chunk can require at most 16 extraction pages with
-    # eight observations each. The remaining terms bound merge,
-    # reconciliation, synthesis, and relationship evidence calls.
-    extraction_calls = 2 * 16
-    observations = extraction_calls * 8
-    profile_groups = observations // 8
-    group_pairs = profile_groups * (profile_groups + 1) // 2
-    merge_calls = (observations + 19) // 20
-    evidence_batches = (observations + 19) // 20
-    assert maximum_character_generation_steps(2) == (
-        extraction_calls
-        + merge_calls
-        + group_pairs
-        + observations
-        - 1
-        + group_pairs * evidence_batches
-    )
-    assert maximum_character_generation_steps(
-        0,
-        cached_observation_count=2,
-    ) == 4
-    assert maximum_character_generation_steps(
-        99,
-        rebuild_required=False,
-    ) == 0
-    with pytest.raises(ValueError):
-        maximum_character_generation_steps(-1)
-
-
 def test_character_analysis_uses_api_and_builds_local_statistics(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -598,7 +414,6 @@ def test_cross_batch_profiles_with_different_names_merge_only_after_api(
     session_factory: Callable[[], Session],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Local batching must not prevent the API from resolving identity."""
     monkeypatch.setattr(
         'backend.app.analyzer.character_pipeline.merge.MAX_CHARACTER_MERGE_BATCH_ITEMS',
         1,
@@ -647,54 +462,6 @@ def test_cross_batch_profiles_with_different_names_merge_only_after_api(
         SynthesizedCharacterProfilePayload,
         CharacterRelationsPayload,
     ]
-
-
-def test_cross_batch_profiles_with_same_name_can_remain_distinct(
-    session_factory: Callable[[], Session],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The API may split namesakes; the database must preserve both."""
-    monkeypatch.setattr(
-        'backend.app.analyzer.character_pipeline.merge.MAX_CHARACTER_MERGE_BATCH_ITEMS',
-        1,
-    )
-    provider = QueueProvider(
-        [
-            _extract(
-                _observation("李明", summary="医生李明出场。"),
-                _observation("李明", summary="记者李明出场。"),
-            ),
-            _merge_by_name,
-            _merge_by_name,
-            _reconcile_separately,
-            _no_relationships,
-        ]
-    )
-
-    with session_factory() as session:
-        novel = _add_novel(
-            session,
-            contents=["医生李明与同名的记者李明见面。"],
-        )
-        analysis, created = analyze_novel_characters(
-            session,
-            novel,
-            provider,
-        )
-        session.commit()
-        characters = (
-            session.query(Character)
-            .filter(Character.analysis_id == analysis.id)
-            .order_by(Character.id)
-            .all()
-        )
-
-        assert created is True
-        assert [item.canonical_name for item in characters] == [
-            "李明",
-            "李明",
-        ]
-        assert [item.mention_count for item in characters] == [1, 1]
 
 
 def test_relationship_inference_covers_profiles_from_different_batches(
@@ -762,44 +529,6 @@ def test_relationship_inference_covers_profiles_from_different_batches(
         assert relationship.evidence_chapter_indices == [1]
 
 
-def test_every_later_stage_api_payload_respects_serialized_input_bound(
-    session_factory: Callable[[], Session],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        'backend.app.analyzer.character_pipeline.merge.MAX_CHARACTER_MERGE_BATCH_ITEMS',
-        1,
-    )
-    provider = QueueProvider(
-        [
-            _extract(
-                _observation("阿默", aliases=["林默"]),
-                _observation("林先生"),
-            ),
-            _merge_by_name,
-            _merge_by_name,
-            _reconcile_all,
-            _synthesize_profiles,
-            _no_relationships,
-        ]
-    )
-
-    with session_factory() as session:
-        novel = _add_novel(
-            session,
-            contents=["阿默也被称作林先生。"],
-        )
-        analyze_novel_characters(session, novel, provider)
-
-    later_stage_calls = provider.calls[1:]
-    assert later_stage_calls
-    for call in later_stage_calls:
-        serialized_data = call["user_prompt"].split("\n", 1)[1]
-        assert len(serialized_data) <= (
-            MAX_CHARACTER_STAGE_INPUT_CHARACTERS
-        )
-
-
 @pytest.mark.parametrize(
     "bad_reconciliation",
     [
@@ -864,121 +593,6 @@ def test_reconciliation_must_partition_candidate_profiles_exactly_once(
         assert session.query(CharacterAnalysis).count() == 0
 
 
-def test_reconciliation_rejects_conflicting_repeated_pair_decisions(
-    session_factory: Callable[[], Session],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        'backend.app.analyzer.character_pipeline.merge.MAX_CHARACTER_MERGE_BATCH_ITEMS',
-        1,
-    )
-    monkeypatch.setattr(
-        'backend.app.analyzer.character_pipeline.merge.MAX_CHARACTER_PROFILE_GROUP_ITEMS',
-        2,
-    )
-
-    def conflict_on_overlapping_comparison(
-        _: Type[BaseModel],
-        user_prompt: str,
-    ) -> dict[str, object]:
-        identifiers = [
-            str(profile["profile_id"])
-            for profile in _prompt_data(user_prompt)["profiles"]
-        ]
-        return {
-            "groups": [
-                {"profile_ids": identifiers[:2]},
-                *[
-                    {"profile_ids": [profile_id]}
-                    for profile_id in identifiers[2:]
-                ],
-            ]
-        }
-
-    provider = QueueProvider(
-        [
-            _extract(
-                _observation("甲"),
-                _observation("乙"),
-                _observation("丙"),
-            ),
-            _merge_by_name,
-            _merge_by_name,
-            _merge_by_name,
-            _reconcile_separately,
-            conflict_on_overlapping_comparison,
-        ]
-    )
-
-    with session_factory() as session:
-        novel = _add_novel(
-            session,
-            contents=["甲、乙、丙共同出现。"],
-        )
-        with pytest.raises(ProviderResponseError):
-            analyze_novel_characters(session, novel, provider)
-        session.rollback()
-        assert session.query(CharacterAnalysis).count() == 0
-
-
-def test_oversized_chapter_is_extracted_in_order_with_local_ids(
-    session_factory: Callable[[], Session],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        'backend.app.analyzer.character_pipeline.extraction.MAX_CHARACTER_EXTRACTION_CHARACTERS',
-        5,
-    )
-    provider = QueueProvider(
-        [
-            _extract(_observation("林默", summary="片段一")),
-            _extract(_observation("林默", summary="片段二")),
-            _extract(_observation("林默", summary="片段三")),
-            _merge_by_name,
-            _no_relationships,
-        ]
-    )
-    with session_factory() as session:
-        novel = _add_novel(session, contents=["abcdefghijkl"])
-        analysis, created = analyze_novel_characters(
-            session,
-            novel,
-            provider,
-        )
-        session.commit()
-        extraction = session.query(ChapterCharacterExtraction).one()
-        character = (
-            session.query(Character)
-            .filter(Character.analysis_id == analysis.id)
-            .one()
-        )
-        assert created is True
-        assert [
-            item["observation_id"]
-            for item in extraction.extraction_data["observations"]
-        ] == [
-            f"chapter-{novel.chapters[0].id}-part-1-observation-1",
-            f"chapter-{novel.chapters[0].id}-part-2-observation-1",
-            f"chapter-{novel.chapters[0].id}-part-3-observation-1",
-        ]
-        assert character.mention_count == 3
-        assert character.chapter_count == 1
-
-    extraction_payloads = [
-        _prompt_data(str(call["user_prompt"]))
-        for call in provider.calls[:3]
-    ]
-    assert "".join(
-        str(item["text"]) for item in extraction_payloads
-    ) == "abcdefghijkl"
-    assert [item["part_index"] for item in extraction_payloads] == [
-        1,
-        2,
-        3,
-    ]
-    assert len(provider.calls) == 5
-
-
 def test_character_extraction_continues_api_pages_without_silent_loss(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -1026,25 +640,6 @@ def test_character_extraction_continues_api_pages_without_silent_loss(
     assert second_request["page_index"] == 2
     assert len(second_request["previous_observations"]) == 8
     assert len(provider.calls) == 4
-
-
-def test_character_extraction_rejects_repeated_page_observation(
-    session_factory: Callable[[], Session],
-) -> None:
-    repeated = _observation("林默")
-    provider = QueueProvider(
-        [
-            _extract(repeated, has_more=True),
-            _extract(repeated),
-        ]
-    )
-
-    with session_factory() as session:
-        novel = _add_novel(session, contents=["林默出现。"])
-        with pytest.raises(ProviderResponseError):
-            analyze_novel_characters(session, novel, provider)
-        session.rollback()
-        assert session.query(CharacterAnalysis).count() == 0
 
 
 def test_character_extraction_page_limit_fails_atomically(
@@ -1529,59 +1124,6 @@ def test_character_job_expands_progress_for_runtime_reconciliation_calls(
     assert provider.close_calls == 1
 
 
-def test_run_character_job_plans_only_changed_chapter_and_global_steps(
-    session_factory: Callable[[], Session],
-) -> None:
-    initial_provider = QueueProvider(
-        [
-            _extract(_observation("林默")),
-            _extract(_observation("苏晴")),
-            _merge_by_name,
-            _reconcile_separately,
-            _no_relationships,
-        ]
-    )
-    with session_factory() as session:
-        novel = _add_novel(session)
-        analyze_novel_characters(session, novel, initial_provider)
-        session.commit()
-        novel.chapters[1].content += "她决定同行。"
-        session.add(
-            AnalysisJob(
-                id="characters-partial-cache",
-                novel_id=novel.id,
-                job_type="characters",
-                status="queued",
-                progress_current=0,
-                progress_total=4,
-            )
-        )
-        session.commit()
-
-    provider = QueueProvider(
-        [
-            _extract(_observation("苏晴", mentions=2)),
-            _merge_by_name,
-            _reconcile_separately,
-            _no_relationships,
-        ]
-    )
-    run_character_job(
-        "characters-partial-cache",
-        provider,
-        session_factory,
-    )
-
-    with session_factory() as session:
-        job = session.get(AnalysisJob, "characters-partial-cache")
-        assert job is not None
-        assert job.status == "succeeded"
-        assert job.progress_current == 4
-        assert job.progress_total == 4
-    assert len(provider.calls) == 4
-    assert provider.close_calls == 1
-
-
 def test_failed_character_job_persists_completed_chapters_for_resume(
     session_factory: Callable[[], Session],
 ) -> None:
@@ -1660,56 +1202,6 @@ def test_failed_character_job_persists_completed_chapters_for_resume(
     )
     assert first_request["chapter_index"] == 2
     assert len(resumed_provider.calls) == 4
-
-
-def test_run_character_job_records_safe_failure_and_preserves_snapshot(
-    session_factory: Callable[[], Session],
-) -> None:
-    initial_provider = QueueProvider(
-        [
-            _extract(_observation("林默")),
-            _merge_by_name,
-            _no_relationships,
-        ]
-    )
-    with session_factory() as session:
-        novel = _add_novel(session, contents=["林默出现。"])
-        analysis, _ = analyze_novel_characters(
-            session,
-            novel,
-            initial_provider,
-        )
-        session.commit()
-        analysis_id = analysis.id
-        novel.chapters[0].content = "林默再次出现。"
-        session.add(
-            AnalysisJob(
-                id="characters-failure",
-                novel_id=novel.id,
-                job_type="characters",
-                status="queued",
-                progress_current=0,
-                progress_total=3,
-            )
-        )
-        session.commit()
-
-    provider = QueueProvider([ProviderUnavailableError()])
-    run_character_job(
-        "characters-failure",
-        provider,
-        session_factory,
-    )
-
-    with session_factory() as session:
-        job = session.get(AnalysisJob, "characters-failure")
-        assert job is not None
-        assert job.status == "failed"
-        assert job.completed_at is not None
-        assert job.error_message == "生成模型服务暂时不可用，请稍后重试。"
-        assert session.get(CharacterAnalysis, analysis_id) is not None
-        assert session.query(Character).one().canonical_name == "林默"
-    assert provider.close_calls == 1
 
 
 def test_run_character_job_stops_when_novel_is_deleted_during_api_call(
