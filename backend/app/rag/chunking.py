@@ -9,6 +9,7 @@ from typing import Iterable, Protocol
 CHUNK_FORMAT_VERSION = "rag-chunk-v2-local-sqlite"
 MAX_CHUNK_CHARACTERS = 1_200
 CHUNK_OVERLAP_CHARACTERS = 200
+# Adjacent chunks overlap so evidence near a cut is less likely to be missed.
 _MIN_BREAK_POSITION = 720
 _BREAK_MARKERS = ("\n\n", "\n", "。", "！", "？", "；")
 

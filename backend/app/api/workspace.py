@@ -5,7 +5,7 @@ from uuid import uuid4
 from typing import Literal, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field, StrictBool, ConfigDict, field_validator
+from pydantic import BaseModel, Field, StrictBool, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert
@@ -55,13 +55,6 @@ class Preferences(BaseModel):
     width: float = Field(default=720, ge=560, le=880)
     gap: float = Field(default=22, ge=12, le=36)
     sidebar: bool = True
-
-    @field_validator("font", mode="before")
-    @classmethod
-    def normalize_font(cls, value):
-        # Older clients only stored serif (宋体) and sans (黑体). Anything else reads as 思源宋体.
-        return value if value in {"serif", "sans", "pingfang"} else "serif"
-
 
 class ReaderState(BaseModel):
     """防止任意大 JSON 写入数据库。"""
@@ -135,7 +128,15 @@ def save_privacy(value: Privacy, db: Session = Depends(get_db), settings: Settin
 def get_reading(novel_id: int, db: Session = Depends(get_db)):
     get_novel_or_404(db, novel_id)
     row = db.get(ReadingState, novel_id)
-    return row.value if row else ReaderState()
+    if row is None:
+        return ReaderState()
+    data = dict(row.value)
+    prefs = dict(data.get("prefs") or {})
+    # Dirty stored fonts from older clients; writes stay Literal-strict.
+    if not isinstance(prefs.get("font"), str) or prefs["font"] not in {"serif", "sans", "pingfang"}:
+        prefs["font"] = "serif"
+        data["prefs"] = prefs
+    return ReaderState.model_validate(data)
 
 
 @router.put("/novels/{novel_id}/reading", response_model=ReaderState)

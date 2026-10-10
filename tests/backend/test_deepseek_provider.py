@@ -14,6 +14,7 @@ from backend.app.analyzer.deepseek import (
 )
 from backend.app.analyzer.llm import (
     LLMProvider,
+    ProviderResponseError,
     ProviderAuthenticationError,
     ProviderBalanceError,
     ProviderNotConfiguredError,
@@ -420,4 +421,81 @@ def test_sdk_retries_are_disabled() -> None:
 
     assert calls == 1
 
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter", "tool_calls"])
+def test_terminal_finish_reasons_are_not_semantically_retried(
+    finish_reason: str,
+) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(None, finish_reason=finish_reason)
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderResponseError):
+        provider.generate_json(
+            system_prompt="Return JSON.",
+            user_prompt="Analyze.",
+            response_model=AnalysisPayload,
+        )
+    assert calls == 1
+
+
+@pytest.mark.parametrize(
+    "invalid_content",
+    [None, "", "{not-json", "[]", '{"summary":1,"characters":[]}'],
+)
+def test_semantic_failures_stop_at_retry_limit(
+    invalid_content: Optional[str],
+) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(invalid_content)
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderResponseError, match="无法解析") as captured:
+        provider.generate_json(
+            system_prompt="sensitive novel prompt",
+            user_prompt="sensitive chapter text",
+            response_model=AnalysisPayload,
+        )
+    assert calls == MAX_JSON_GENERATION_ATTEMPTS
+    message = str(captured.value)
+    assert "sensitive novel prompt" not in message
+    assert "sensitive chapter text" not in message
+    assert "deepseek-test-key" not in message
+
+
+def test_before_attempt_can_stop_network_retries() -> None:
+    calls = 0
+    checks = 0
+
+    class Cancelled(RuntimeError):
+        pass
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(status_code=503)
+
+    def before_attempt() -> None:
+        nonlocal checks
+        checks += 1
+        if checks > 1:
+            raise Cancelled()
+
+    provider = make_provider(handler)
+    with pytest.raises(Cancelled):
+        provider.generate_json(
+            system_prompt="Return JSON.",
+            user_prompt="Analyze.",
+            response_model=AnalysisPayload,
+            before_attempt=before_attempt,
+        )
+    assert calls == 1
+    assert checks == 2
 

@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.app.analyzer import jobs as job_helpers
+from backend.app.analyzer.character_pipeline import extraction as character_service
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
     CHARACTER_RELATIONSHIP_PROMPT_VERSION,
+    MAX_CHARACTER_STAGE_INPUT_CHARACTERS,
     CharacterMergePayload,
     CharacterReconciliationPayload,
     CharacterRelationPayload,
@@ -305,6 +307,79 @@ def test_payloads_reject_untrusted_or_invalid_shapes() -> None:
                 "evidence_chapter_indices": [],
             }
         )
+
+
+def test_extraction_split_bounds_pathological_json_escaping_and_keeps_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        character_service,
+        "MAX_CHARACTER_EXTRACTION_CHARACTERS",
+        100_000,
+    )
+    monkeypatch.setattr(
+        character_service,
+        "MAX_CHARACTER_EXTRACTION_TEXT_REQUEST_CHARACTERS",
+        300,
+    )
+    title = '"\\控制'
+    content = ('"\\\n\t\r\x01正文' * 200) + "结尾"
+
+    chunks = character_service._split_character_text(
+        content,
+        title=title,
+        chapter_index=1,
+    )
+
+    assert len(chunks) > 1
+    assert "".join(chunks) == content
+    for part_index, chunk in enumerate(chunks, start=1):
+        request_data = character_service._character_extraction_request_data(
+            title=title,
+            chapter_index=1,
+            part_index=part_index,
+            part_count=len(chunks),
+            page_index=1,
+            previous_observations=[],
+            text=chunk,
+        )
+        assert len(character_service._canonical_json(request_data)) <= 300
+
+
+def test_every_later_stage_api_payload_respects_serialized_input_bound(
+    session_factory: Callable[[], Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "backend.app.analyzer.character_pipeline.merge.MAX_CHARACTER_MERGE_BATCH_ITEMS",
+        1,
+    )
+    provider = QueueProvider(
+        [
+            _extract(
+                _observation("阿默", aliases=["林默"]),
+                _observation("林先生"),
+            ),
+            _merge_by_name,
+            _merge_by_name,
+            _reconcile_all,
+            _synthesize_profiles,
+            _no_relationships,
+        ]
+    )
+
+    with session_factory() as session:
+        novel = _add_novel(
+            session,
+            contents=["阿默也被称作林先生。"],
+        )
+        analyze_novel_characters(session, novel, provider)
+
+    later_stage_calls = provider.calls[1:]
+    assert later_stage_calls
+    for call in later_stage_calls:
+        serialized_data = call["user_prompt"].split("\n", 1)[1]
+        assert len(serialized_data) <= MAX_CHARACTER_STAGE_INPUT_CHARACTERS
 
 
 def test_character_analysis_uses_api_and_builds_local_statistics(

@@ -43,11 +43,16 @@ export function createPages({
     const recent = books.find(b => b.id === lastId);
     let resume = '';
     if (recent) {
-      const [list, saved] = await Promise.all([chapters(recent.id), api(base(recent.id) + '/reading')]);
-      if (!fresh()) return;
-      const at = Math.min(list.length, saved.position.chapter);
-      resume = `<section class="continue">${coverHTML(recent, bookTitle(recent))}<div class="continue-body"><small class="eyebrow">继续阅读</small><h2>${e(bookTitle(recent))}</h2><p>第 ${at} 章 · ${e(chapterName(list[at - 1].title))}</p><div class="progress-line"><progress value="${at}" max="${list.length}" aria-label="阅读进度"></progress><span>${at} / ${list.length} 章 · ${Math.round(at / list.length * 100)}%</span></div></div><button type="button" class="primary" data-action="continue">继续阅读${icon('forward')}</button></section>`;
+      try {
+        const [list, saved] = await Promise.all([chapters(recent.id), api(base(recent.id) + '/reading')]);
+        if (!fresh()) return;
+        const at = Math.min(list.length, saved.position.chapter);
+        resume = `<section class="continue">${coverHTML(recent, bookTitle(recent))}<div class="continue-body"><small class="eyebrow">继续阅读</small><h2>${e(bookTitle(recent))}</h2><p>第 ${at} 章 · ${e(chapterName(list[at - 1].title))}</p><div class="progress-line"><progress value="${at}" max="${list.length}" aria-label="阅读进度"></progress><span>${at} / ${list.length} 章 · ${Math.round(at / list.length * 100)}%</span></div></div><button type="button" class="primary" data-action="continue">继续阅读${icon('forward')}</button></section>`;
+      } catch {
+        // Continue-reading helpers are optional; book cards still render.
+      }
     }
+    if (!fresh()) return;
     shell('你的资料库', '让故事的每一条线索，都有迹可循。', `
     ${resume}
     <div class="section-bar"><div class="section-label">全部小说 · ${books.length} 本</div>${searchBox('搜索书名')}</div><div class="books"></div><p data-no-match class="empty" hidden>没有找到这本书。</p>
