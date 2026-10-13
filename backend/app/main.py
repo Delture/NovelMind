@@ -32,7 +32,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """后台任务由当前进程执行，退出后不会续跑；重启时必须把遗留的 queued/running 记录标为失败，
     避免界面永远处理中。孤立向量集合也在这里清理。
     """
-    logger = logging.getLogger("novelmind.lifecycle")
+    logger = logging.getLogger("uvicorn.error")
     logger.info(
         "server starting pid=%s app=%s",
         os.getpid(),

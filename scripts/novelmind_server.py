@@ -89,7 +89,6 @@ class OwnedWorkerReload(StatReload):
 def main():
     import os
 
-    logger.info("novelmind_server starting pid=%s", os.getpid())
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app")
     parser.add_argument("--host", default="127.0.0.1")
@@ -99,6 +98,7 @@ def main():
     args = parser.parse_args()
     config = Config(args.app, host=args.host, port=args.port, reload=True,
                     reload_dirs=args.reload_dir, timeout_graceful_shutdown=5)
+    logger.info("novelmind_server starting pid=%s", os.getpid())
     sock = config.bind_socket()
     supervisor = OwnedWorkerReload(config, [sock])
     try:
