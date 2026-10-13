@@ -71,7 +71,12 @@ def _chapter_number_key(title: str) -> int | str | None:
         return number
     english_match = _ENGLISH_CHAPTER_TITLE_PATTERN.fullmatch(stripped)
     if english_match:
-        return int(english_match.group("number"))
+        number = english_match.group("number")
+        # Chapter 1.1 vs 1.2 share leading digits; no same-number evidence.
+        suffix = stripped[english_match.start("number") + len(number) :]
+        if re.match(r"\.\d", suffix):
+            return None
+        return int(number)
     return None
 
 

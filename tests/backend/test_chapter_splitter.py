@@ -253,3 +253,12 @@ def test_chinese_and_arabic_number_spellings_are_not_folded() -> None:
         Chapter(index=1, title="第二章 甲", content=""),
         Chapter(index=2, title="第2章 乙", content="正文。"),
     ]
+
+
+def test_english_compound_chapter_numbers_are_not_folded() -> None:
+    text = "Chapter 1.1 First\n\nChapter 1.2 Second\nBody."
+    chapters = split_chapters(text)
+    assert chapters == [
+        Chapter(index=1, title="Chapter 1.1 First", content=""),
+        Chapter(index=2, title="Chapter 1.2 Second", content="Body."),
+    ]
