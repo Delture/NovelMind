@@ -354,13 +354,18 @@ def _build_estimate(
             and checkpoint.chunk_version == CHUNK_FORMAT_VERSION
             and checkpoint.source_hash == source_hash
         )
-        if checkpoint_compatible and callable(vector_store_factory):
+        if (
+            checkpoint is not None
+            and checkpoint_compatible
+            and callable(vector_store_factory)
+        ):
+            checkpoint_name = checkpoint.collection_name
             try:
                 store = vector_store_factory()
                 reusable_ids.update(
                     load_valid_vectors_by_ids(
                         vector_store=store,
-                        collection_name=checkpoint.collection_name,
+                        collection_name=checkpoint_name,
                         chunk_ids=list(new_ids),
                         dimensions=settings.embedding_dimensions,
                     )
@@ -368,7 +373,7 @@ def _build_estimate(
             except Exception:
                 logger.warning(
                     "RAG build checkpoint collection %s is unreadable.",
-                    checkpoint.collection_name,
+                    checkpoint_name,
                 )
     reusable = len(reusable_ids)
     estimated_new = len(chunks) - reusable

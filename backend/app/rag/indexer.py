@@ -32,7 +32,10 @@ from backend.app.rag.embedding import (
     EmbeddingUnavailableError,
     MAX_EMBEDDING_BATCH_SIZE,
 )
-from backend.app.rag.vector_store import VectorSearchHit
+from backend.app.rag.vector_store import (
+    VectorCollectionNotFoundError,
+    VectorSearchHit,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -316,8 +319,15 @@ def _discard_checkpoint(
 def _ensure_collection(vector_store: VectorStore, name: str) -> None:
     try:
         vector_store.collection_count(name)
-    except Exception:
+    except VectorCollectionNotFoundError:
         vector_store.create_collection(name)
+    except KeyError:
+        # In-memory fakes may raise KeyError for a missing collection.
+        vector_store.create_collection(name)
+    except Exception as error:
+        if _is_transient_vector_store_error(error):
+            raise EmbeddingUnavailableError() from error
+        raise
 
 
 # 主库指针和 chunk 定位在同一事务中切换，避免读到半套索引。
@@ -758,8 +768,11 @@ def run_rag_index_job(
         ):
             logger.exception("Unexpected RAG index job failure.")
         retryable = (
-            isinstance(error, EmbeddingProviderError)
-            and bool(error.retryable)
+            (
+                isinstance(error, EmbeddingProviderError)
+                and bool(error.retryable)
+            )
+            or _is_transient_vector_store_error(error)
         )
         if (
             not retryable
@@ -774,14 +787,13 @@ def run_rag_index_job(
                 )
                 _discard_checkpoint(db, vector_store, checkpoint)
             registered_collection = None
-        error_message = (
-            str(error)
-            if isinstance(
-                error,
-                (EmbeddingProviderError, RagIndexBuildError),
-            )
-            else "RAG 索引任务执行失败，请查看后端日志后重试。"
-        )[:1_000]
+        if isinstance(error, (EmbeddingProviderError, RagIndexBuildError)):
+            error_message = str(error)
+        elif _is_transient_vector_store_error(error):
+            error_message = str(EmbeddingUnavailableError())
+        else:
+            error_message = "RAG 索引任务执行失败，请查看后端日志后重试。"
+        error_message = error_message[:1_000]
         mark_analysis_job_failed_with_sqlite_lock_retry(
             session_factory,
             job_id,

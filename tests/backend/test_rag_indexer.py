@@ -631,3 +631,42 @@ def test_checkpoint_invalidated_on_model_change() -> None:
         assert old_temp not in store.collections
     finally:
         engine.dispose()
+
+
+def test_transient_collection_count_lock_keeps_checkpoint() -> None:
+    engine, factory = make_session_factory()
+    novel_id, job_id = seed_job(factory)
+    store = FakeVectorStore()
+    original_count = store.collection_count
+
+    def flaky_count(name: str) -> int:
+        if name in store.collections and store.collections[name]:
+            raise RuntimeError("database is locked")
+        return original_count(name)
+
+    try:
+        # First succeed creating some vectors via normal path then fail at end.
+        calls = {"n": 0}
+        original_upsert = store.upsert
+
+        def upsert_then_lock(**kwargs):
+            original_upsert(**kwargs)
+            calls["n"] += 1
+            if calls["n"] >= 1:
+                store.collection_count = flaky_count  # type: ignore[method-assign]
+
+        store.upsert = upsert_then_lock  # type: ignore[method-assign]
+        run_rag_index_job(job_id, FakeProvider(), store, factory)
+        with factory() as db:
+            job = db.get(AnalysisJob, job_id)
+            checkpoint = db.scalar(
+                select(RagBuildCheckpoint).where(
+                    RagBuildCheckpoint.novel_id == novel_id
+                )
+            )
+            assert job.status == "failed"
+            assert "暂时不可用" in (job.error_message or "")
+            assert checkpoint is not None
+            assert checkpoint.collection_name in store.collections
+    finally:
+        engine.dispose()
