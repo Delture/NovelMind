@@ -44,7 +44,6 @@ from backend.app.rag.embedding import (
 from backend.app.rag.indexer import (
     VectorStore,
     load_valid_vectors_by_ids,
-    protocol_matches,
     run_rag_index_job,
 )
 
@@ -347,19 +346,15 @@ def _build_estimate(
             .filter(RagBuildCheckpoint.novel_id == novel_id)
             .one_or_none()
         )
-        if (
+        checkpoint_compatible = (
             checkpoint is not None
-            and callable(vector_store_factory)
-            and protocol_matches(
-                embedding_provider=checkpoint.embedding_provider,
-                embedding_model=checkpoint.embedding_model,
-                embedding_dimensions=checkpoint.embedding_dimensions,
-                chunk_version=checkpoint.chunk_version,
-                source_hash=checkpoint.source_hash,
-                provider=_SettingsEmbeddingView(settings),
-                expected_source_hash=source_hash,
-            )
-        ):
+            and checkpoint.embedding_provider == settings.embedding_provider
+            and checkpoint.embedding_model == settings.embedding_model
+            and checkpoint.embedding_dimensions == settings.embedding_dimensions
+            and checkpoint.chunk_version == CHUNK_FORMAT_VERSION
+            and checkpoint.source_hash == source_hash
+        )
+        if checkpoint_compatible and callable(vector_store_factory):
             try:
                 store = vector_store_factory()
                 reusable_ids.update(

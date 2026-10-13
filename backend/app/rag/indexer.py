@@ -29,6 +29,7 @@ from backend.app.rag.chunking import (
 from backend.app.rag.embedding import (
     EmbeddingProvider,
     EmbeddingProviderError,
+    EmbeddingUnavailableError,
     MAX_EMBEDDING_BATCH_SIZE,
 )
 from backend.app.rag.vector_store import VectorSearchHit
@@ -36,6 +37,14 @@ from backend.app.rag.vector_store import VectorSearchHit
 
 logger = logging.getLogger(__name__)
 _CACHE_READ_BATCH_SIZE = 500
+
+def _is_transient_vector_store_error(error: BaseException) -> bool:
+    """Vector store SQLite locks should keep the checkpoint for resume."""
+    if isinstance(error, OperationalError) and is_sqlite_lock_error(error):
+        return True
+    message = str(error).casefold()
+    return "locked" in message or "busy" in message
+
 
 
 class RagIndexBuildError(RuntimeError):
@@ -562,6 +571,8 @@ def run_rag_index_job(
                         dimensions=provider.dimensions,
                     )
                 except Exception as error:
+                    if _is_transient_vector_store_error(error):
+                        raise EmbeddingUnavailableError() from error
                     raise RagIndexBuildError(
                         "无法读取构建检查点中的向量，请强制重建索引。"
                     ) from error
@@ -684,7 +695,20 @@ def run_rag_index_job(
                 )
 
             expected_ids = [chunk.chunk_id for chunk in chunks]
-            if set(completed) != set(expected_ids):
+            try:
+                on_disk = load_valid_vectors_by_ids(
+                    vector_store=vector_store,
+                    collection_name=registered_collection,
+                    chunk_ids=expected_ids,
+                    dimensions=provider.dimensions,
+                )
+            except Exception as error:
+                if _is_transient_vector_store_error(error):
+                    raise EmbeddingUnavailableError() from error
+                raise RagIndexBuildError(
+                    "本地向量集合校验失败，旧索引已保留。"
+                ) from error
+            if set(on_disk) != set(expected_ids):
                 raise RagIndexBuildError(
                     "本地向量集合校验失败，旧索引已保留。"
                 )

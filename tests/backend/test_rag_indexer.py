@@ -519,9 +519,9 @@ def test_resume_uses_disk_ids_not_job_progress() -> None:
         second_job = add_job(factory, novel_id)
         provider = FakeProvider()
         run_rag_index_job(second_job, provider, store, factory)
-        assert any(
-            True for batch in provider.calls for _ in batch
-        )
+        # 20 kept on disk + 1 deleted => exactly 6 missing after batching math:
+        # fail_after=3 left 20 vectors; delete 1 => 19 on disk; 25-19=6.
+        assert sum(len(batch) for batch in provider.calls) == 6
         with factory() as db:
             assert db.get(AnalysisJob, second_job).status == "succeeded"
             assert db.scalar(
@@ -557,5 +557,77 @@ def test_old_ready_index_remains_queryable_during_build() -> None:
             assert current.source_hash == old_hash
         assert old_name in store.collections
         assert store.collection_count(old_name) == 2
+    finally:
+        engine.dispose()
+
+
+def test_final_validation_requires_expected_ids_on_disk() -> None:
+    engine, factory = make_session_factory()
+    novel_id, job_id = seed_job(factory)
+    store = FakeVectorStore()
+    original_upsert = store.upsert
+
+    def corrupt_upsert(**kwargs):
+        original_upsert(**kwargs)
+        # After writing expected IDs, inject an unexpected ID and drop one.
+        collection = store.collections[kwargs["collection_name"]]
+        missing = kwargs["ids"][0]
+        collection.pop(missing, None)
+        collection["x" * 70] = (
+            tuple([1.0] * 1_024),
+            {},
+        )
+
+    store.upsert = corrupt_upsert  # type: ignore[method-assign]
+    try:
+        run_rag_index_job(job_id, FakeProvider(), store, factory)
+        with factory() as db:
+            assert db.get(AnalysisJob, job_id).status == "failed"
+            assert db.scalar(
+                select(RagIndex).where(RagIndex.novel_id == novel_id)
+            ) is None
+            # Terminal validation failure discards checkpoint.
+            assert db.scalar(
+                select(RagBuildCheckpoint).where(
+                    RagBuildCheckpoint.novel_id == novel_id
+                )
+            ) is None
+    finally:
+        engine.dispose()
+
+
+def test_checkpoint_invalidated_on_model_change() -> None:
+    engine, factory = make_session_factory()
+    novel_id, first_job = seed_job(factory)
+    store = FakeVectorStore()
+    try:
+        run_rag_index_job(first_job, FakeProvider(fail=True), store, factory)
+        with factory() as db:
+            old_temp = db.scalar(
+                select(RagBuildCheckpoint.collection_name).where(
+                    RagBuildCheckpoint.novel_id == novel_id
+                )
+            )
+        second_job = add_job(factory, novel_id)
+
+        class OtherModelProvider(FakeProvider):
+            @property
+            def model(self) -> str:
+                return "other-embedding-model"
+
+        run_rag_index_job(second_job, OtherModelProvider(), store, factory)
+        with factory() as db:
+            assert db.scalar(
+                select(RagBuildCheckpoint).where(
+                    RagBuildCheckpoint.novel_id == novel_id
+                )
+            ) is None
+            index = db.scalar(
+                select(RagIndex).where(RagIndex.novel_id == novel_id)
+            )
+            assert index is not None
+            assert index.embedding_model == "other-embedding-model"
+            assert index.collection_name != old_temp
+        assert old_temp not in store.collections
     finally:
         engine.dispose()
