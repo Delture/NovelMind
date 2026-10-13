@@ -512,7 +512,7 @@ def _terminate_process(managed: ManagedProcess) -> None:
                 os.killpg(process.pid, signal.SIGTERM)
             process.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
-        logging.warning("%s did not stop gracefully; forcing termination", managed.name)
+        logging.warning("%s did not stop gracefully; forcing termination pid=%s", managed.name, process.pid)
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
                            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
@@ -625,6 +625,11 @@ def start(*, development: bool, open_browser: bool = True) -> int:
         _print("正在等待后端服务……")
         _wait_until_ready("后端", backend.process, _backend_is_ready)
         _print(f"后端已就绪：{BACKEND_HEALTH_URL}")
+        logging.info(
+            "backend ready name=%s pid=%s",
+            backend.name,
+            backend.process.pid,
+        )
 
         _wait_until_ready("网页", backend.process, _frontend_is_ready)
 
@@ -656,8 +661,19 @@ def start(*, development: bool, open_browser: bool = True) -> int:
     finally:
         control_server.launcher_status = "stopping"
         _print("正在停止 NovelMind……")
+        logging.info(
+            "launcher stopping pid=%s children=%s",
+            os.getpid(),
+            [(m.name, m.process.pid) for m in processes],
+        )
         for managed in reversed(processes):
             _terminate_process(managed)
+            logging.info(
+                "child stopped name=%s pid=%s exit_code=%s",
+                managed.name,
+                managed.process.pid,
+                managed.process.poll(),
+            )
         ownership_job.close()
         control_server.shutdown()
         control_server.server_close()

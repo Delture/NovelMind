@@ -87,6 +87,9 @@ class OwnedWorkerReload(StatReload):
 
 
 def main():
+    import os
+
+    logger.info("novelmind_server starting pid=%s", os.getpid())
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app")
     parser.add_argument("--host", default="127.0.0.1")
@@ -102,6 +105,7 @@ def main():
         supervisor.run()
     finally:
         sock.close()
+        logger.info("novelmind_server stopped pid=%s", os.getpid())
 
 
 if __name__ == "__main__":

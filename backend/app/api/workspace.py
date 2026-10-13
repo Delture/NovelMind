@@ -239,10 +239,14 @@ from backend.app.services.dependencies import get_session_factory as get_workflo
 def fail_interrupted_workflows(factory):
     """重启后将未完成任务链明确标为失败，避免意外恢复付费操作。"""
     with factory() as db:
-        for row in db.query(Workflow).filter(Workflow.status.in_(["queued", "running"])):
+        rows = list(
+            db.query(Workflow).filter(Workflow.status.in_(["queued", "running"]))
+        )
+        for row in rows:
             row.status = "failed"
             row.error_message = "服务已重启；可重新发起操作，已完成的摘要和索引会被复用。"
         db.commit()
+        return len(rows)
 
 
 @router.post("/novels/{novel_id}/workflows", status_code=202)

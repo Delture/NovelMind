@@ -1,5 +1,7 @@
 
 from contextlib import asynccontextmanager
+import logging
+import os
 from typing import AsyncIterator
 
 from pathlib import Path
@@ -30,20 +32,39 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """后台任务由当前进程执行，退出后不会续跑；重启时必须把遗留的 queued/running 记录标为失败，
     避免界面永远处理中。孤立向量集合也在这里清理。
     """
-    # 建表与迁移必须先完成，后面的恢复查询才能安全访问最新表结构。
-    executor.start()
-    init_db()
-    fail_interrupted_jobs(SessionLocal)
-    fail_interrupted_rag_questions(SessionLocal)
-    fail_interrupted_workflows(SessionLocal)
-    cleanup_orphan_rag_collections(
-        SessionLocal,
-        settings.vector_store_path,
+    logger = logging.getLogger("novelmind.lifecycle")
+    logger.info(
+        "server starting pid=%s app=%s",
+        os.getpid(),
+        settings.app_name,
     )
     try:
+        # 建表与迁移必须先完成，后面的恢复查询才能安全访问最新表结构。
+        executor.start()
+        init_db()
+        interrupted_jobs = fail_interrupted_jobs(SessionLocal)
+        interrupted_questions = fail_interrupted_rag_questions(SessionLocal)
+        interrupted_workflows = fail_interrupted_workflows(SessionLocal)
+        orphan_collections = cleanup_orphan_rag_collections(
+            SessionLocal,
+            settings.vector_store_path,
+        )
+        logger.info(
+            "server ready interrupted_jobs=%s interrupted_questions=%s "
+            "interrupted_workflows=%s orphan_collections=%s",
+            interrupted_jobs,
+            interrupted_questions,
+            interrupted_workflows,
+            orphan_collections,
+        )
         yield
+    except Exception:
+        logger.exception("server startup failed")
+        raise
     finally:
+        logger.info("server shutting down")
         await executor.shutdown()
+        logger.info("server stopped")
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

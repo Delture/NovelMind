@@ -73,3 +73,43 @@ def test_shutdown_returns_while_worker_still_running():
     finally:
         release.set()
 
+
+
+def test_reserve_rejected_after_shutdown():
+    runner = JobExecutor(workers=1, pending=1)
+
+    async def exercise():
+        await runner.shutdown()
+        with pytest.raises(ServiceError) as rejected:
+            runner.reserve(lambda key: None, ("after",), {}, None)
+        assert rejected.value.status_code == 503
+        assert "关闭" in rejected.value.detail
+
+    asyncio.run(exercise())
+
+
+def test_shutdown_sets_stop_event_and_keeps_running_slot():
+    runner = JobExecutor(workers=1, pending=1)
+    entered, release = threading.Event(), threading.Event()
+
+    def block(key):
+        entered.set()
+        assert release.wait(5)
+
+    handle = runner.reserve(block, ("blocking",), {}, None)
+
+    async def exercise():
+        task = asyncio.create_task(runner.run(handle))
+        while not entered.is_set():
+            await asyncio.sleep(0.01)
+        await asyncio.wait_for(runner.shutdown(), timeout=2)
+        assert runner.is_stopping()
+        assert handle.job_id in runner.jobs
+        release.set()
+        await task
+        assert handle.job_id not in runner.jobs
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        release.set()
