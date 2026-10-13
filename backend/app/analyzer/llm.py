@@ -96,11 +96,16 @@ class ProviderUnavailableError(LLMProviderError):
 
 
 class ProviderResponseError(LLMProviderError):
-    def __init__(self) -> None:
+    def __init__(self, *, category: str = "invalid") -> None:
+        if category == "length":
+            message = "生成结果达到输出上限，未完成。"
+        else:
+            message = "生成模型返回了无法解析的结果，请重试。"
         super().__init__(
-            "生成模型返回了无法解析的结果，请重试。",
+            message,
             code="provider_response_invalid",
         )
+        self.category = category
 
 
 @runtime_checkable
