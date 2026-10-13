@@ -22,6 +22,7 @@ from backend.app.analyzer.chapter_review import (
     catalog_for_prompt,
     map_chapter_index,
     plan_is_identity,
+    reconstruct_review_plan,
     review_system_prompt,
     validate_review_plan,
 )
@@ -394,14 +395,15 @@ def run_chapter_review_job(
                 system_prompt=review_system_prompt(),
                 user_prompt=(
                     "校对下一行 JSON 中的章节目录。N="
-                    f"{len(snapshots)}。证据不足则原样返回：\n"
+                    f"{len(snapshots)}。仅返回需要合并或改标题的项；无修改返回空列表：\n"
                     f"{json.dumps({'chapters': catalog_for_prompt(snapshots)}, ensure_ascii=False)}"
                 ),
                 response_model=ChapterReviewPayload,
                 thinking=False,
                 before_attempt=still_running,
             )
-            plan = validate_review_plan(result.value, len(snapshots))
+            full_payload = reconstruct_review_plan(result.value, snapshots)
+            plan = validate_review_plan(full_payload, len(snapshots))
         except Exception as error:
             logger.info("chapter review model/validation failed: %s", error)
             _mark_failed(

@@ -1,18 +1,19 @@
 """Optional AI chapter-boundary review: pure merge rules + service fakes."""
 
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from backend.app.analyzer.chapter_review import (
+    CHAPTER_REVIEW_PROMPT_VERSION,
     ChapterReviewPayload,
     ChapterSnapshot,
     ReviewedChapter,
     apply_review_plan,
     map_chapter_index,
     plan_is_identity,
+    reconstruct_review_plan,
     validate_review_plan,
 )
 from backend.app.analyzer.llm import JsonGenerationResult, ProviderUnavailableError
@@ -54,7 +55,6 @@ def test_validate_and_merge_preserves_inner_titles() -> None:
     rebuilt = apply_review_plan(chapters, plan)
     assert len(rebuilt) == 2
     assert rebuilt[1].title == "合并二三"
-    assert "第2章 B" not in rebuilt[1].content.split("\n")[0] or True
     assert "第3章 C" in rebuilt[1].content
     assert "正文3" in rebuilt[1].content
     assert map_chapter_index(3, plan) == 2
@@ -126,7 +126,6 @@ class _ReviewFake:
 def test_review_job_merges_chapters(web) -> None:
     _, factory, novel_id, _ = web
     with factory() as db:
-        novel = db.get(Novel, novel_id)
         # Ensure at least two chapters by duplicating if upload only made few
         chapters = (
             db.query(Chapter)
@@ -148,20 +147,16 @@ def test_review_job_merges_chapters(web) -> None:
         db.commit()
         job_id = job.id
 
+    # Sparse: only the merge change; reconstruct fills the rest.
     payload = ChapterReviewPayload(
         chapters=[
-            ReviewedChapter(title="合并开头", from_index=1, to_index=2),
-            *[
-                ReviewedChapter(title=f"保留{i}", from_index=i, to_index=i)
-                for i in range(3, n + 1)
-            ],
+            ReviewedChapter(
+                title="全书一章" if n == 2 else "合并开头",
+                from_index=1,
+                to_index=2,
+            )
         ]
     )
-    # If only 2 chapters, plan is just one merged chapter
-    if n == 2:
-        payload = ChapterReviewPayload(
-            chapters=[ReviewedChapter(title="全书一章", from_index=1, to_index=2)]
-        )
 
     provider = _ReviewFake(payload)
     run_chapter_review_job(job_id, novel_id, provider, factory)
@@ -234,3 +229,139 @@ def test_remap_paragraph_across_merge() -> None:
     )
     assert start["position"]["chapter"] == 1
     assert start["position"]["paragraph"] == 2  # after a1,a2 → title of ch2
+
+
+def test_reconstruct_empty_is_identity() -> None:
+    chapters = _snaps("第1章 A", "第2章 B", "第3章 C")
+    full = reconstruct_review_plan(ChapterReviewPayload(chapters=[]), chapters)
+    plan = validate_review_plan(full, 3)
+    assert plan_is_identity(plan, chapters)
+
+
+def test_reconstruct_sparse_merge_and_retitle() -> None:
+    chapters = _snaps("第1章 A", "第2章 B", "第3章 C", "第4章 D")
+    full = reconstruct_review_plan(
+        ChapterReviewPayload(
+            chapters=[
+                ReviewedChapter(title="合并二三", from_index=2, to_index=3),
+                ReviewedChapter(title="新标题丁", from_index=4, to_index=4),
+            ]
+        ),
+        chapters,
+    )
+    plan = validate_review_plan(full, 4)
+    assert [(item.title, item.from_index, item.to_index) for item in plan] == [
+        ("第1章 A", 1, 1),
+        ("合并二三", 2, 3),
+        ("新标题丁", 4, 4),
+    ]
+    rebuilt = apply_review_plan(chapters, plan)
+    assert len(rebuilt) == 3
+    assert "第3章 C" in rebuilt[1].content
+    assert rebuilt[2].title == "新标题丁"
+    assert map_chapter_index(3, plan) == 2
+
+
+def test_reconstruct_rejects_overlap_oob_and_out_of_order() -> None:
+    chapters = _snaps("第1章 A", "第2章 B", "第3章 C")
+    with pytest.raises(ValueError):
+        reconstruct_review_plan(
+            ChapterReviewPayload(
+                chapters=[
+                    ReviewedChapter(title="一", from_index=1, to_index=2),
+                    ReviewedChapter(title="二", from_index=2, to_index=3),
+                ]
+            ),
+            chapters,
+        )
+    with pytest.raises(ValueError):
+        reconstruct_review_plan(
+            ChapterReviewPayload(
+                chapters=[ReviewedChapter(title="越界", from_index=2, to_index=9)]
+            ),
+            chapters,
+        )
+    with pytest.raises(ValueError):
+        reconstruct_review_plan(
+            ChapterReviewPayload(
+                chapters=[
+                    ReviewedChapter(title="后", from_index=3, to_index=3),
+                    ReviewedChapter(title="前", from_index=1, to_index=1),
+                ]
+            ),
+            chapters,
+        )
+    with pytest.raises(ValidationError):
+        ReviewedChapter(title="x", from_index=0, to_index=1)
+    parsed = ChapterReviewPayload.model_validate({"chapters": []})
+    assert parsed.chapters == []
+    assert CHAPTER_REVIEW_PROMPT_VERSION == "chapter-review-v2"
+
+
+def test_review_job_empty_sparse_keeps_chapters(web) -> None:
+    _, factory, novel_id, _ = web
+    with factory() as db:
+        before_titles = [
+            (c.id, c.title, c.content, c.character_count)
+            for c in db.query(Chapter)
+            .filter(Chapter.novel_id == novel_id)
+            .order_by(Chapter.chapter_index)
+        ]
+        job = AnalysisJob(
+            id=str(uuid4()),
+            novel_id=novel_id,
+            job_type="chapter_review",
+            status="queued",
+            progress_current=0,
+            progress_total=1,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+    provider = _ReviewFake(ChapterReviewPayload(chapters=[]))
+    run_chapter_review_job(job_id, novel_id, provider, factory)
+    with factory() as db:
+        assert db.get(AnalysisJob, job_id).status == "succeeded"
+        after = [
+            (c.id, c.title, c.content, c.character_count)
+            for c in db.query(Chapter)
+            .filter(Chapter.novel_id == novel_id)
+            .order_by(Chapter.chapter_index)
+        ]
+        assert after == before_titles
+    assert CHAPTER_REVIEW_PROMPT_VERSION == "chapter-review-v2"
+    user = provider.calls[0]["user_prompt"]
+    assert "仅返回需要合并或改标题的项" in user
+    assert '"index"' in user
+
+
+def test_review_job_rejects_overlap_keeps_chapters(web) -> None:
+    _, factory, novel_id, _ = web
+    with factory() as db:
+        before = db.get(Novel, novel_id).chapter_count
+        job = AnalysisJob(
+            id=str(uuid4()),
+            novel_id=novel_id,
+            job_type="chapter_review",
+            status="queued",
+            progress_current=0,
+            progress_total=1,
+        )
+        db.add(job)
+        db.commit()
+        job_id = job.id
+        n = before
+    if n < 3:
+        pytest.skip("fixture needs >=3 chapters for overlap")
+    provider = _ReviewFake(
+        ChapterReviewPayload(
+            chapters=[
+                ReviewedChapter(title="一", from_index=1, to_index=2),
+                ReviewedChapter(title="二", from_index=2, to_index=3),
+            ]
+        )
+    )
+    run_chapter_review_job(job_id, novel_id, provider, factory)
+    with factory() as db:
+        assert db.get(AnalysisJob, job_id).status == "failed"
+        assert db.get(Novel, novel_id).chapter_count == before

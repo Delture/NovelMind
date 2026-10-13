@@ -1,5 +1,12 @@
 # 开发日志
 
+## 2026-10-13 — 目录复核稀疏修改契约
+
+- `ChapterReviewPayload.chapters` 允许空列表；模型只返回合并/改标题项，本地 `reconstruct_review_plan` 补齐后仍走 `validate_review_plan`。
+- `CHAPTER_REVIEW_PROMPT_VERSION` → `chapter-review-v2`；输入仍为完整目录。
+- 验证：`test_chapter_review`（假提供商）。
+
+
 ## 2026-10-13 — RAG 构建检查点与续嵌
 
 - 新增 `RagBuildCheckpoint`（迁移 v14）：记录构建身份与临时集合名；成功批次以磁盘向量为准。
