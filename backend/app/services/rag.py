@@ -17,7 +17,6 @@ from uuid import uuid4
 
 from starlette import status
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
-from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,7 +29,7 @@ from backend.app.core.config import (
 )
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Chapter, Novel
-from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
+from backend.app.models.rag import RagBuildCheckpoint, RagChunkRecord, RagIndex, RagQuestion
 from backend.app.rag.answering import (
     RAG_ANSWER_PROMPT_VERSION,
     RagEvidence,
@@ -42,7 +41,12 @@ from backend.app.rag.embedding import (
     EmbeddingProvider,
     MAX_EMBEDDING_BATCH_SIZE,
 )
-from backend.app.rag.indexer import VectorStore, run_rag_index_job
+from backend.app.rag.indexer import (
+    VectorStore,
+    load_valid_vectors_by_ids,
+    protocol_matches,
+    run_rag_index_job,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -327,19 +331,52 @@ def _build_estimate(
         current,
         vector_store_factory,
     )
-    reusable = 0
-    if not force and current is not None and current_compatible and vector_collection_valid:
-        new_ids = {chunk.chunk_id for chunk in chunks}
-        reusable = (
-            db.query(func.count(RagChunkRecord.id))
-            .filter(
-                RagChunkRecord.rag_index_id == current.id,
-                RagChunkRecord.chunk_id.in_(new_ids),
+    new_ids = {chunk.chunk_id for chunk in chunks}
+    reusable_ids: set[str] = set()
+    if not force and new_ids:
+        if current is not None and current_compatible and vector_collection_valid:
+            reusable_ids.update(
+                chunk_id
+                for (chunk_id,) in db.query(RagChunkRecord.chunk_id).filter(
+                    RagChunkRecord.rag_index_id == current.id,
+                    RagChunkRecord.chunk_id.in_(new_ids),
+                )
             )
-            .scalar()
-            or 0
-        ) if new_ids else 0
-    estimated_new = len(chunks) - int(reusable)
+        checkpoint = (
+            db.query(RagBuildCheckpoint)
+            .filter(RagBuildCheckpoint.novel_id == novel_id)
+            .one_or_none()
+        )
+        if (
+            checkpoint is not None
+            and callable(vector_store_factory)
+            and protocol_matches(
+                embedding_provider=checkpoint.embedding_provider,
+                embedding_model=checkpoint.embedding_model,
+                embedding_dimensions=checkpoint.embedding_dimensions,
+                chunk_version=checkpoint.chunk_version,
+                source_hash=checkpoint.source_hash,
+                provider=_SettingsEmbeddingView(settings),
+                expected_source_hash=source_hash,
+            )
+        ):
+            try:
+                store = vector_store_factory()
+                reusable_ids.update(
+                    load_valid_vectors_by_ids(
+                        vector_store=store,
+                        collection_name=checkpoint.collection_name,
+                        chunk_ids=list(new_ids),
+                        dimensions=settings.embedding_dimensions,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "RAG build checkpoint collection %s is unreadable.",
+                    checkpoint.collection_name,
+                )
+    reusable = len(reusable_ids)
+    estimated_new = len(chunks) - reusable
     maximum_batches = math.ceil(
         len(chunks) / MAX_EMBEDDING_BATCH_SIZE
     )
@@ -699,6 +736,7 @@ def start_rag_index(request: StartRagIndexRequest, background_tasks: TaskDispatc
         novel_id=novel_id,
         force=request.force,
         settings=settings,
+        vector_store_factory=vector_store_factory,
     )
     if estimate.chunk_count == 0:
         raise ServiceError(

@@ -10,6 +10,7 @@ from .migration_steps.v08_reports import _add_novel_report_table
 from .migration_steps.v10_workspace import add_workspace_tables, explicit_appearance_ownership
 from .migration_steps.v12_workflow_time import workflow_datetime
 from .migration_steps.v13_chapter_review_job import allow_chapter_review_job_type
+from .migration_steps.v14_rag_build_checkpoint import add_rag_build_checkpoint_table
 MigrationFunction = Callable[[Connection], None]
 
 MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
@@ -50,6 +51,11 @@ MIGRATIONS: tuple[tuple[int, str, MigrationFunction], ...] = (
     (11, "explicit character appearance ownership", explicit_appearance_ownership),
     (12, "normalize workflow timestamps", workflow_datetime),
     (13, "allow chapter review job type", allow_chapter_review_job_type),
+    (
+        14,
+        "add rag build checkpoint table",
+        add_rag_build_checkpoint_table,
+    ),
 )
 
 

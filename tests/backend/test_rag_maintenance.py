@@ -8,7 +8,7 @@ from backend.app.api.novels import delete_novel
 from backend.app.core.config import load_settings
 from backend.app.core.database import create_db_engine, init_db
 from backend.app.models.novel import Chapter, Novel
-from backend.app.models.rag import RagIndex
+from backend.app.models.rag import RagBuildCheckpoint, RagIndex
 from backend.app.rag.chunking import CHUNK_FORMAT_VERSION
 from backend.app.rag.maintenance import cleanup_orphan_rag_collections
 from backend.app.rag.vector_store import LocalVectorStore
@@ -110,5 +110,51 @@ def test_delete_novel_removes_current_collection(
             assert response.status_code == 204
             assert db.get(Novel, novel.id) is None
         assert collection_name not in store.list_collection_names()
+    finally:
+        engine.dispose()
+
+
+def test_startup_cleanup_preserves_current_and_valid_checkpoint(tmp_path) -> None:
+    engine, factory = make_database()
+    path = tmp_path / "vectors"
+    store = LocalVectorStore(str(path))
+    active = "novelmind_n1_active_123456789012"
+    checkpoint_name = "novelmind_n1_check_123456789012"
+    orphan = "novelmind_n2_orphan_123456789012"
+    for name in (active, checkpoint_name, orphan):
+        store.create_collection(name)
+    try:
+        with factory() as db:
+            novel = add_index(db, active)
+            from backend.app.rag.chunking import build_rag_chunks, rag_source_hash
+            chapters = list(novel.chapters)
+            chunks = build_rag_chunks(
+                novel_id=novel.id,
+                chapters=chapters,
+                embedding_model="Qwen/Qwen3-Embedding-4B",
+                dimensions=1_024,
+            )
+            source_hash = rag_source_hash(
+                chunks,
+                embedding_model="Qwen/Qwen3-Embedding-4B",
+                dimensions=1_024,
+            )
+            db.add(
+                RagBuildCheckpoint(
+                    novel_id=novel.id,
+                    source_hash=source_hash,
+                    collection_name=checkpoint_name,
+                    embedding_provider="siliconflow",
+                    embedding_model="Qwen/Qwen3-Embedding-4B",
+                    embedding_dimensions=1_024,
+                    chunk_version=CHUNK_FORMAT_VERSION,
+                )
+            )
+            db.commit()
+        assert cleanup_orphan_rag_collections(factory, str(path)) == 1
+        names = store.list_collection_names()
+        assert active in names
+        assert checkpoint_name in names
+        assert orphan not in names
     finally:
         engine.dispose()

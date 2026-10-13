@@ -242,6 +242,9 @@ class OpenAIEmbeddingProvider:
                             **fallback_request,
                         )
                     except openai.APIConnectionError:
+                        if attempt < self._max_attempts:
+                            self._wait_before_retry(attempt)
+                            continue
                         raise EmbeddingUnavailableError() from None
                     except openai.APIStatusError as fallback_error:
                         error = fallback_error
