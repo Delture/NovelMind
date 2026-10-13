@@ -1,5 +1,14 @@
 # 开发日志
 
+## 2026-10-13 — RAG 构建检查点与续嵌
+
+- 新增 `RagBuildCheckpoint`（迁移 v14）：记录构建身份与临时集合名；成功批次以磁盘向量为准。
+- 暂时失败保留检查点，重新发起只嵌缺失 chunk IDs；来源/协议变化或 force 淘汰；完整验证后原子切换并删除检查点。
+- 启动 orphan 清理同时保留当前索引与有效检查点引用；估算复用取完整索引与检查点有效 ID 并集。
+- embedding dimensions 回退路径的连接失败改走现有外层 retry；不改全局 attempts/timeout。
+- 验证：定向 `test_rag_indexer`/`test_rag_maintenance`/`test_database` 等（假提供商与临时目录）。
+
+
 ## 2026-10-13 — 报告终稿关 thinking + JSON 失败分类
 
 - `generate_report_payload` 终稿改为 `thinking=False`，去掉 `reasoning_effort`；终稿提示增加精炼输出目标；`REPORT_PROMPT_VERSION` 升至 `novel-report-v3`。

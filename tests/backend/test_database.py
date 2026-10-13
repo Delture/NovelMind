@@ -164,6 +164,7 @@ def test_init_db_builds_and_versions_fresh_schema_idempotently() -> None:
         (11, "explicit character appearance ownership"),
         (12, "normalize workflow timestamps"),
         (13, "allow chapter review job type"),
+        (14, "add rag build checkpoint table"),
             ]
 
 
@@ -220,7 +221,7 @@ def test_migration_adds_unique_index_to_legacy_database() -> None:
         and index["unique"]
         for index in indexes
     )
-    assert version_count == 13
+    assert version_count == 14
 
 
 def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
@@ -288,7 +289,7 @@ def test_analysis_migration_creates_tables_for_legacy_schema() -> None:
     assert job_indexes[
         "ix_analysis_jobs_novel_type_created"
     ]["column_names"] == ["novel_id", "job_type", "created_at"]
-    assert versions == list(range(1, 14))
+    assert versions == list(range(1, 15))
 
 
 def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
@@ -404,7 +405,7 @@ def test_v3_upgrades_an_existing_v2_analysis_job_table() -> None:
     assert indexes["ux_analysis_jobs_active_novel_type"]["unique"]
     assert columns["force_refresh"]["nullable"] is False
     assert str(columns["force_refresh"]["default"]).strip("()'") == "0"
-    assert versions == list(range(1, 14))
+    assert versions == list(range(1, 15))
 
 
 def test_active_job_migration_rejects_duplicate_active_jobs() -> None:
@@ -1000,8 +1001,8 @@ def test_v5_upgrades_v4_with_strict_character_snapshot_schema() -> None:
         False,
     )
     assert (5, "add character analysis snapshots") in versions
-    assert versions[-1] == (13, "allow chapter review job type")
-    assert len(versions) == 13
+    assert versions[-1] == (14, "add rag build checkpoint table")
+    assert len(versions) == 14
     assert legacy_rows == {
         "novels": 1,
         "chapters": 1,

@@ -1,5 +1,5 @@
 """只发送缺失块；向量先写入新集合，数量验证成功后才在主 SQLite 事务中替换 RagIndex/RagChunkRecord。
-失败会删除未启用集合并保留旧快照。
+成功批次由构建检查点保留，暂时失败后可只续嵌缺失 chunk IDs。
 """
 
 import logging
@@ -19,7 +19,7 @@ from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.analysis import AnalysisJob
 from backend.app.models.novel import Chapter, Novel
-from backend.app.models.rag import RagChunkRecord, RagIndex
+from backend.app.models.rag import RagBuildCheckpoint, RagChunkRecord, RagIndex
 from backend.app.rag.chunking import (
     CHUNK_FORMAT_VERSION,
     RagChunk,
@@ -29,13 +29,25 @@ from backend.app.rag.chunking import (
 from backend.app.rag.embedding import (
     EmbeddingProvider,
     EmbeddingProviderError,
+    EmbeddingUnavailableError,
     MAX_EMBEDDING_BATCH_SIZE,
 )
-from backend.app.rag.vector_store import VectorSearchHit
+from backend.app.rag.vector_store import (
+    VectorCollectionNotFoundError,
+    VectorSearchHit,
+)
 
 
 logger = logging.getLogger(__name__)
 _CACHE_READ_BATCH_SIZE = 500
+
+def _is_transient_vector_store_error(error: BaseException) -> bool:
+    """Vector store SQLite locks should keep the checkpoint for resume."""
+    if isinstance(error, OperationalError) and is_sqlite_lock_error(error):
+        return True
+    message = str(error).casefold()
+    return "locked" in message or "busy" in message
+
 
 
 class RagIndexBuildError(RuntimeError):
@@ -147,7 +159,6 @@ def _claim_job(db: Session, job_id: str) -> bool:
     return claim_analysis_job(db, job_id, "rag_index", utc_now()) == 1
 
 
-# 模型、维度、分块协议和内容哈希全部一致时，旧向量才可安全复用。
 def _valid_cached_vector(
     vector: Sequence[float],
     *,
@@ -163,6 +174,50 @@ def _valid_cached_vector(
 def _embedding_provider_id(provider: EmbeddingProvider) -> str:
     value = getattr(provider, "provider_id", "openai_compatible")
     return str(value)
+
+
+def protocol_matches(
+    *,
+    embedding_provider: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+    chunk_version: str,
+    source_hash: str,
+    provider: EmbeddingProvider,
+    expected_source_hash: str,
+) -> bool:
+    return (
+        embedding_provider == _embedding_provider_id(provider)
+        and embedding_model == provider.model
+        and embedding_dimensions == provider.dimensions
+        and chunk_version == CHUNK_FORMAT_VERSION
+        and source_hash == expected_source_hash
+    )
+
+
+def load_valid_vectors_by_ids(
+    *,
+    vector_store: VectorStore,
+    collection_name: str,
+    chunk_ids: Sequence[str],
+    dimensions: int,
+) -> dict[str, tuple[float, ...]]:
+    """Only IDs that exist on disk with valid vectors count as completed."""
+    cached: dict[str, tuple[float, ...]] = {}
+    for offset in range(0, len(chunk_ids), _CACHE_READ_BATCH_SIZE):
+        batch_ids = list(chunk_ids[offset:offset + _CACHE_READ_BATCH_SIZE])
+        batch = vector_store.get_embeddings(
+            collection_name=collection_name,
+            ids=batch_ids,
+        )
+        cached.update(
+            {
+                chunk_id: vector
+                for chunk_id, vector in batch.items()
+                if _valid_cached_vector(vector, dimensions=dimensions)
+            }
+        )
+    return cached
 
 
 def _load_cached_vectors(
@@ -184,34 +239,19 @@ def _load_cached_vectors(
     ):
         return {}
 
-    cached: dict[str, tuple[float, ...]] = {}
-    for offset in range(0, len(chunks), _CACHE_READ_BATCH_SIZE):
-        ids = [
-            chunk.chunk_id
-            for chunk in chunks[offset:offset + _CACHE_READ_BATCH_SIZE]
-        ]
-        try:
-            batch = vector_store.get_embeddings(
-                collection_name=current.collection_name,
-                ids=ids,
-            )
-        except Exception:
-            logger.warning(
-                "Could not reuse vectors from current RAG collection; "
-                "missing chunks will be embedded again.",
-            )
-            return {}
-        cached.update(
-            {
-                chunk_id: vector
-                for chunk_id, vector in batch.items()
-                if _valid_cached_vector(
-                    vector,
-                    dimensions=provider.dimensions,
-                )
-            }
+    try:
+        return load_valid_vectors_by_ids(
+            vector_store=vector_store,
+            collection_name=current.collection_name,
+            chunk_ids=[chunk.chunk_id for chunk in chunks],
+            dimensions=provider.dimensions,
         )
-    return cached
+    except Exception:
+        logger.warning(
+            "Could not reuse vectors from current RAG collection; "
+            "missing chunks will be embedded again.",
+        )
+        return {}
 
 
 def _persist_progress(
@@ -261,6 +301,33 @@ def _collection_name(
         f"novelmind_n{novel_id}_{source_hash[:12]}_"
         f"{job_id.replace('-', '')[:12]}"
     )
+
+
+def _discard_checkpoint(
+    db: Session,
+    vector_store: VectorStore,
+    checkpoint: Optional[RagBuildCheckpoint],
+) -> None:
+    if checkpoint is None:
+        return
+    collection_name = checkpoint.collection_name
+    db.delete(checkpoint)
+    db.commit()
+    _safe_delete_collection(vector_store, collection_name)
+
+
+def _ensure_collection(vector_store: VectorStore, name: str) -> None:
+    try:
+        vector_store.collection_count(name)
+    except VectorCollectionNotFoundError:
+        vector_store.create_collection(name)
+    except KeyError:
+        # In-memory fakes may raise KeyError for a missing collection.
+        vector_store.create_collection(name)
+    except Exception as error:
+        if _is_transient_vector_store_error(error):
+            raise EmbeddingUnavailableError() from error
+        raise
 
 
 # 主库指针和 chunk 定位在同一事务中切换，避免读到半套索引。
@@ -327,6 +394,11 @@ def _replace_current_snapshot(
             for chunk in chunks
         ]
     )
+    (
+        db.query(RagBuildCheckpoint)
+        .filter(RagBuildCheckpoint.novel_id == novel_id)
+        .delete(synchronize_session=False)
+    )
     updated_job = (
         db.query(AnalysisJob)
         .filter(
@@ -385,7 +457,9 @@ def run_rag_index_job(
     vector_store: VectorStore,
     session_factory: Callable[[], Session],
 ) -> None:
-    new_collection: Optional[str] = None
+    # None until a checkpoint row is committed; then finally must not delete it
+    # on transient failure.
+    registered_collection: Optional[str] = None
     novel_id: Optional[int] = None
     try:
         with session_factory() as db:
@@ -446,6 +520,12 @@ def run_rag_index_job(
                 .filter(RagIndex.novel_id == novel_id)
                 .one_or_none()
             )
+            checkpoint = (
+                db.query(RagBuildCheckpoint)
+                .filter(RagBuildCheckpoint.novel_id == novel_id)
+                .one_or_none()
+            )
+
             if (
                 not force_refresh
                 and current is not None
@@ -464,12 +544,67 @@ def run_rag_index_job(
                 except Exception:
                     verified_count = -1
                 if verified_count == len(chunks):
+                    if checkpoint is not None:
+                        _discard_checkpoint(db, vector_store, checkpoint)
                     _mark_unchanged_succeeded(
                         db,
                         job_id=job_id,
                         chunk_count=len(chunks),
                     )
                     return
+
+            checkpoint_compatible = (
+                checkpoint is not None
+                and not force_refresh
+                and protocol_matches(
+                    embedding_provider=checkpoint.embedding_provider,
+                    embedding_model=checkpoint.embedding_model,
+                    embedding_dimensions=checkpoint.embedding_dimensions,
+                    chunk_version=checkpoint.chunk_version,
+                    source_hash=checkpoint.source_hash,
+                    provider=provider,
+                    expected_source_hash=source_hash,
+                )
+            )
+            if checkpoint is not None and not checkpoint_compatible:
+                _discard_checkpoint(db, vector_store, checkpoint)
+                checkpoint = None
+
+            completed: dict[str, tuple[float, ...]] = {}
+            if checkpoint_compatible and checkpoint is not None:
+                registered_collection = checkpoint.collection_name
+                try:
+                    completed = load_valid_vectors_by_ids(
+                        vector_store=vector_store,
+                        collection_name=registered_collection,
+                        chunk_ids=[chunk.chunk_id for chunk in chunks],
+                        dimensions=provider.dimensions,
+                    )
+                except Exception as error:
+                    if _is_transient_vector_store_error(error):
+                        raise EmbeddingUnavailableError() from error
+                    raise RagIndexBuildError(
+                        "无法读取构建检查点中的向量，请强制重建索引。"
+                    ) from error
+            else:
+                registered_collection = _collection_name(
+                    novel_id=novel_id,
+                    source_hash=source_hash,
+                    job_id=job_id,
+                )
+                checkpoint = RagBuildCheckpoint(
+                    novel_id=novel_id,
+                    source_hash=source_hash,
+                    collection_name=registered_collection,
+                    embedding_provider=_embedding_provider_id(provider),
+                    embedding_model=provider.model,
+                    embedding_dimensions=provider.dimensions,
+                    chunk_version=CHUNK_FORMAT_VERSION,
+                )
+                db.add(checkpoint)
+                db.commit()
+
+            _ensure_collection(vector_store, registered_collection)
 
             cached = _load_cached_vectors(
                 vector_store=vector_store,
@@ -478,20 +613,14 @@ def run_rag_index_job(
                 provider=provider,
                 force_refresh=force_refresh,
             )
-            new_collection = _collection_name(
-                novel_id=novel_id,
-                source_hash=source_hash,
-                job_id=job_id,
-            )
-            vector_store.create_collection(new_collection)
             _persist_progress(
                 db,
                 job_id=job_id,
-                current=0,
+                current=len(completed),
                 total=len(chunks),
             )
 
-            processed = 0
+            processed = len(completed)
             for offset in range(
                 0,
                 len(chunks),
@@ -505,9 +634,24 @@ def run_rag_index_job(
                 batch = chunks[
                     offset:offset + MAX_EMBEDDING_BATCH_SIZE
                 ]
-                missing = [
+                pending = [
                     chunk
                     for chunk in batch
+                    if chunk.chunk_id not in completed
+                ]
+                if not pending:
+                    processed = max(processed, offset + len(batch))
+                    _persist_progress(
+                        db,
+                        job_id=job_id,
+                        current=processed,
+                        total=len(chunks),
+                    )
+                    continue
+
+                missing = [
+                    chunk
+                    for chunk in pending
                     if chunk.chunk_id not in cached
                 ]
                 generated: dict[str, tuple[float, ...]] = {}
@@ -529,13 +673,14 @@ def run_rag_index_job(
                         )
                     }
                 vectors = [
-                    cached.get(chunk.chunk_id)
+                    completed.get(chunk.chunk_id)
+                    or cached.get(chunk.chunk_id)
                     or generated[chunk.chunk_id]
-                    for chunk in batch
+                    for chunk in pending
                 ]
                 vector_store.upsert(
-                    collection_name=new_collection,
-                    ids=[chunk.chunk_id for chunk in batch],
+                    collection_name=registered_collection,
+                    ids=[chunk.chunk_id for chunk in pending],
                     embeddings=vectors,
                     metadatas=[
                         {
@@ -546,10 +691,12 @@ def run_rag_index_job(
                             "end_char": chunk.end_char,
                             "content_hash": chunk.content_hash,
                         }
-                        for chunk in batch
+                        for chunk in pending
                     ],
                 )
-                processed += len(batch)
+                for chunk, vector in zip(pending, vectors, strict=True):
+                    completed[chunk.chunk_id] = tuple(vector)
+                processed = len(completed)
                 _persist_progress(
                     db,
                     job_id=job_id,
@@ -557,7 +704,27 @@ def run_rag_index_job(
                     total=len(chunks),
                 )
 
-            if vector_store.collection_count(new_collection) != len(chunks):
+            expected_ids = [chunk.chunk_id for chunk in chunks]
+            try:
+                on_disk = load_valid_vectors_by_ids(
+                    vector_store=vector_store,
+                    collection_name=registered_collection,
+                    chunk_ids=expected_ids,
+                    dimensions=provider.dimensions,
+                )
+            except Exception as error:
+                if _is_transient_vector_store_error(error):
+                    raise EmbeddingUnavailableError() from error
+                raise RagIndexBuildError(
+                    "本地向量集合校验失败，旧索引已保留。"
+                ) from error
+            if set(on_disk) != set(expected_ids):
+                raise RagIndexBuildError(
+                    "本地向量集合校验失败，旧索引已保留。"
+                )
+            if vector_store.collection_count(registered_collection) != len(
+                chunks
+            ):
                 raise RagIndexBuildError(
                     "本地向量集合校验失败，旧索引已保留。"
                 )
@@ -571,12 +738,12 @@ def run_rag_index_job(
                 job_id=job_id,
                 novel_id=novel_id,
                 source_hash=source_hash,
-                collection_name=new_collection,
+                collection_name=registered_collection,
                 chunks=chunks,
                 provider=provider,
             )
-            committed_collection = new_collection
-            new_collection = None
+            committed_collection = registered_collection
+            registered_collection = None
             if old_collection != committed_collection:
                 _safe_delete_collection(vector_store, old_collection)
     except _RagIndexJobCancelled:
@@ -585,20 +752,48 @@ def run_rag_index_job(
             "was removed.",
             job_id,
         )
+        if registered_collection is not None and novel_id is not None:
+            with session_factory() as db:
+                checkpoint = (
+                    db.query(RagBuildCheckpoint)
+                    .filter(RagBuildCheckpoint.novel_id == novel_id)
+                    .one_or_none()
+                )
+                _discard_checkpoint(db, vector_store, checkpoint)
+            registered_collection = None
     except Exception as error:
         if not isinstance(
             error,
             (EmbeddingProviderError, RagIndexBuildError),
         ):
             logger.exception("Unexpected RAG index job failure.")
-        error_message = (
-            str(error)
-            if isinstance(
-                error,
-                (EmbeddingProviderError, RagIndexBuildError),
+        retryable = (
+            (
+                isinstance(error, EmbeddingProviderError)
+                and bool(error.retryable)
             )
-            else "RAG 索引任务执行失败，请查看后端日志后重试。"
-        )[:1_000]
+            or _is_transient_vector_store_error(error)
+        )
+        if (
+            not retryable
+            and registered_collection is not None
+            and novel_id is not None
+        ):
+            with session_factory() as db:
+                checkpoint = (
+                    db.query(RagBuildCheckpoint)
+                    .filter(RagBuildCheckpoint.novel_id == novel_id)
+                    .one_or_none()
+                )
+                _discard_checkpoint(db, vector_store, checkpoint)
+            registered_collection = None
+        if isinstance(error, (EmbeddingProviderError, RagIndexBuildError)):
+            error_message = str(error)
+        elif _is_transient_vector_store_error(error):
+            error_message = str(EmbeddingUnavailableError())
+        else:
+            error_message = "RAG 索引任务执行失败，请查看后端日志后重试。"
+        error_message = error_message[:1_000]
         mark_analysis_job_failed_with_sqlite_lock_retry(
             session_factory,
             job_id,
@@ -608,5 +803,4 @@ def run_rag_index_job(
             failure_context="execution failure",
         )
     finally:
-        _safe_delete_collection(vector_store, new_collection)
         _close_embedding_provider(provider)

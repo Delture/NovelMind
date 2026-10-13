@@ -171,6 +171,60 @@ class RagChunkRecord(Base):
     chapter: Mapped["Chapter"] = relationship("Chapter", back_populates="rag_chunks")
 
 
+
+class RagBuildCheckpoint(Base):
+    """In-progress build identity; disk vectors are proof of completed batches."""
+
+    __tablename__ = "rag_build_checkpoints"
+    __table_args__ = (
+        UniqueConstraint(
+            "novel_id",
+            name="uq_rag_build_checkpoints_novel_id",
+        ),
+        UniqueConstraint(
+            "collection_name",
+            name="uq_rag_build_checkpoints_collection_name",
+        ),
+        CheckConstraint(
+            "length(source_hash) = 64",
+            name="ck_rag_build_checkpoints_source_hash",
+        ),
+        CheckConstraint(
+            "length(trim(collection_name)) > 0",
+            name="ck_rag_build_checkpoints_collection_name",
+        ),
+        CheckConstraint(
+            "length(trim(embedding_provider)) BETWEEN 1 AND 50",
+            name="ck_rag_build_checkpoints_embedding_provider",
+        ),
+        CheckConstraint(
+            "length(trim(embedding_model)) BETWEEN 1 AND 100",
+            name="ck_rag_build_checkpoints_embedding_model",
+        ),
+        CheckConstraint(
+            "embedding_dimensions BETWEEN 1 AND 8192",
+            name="ck_rag_build_checkpoints_embedding_dimensions",
+        ),
+        CheckConstraint(
+            "length(trim(chunk_version)) > 0",
+            name="ck_rag_build_checkpoints_chunk_version",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    novel_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("novels.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    collection_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    chunk_version: Mapped[str] = mapped_column(String(50), nullable=False)
+
+
 class RagQuestion(Base):
     __tablename__ = "rag_questions"
     __table_args__ = (

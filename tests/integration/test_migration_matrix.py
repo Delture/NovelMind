@@ -71,7 +71,7 @@ def test_v1_through_v9_upgrade_preserves_data_and_cascade(isolated_config, versi
         assert rows(engine) == upgraded
         assert schema(engine) == first_schema
         with engine.begin() as connection:
-            assert connection.exec_driver_sql("SELECT version FROM schema_migrations ORDER BY version").scalars().all() == list(range(1,14))
+            assert connection.exec_driver_sql("SELECT version FROM schema_migrations ORDER BY version").scalars().all() == list(range(1,15))
             assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
             assert connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_character_appearances_fill_ownership'").all() == []
             for key in (1,2):
@@ -103,7 +103,7 @@ def test_new_v11_database_reinitializes_without_schema_changes(isolated_config):
         assert columns["analysis_id"]["default"] is None
         assert columns["novel_id"]["default"] is None
         with engine.connect() as connection:
-            assert connection.exec_driver_sql("SELECT max(version),count(*) FROM schema_migrations").one() == (13,13)
+            assert connection.exec_driver_sql("SELECT max(version),count(*) FROM schema_migrations").one() == (14,14)
     finally:
         engine.dispose()
 
