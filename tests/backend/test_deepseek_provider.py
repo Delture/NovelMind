@@ -1,4 +1,5 @@
 
+import asyncio
 import json
 import logging
 from dataclasses import replace
@@ -10,6 +11,7 @@ from pydantic import BaseModel
 
 from backend.app.analyzer.deepseek import (
     MAX_JSON_GENERATION_ATTEMPTS,
+    AsyncDeepSeekProvider,
     DeepSeekProvider,
 )
 from backend.app.analyzer.llm import (
@@ -179,7 +181,9 @@ def test_non_thinking_json_request_wire_contract_and_usage() -> None:
     assert "reasoning_content" not in result.__dict__
 
 
-def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
+def test_empty_and_invalid_json_are_retried_twice_then_succeed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     responses = [
         completion_response("  "),
         completion_response("{not-json"),
@@ -195,16 +199,27 @@ def test_empty_and_invalid_json_are_retried_twice_then_succeed() -> None:
         return response
 
     provider = make_provider(handler, sleeps=sleeps)
-    result = provider.generate_json(
-        system_prompt="Return JSON.",
-        user_prompt="Analyze.",
-        response_model=AnalysisPayload,
-    )
+    with caplog.at_level(logging.WARNING, logger="backend.app.analyzer.deepseek"):
+        result = provider.generate_json(
+            system_prompt="Return JSON.",
+            user_prompt="Analyze.",
+            response_model=AnalysisPayload,
+        )
 
     assert MAX_JSON_GENERATION_ATTEMPTS == 5
     assert calls == 3
     assert sleeps == []
     assert result.value.summary == "valid"
+    categories = [
+        record.getMessage()
+        for record in caplog.records
+        if "json_generation_failed" in record.getMessage()
+    ]
+    assert len(categories) == 2
+    assert "category=empty" in categories[0]
+    assert "semantic_attempt=1/5" in categories[0]
+    assert "category=json" in categories[1]
+    assert "semantic_attempt=2/5" in categories[1]
 
 
 def test_before_attempt_can_stop_semantic_retries() -> None:
@@ -426,28 +441,44 @@ def test_terminal_finish_reasons_are_not_semantically_retried(
     finish_reason: str,
 ) -> None:
     calls = 0
+    sleeps: List[float] = []
 
     def handler(_: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
         return completion_response(None, finish_reason=finish_reason)
 
-    provider = make_provider(handler)
-    with pytest.raises(ProviderResponseError):
+    provider = make_provider(handler, sleeps=sleeps)
+    with pytest.raises(ProviderResponseError) as captured:
         provider.generate_json(
             system_prompt="Return JSON.",
             user_prompt="Analyze.",
             response_model=AnalysisPayload,
         )
     assert calls == 1
+    assert sleeps == []
+    if finish_reason == "length":
+        assert captured.value.category == "length"
+        assert "输出上限" in str(captured.value)
+    else:
+        assert captured.value.category == "finish"
+        assert "无法解析" in str(captured.value)
 
 
 @pytest.mark.parametrize(
-    "invalid_content",
-    [None, "", "{not-json", "[]", '{"summary":1,"characters":[]}'],
+    ("invalid_content", "expected_category"),
+    [
+        (None, "empty"),
+        ("", "empty"),
+        ("   ", "empty"),
+        ("{not-json", "json"),
+        ("[]", "pydantic"),
+        ('{"summary":1,"characters":[]}', "pydantic"),
+    ],
 )
 def test_semantic_failures_stop_at_retry_limit(
     invalid_content: Optional[str],
+    expected_category: str,
 ) -> None:
     calls = 0
 
@@ -464,6 +495,7 @@ def test_semantic_failures_stop_at_retry_limit(
             response_model=AnalysisPayload,
         )
     assert calls == MAX_JSON_GENERATION_ATTEMPTS
+    assert captured.value.category == expected_category
     message = str(captured.value)
     assert "sensitive novel prompt" not in message
     assert "sensitive chapter text" not in message
@@ -499,3 +531,317 @@ def test_before_attempt_can_stop_network_retries() -> None:
     assert calls == 1
     assert checks == 2
 
+
+
+def test_provider_response_error_preserves_default_contract() -> None:
+    default = ProviderResponseError()
+    assert default.category == "invalid"
+    assert default.code == "provider_response_invalid"
+    assert default.retryable is False
+    assert "无法解析" in str(default)
+
+    length = ProviderResponseError(category="length")
+    assert length.category == "length"
+    assert length.code == "provider_response_invalid"
+    assert length.retryable is False
+    assert "输出上限" in str(length)
+
+
+def test_pydantic_failure_is_retried_then_succeeds() -> None:
+    responses = [
+        completion_response('{"summary":1,"characters":[]}'),
+        completion_response('{"summary":"ok","characters":["Lin"]}'),
+    ]
+    calls = 0
+    payloads: List[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        payloads.append(json.loads(request.content.decode("utf-8")))
+        response = responses[calls]
+        calls += 1
+        return response
+
+    provider = make_provider(handler)
+    result = provider.generate_json(
+        system_prompt="Return JSON.",
+        user_prompt="Analyze.",
+        response_model=AnalysisPayload,
+    )
+    assert calls == 2
+    assert result.value.summary == "ok"
+    assert len(payloads[1]["messages"]) == 3
+    assert "未通过字段校验" in payloads[1]["messages"][2]["content"]
+
+
+def test_length_response_is_rejected_even_with_valid_json() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(
+            '{"summary":"ok","characters":[]}',
+            finish_reason="length",
+        )
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderResponseError) as captured:
+        provider.generate_json(
+            system_prompt="Return JSON.",
+            user_prompt="Analyze.",
+            response_model=AnalysisPayload,
+        )
+    assert calls == 1
+    assert captured.value.category == "length"
+    assert "输出上限" in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "expected_category"),
+    [
+        (None, "length", "length"),
+        ("  ", "stop", "empty"),
+        ("{not-json", "stop", "json"),
+        ("[]", "stop", "pydantic"),
+        (None, "content_filter", "finish"),
+    ],
+)
+def test_json_failure_logs_and_errors_do_not_expose_content(
+    content: Optional[str],
+    finish_reason: str,
+    expected_category: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return completion_response(content, finish_reason=finish_reason)
+
+    provider = make_provider(handler)
+    with caplog.at_level(logging.WARNING, logger="backend.app.analyzer.deepseek"):
+        with pytest.raises(ProviderResponseError) as captured:
+            provider.generate_json(
+                system_prompt="SECRET_SYSTEM_PROMPT",
+                user_prompt="SECRET_USER_PROMPT deepseek-test-key",
+                response_model=AnalysisPayload,
+            )
+
+    assert captured.value.category == expected_category
+    combined = caplog.text + str(captured.value)
+    assert "SECRET_SYSTEM_PROMPT" not in combined
+    assert "SECRET_USER_PROMPT" not in combined
+    assert "deepseek-test-key" not in combined
+    assert "private chain of thought" not in combined
+    assert f"category={expected_category}" in caplog.text
+    assert "prompt_tokens=" in caplog.text
+    assert "completion_tokens=" in caplog.text
+    assert "max_tokens=" in caplog.text
+
+
+def _make_async_provider(
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> AsyncDeepSeekProvider:
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return AsyncDeepSeekProvider(
+        make_settings(),
+        http_client=http_client,
+        sleep=lambda _: asyncio.sleep(0),
+        random=lambda: 0.25,
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "finish_reason", "expected_category", "expected_calls"),
+    [
+        (None, "length", "length", 1),
+        (None, "content_filter", "finish", 1),
+        ("  ", "stop", "empty", MAX_JSON_GENERATION_ATTEMPTS),
+        ("{not-json", "stop", "json", MAX_JSON_GENERATION_ATTEMPTS),
+        ("[]", "stop", "pydantic", MAX_JSON_GENERATION_ATTEMPTS),
+    ],
+)
+def test_async_json_failures_preserve_retry_semantics(
+    content: Optional[str],
+    finish_reason: str,
+    expected_category: str,
+    expected_calls: int,
+) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return completion_response(content, finish_reason=finish_reason)
+
+    async def run() -> None:
+        provider = _make_async_provider(handler)
+        try:
+            with pytest.raises(ProviderResponseError) as captured:
+                await provider.generate_json_async(
+                    system_prompt="Return JSON.",
+                    user_prompt="Analyze.",
+                    response_model=AnalysisPayload,
+                )
+            assert captured.value.category == expected_category
+            if expected_category == "length":
+                assert "输出上限" in str(captured.value)
+            else:
+                assert "无法解析" in str(captured.value)
+        finally:
+            await provider.aclose()
+
+    asyncio.run(run())
+    assert calls == expected_calls
+
+
+def test_async_json_validation_failure_then_success() -> None:
+    responses = [
+        completion_response("  "),
+        completion_response("{not-json"),
+        completion_response('{"summary":1,"characters":[]}'),
+        completion_response('{"summary":"ok","characters":[]}'),
+    ]
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        response = responses[calls]
+        calls += 1
+        return response
+
+    async def run() -> AnalysisPayload:
+        provider = _make_async_provider(handler)
+        try:
+            result = await provider.generate_json_async(
+                system_prompt="Return JSON.",
+                user_prompt="Analyze.",
+                response_model=AnalysisPayload,
+            )
+            return result.value
+        finally:
+            await provider.aclose()
+
+    value = asyncio.run(run())
+    assert calls == 4
+    assert value.summary == "ok"
+
+
+def _completion_with_usage(
+    content: Optional[str] = None,
+    *,
+    finish_reason: str = "stop",
+    prompt_tokens: object = 17,
+    completion_tokens: object = 9,
+) -> httpx.Response:
+    return httpx.Response(
+        200,
+        headers={"x-request-id": "request-test-123"},
+        json={
+            "id": "completion-test-123",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "deepseek-v4-pro",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": finish_reason,
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                        "reasoning_content": (
+                            "private chain of thought must never escape"
+                        ),
+                    },
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": 26,
+            },
+        },
+    )
+
+
+def test_malformed_usage_does_not_break_failure_classification(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _completion_with_usage(
+            "{not-json",
+            prompt_tokens="INVALID_USAGE_SENTINEL",
+            completion_tokens="ALSO_BAD",
+        )
+
+    provider = make_provider(handler)
+    with caplog.at_level(logging.WARNING, logger="backend.app.analyzer.deepseek"):
+        with pytest.raises(ProviderResponseError) as captured:
+            provider.generate_json(
+                system_prompt="Return JSON.",
+                user_prompt="Analyze.",
+                response_model=AnalysisPayload,
+            )
+    assert calls == MAX_JSON_GENERATION_ATTEMPTS
+    assert captured.value.category == "json"
+    assert "INVALID_USAGE_SENTINEL" not in caplog.text
+    assert "ALSO_BAD" not in str(captured.value)
+    assert "prompt_tokens=0" in caplog.text
+    assert "completion_tokens=0" in caplog.text
+
+
+def test_async_malformed_usage_preserves_length_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _completion_with_usage(
+            '{"summary":"ok","characters":[]}',
+            finish_reason="length",
+            prompt_tokens="INVALID_USAGE_SENTINEL",
+        )
+
+    async def run() -> None:
+        provider = _make_async_provider(handler)
+        try:
+            with pytest.raises(ProviderResponseError) as captured:
+                await provider.generate_json_async(
+                    system_prompt="Return JSON.",
+                    user_prompt="Analyze.",
+                    response_model=AnalysisPayload,
+                )
+            assert captured.value.category == "length"
+            assert "输出上限" in str(captured.value)
+            assert "INVALID_USAGE_SENTINEL" not in str(captured.value)
+        finally:
+            await provider.aclose()
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.analyzer.deepseek"):
+        asyncio.run(run())
+    assert calls == 1
+    assert "INVALID_USAGE_SENTINEL" not in caplog.text
+    assert "finish_reason=length" in caplog.text
+
+
+def test_unknown_finish_reason_logs_as_other(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return completion_response(None, finish_reason="weird_provider_reason")
+
+    provider = make_provider(handler)
+    with caplog.at_level(logging.WARNING, logger="backend.app.analyzer.deepseek"):
+        with pytest.raises(ProviderResponseError) as captured:
+            provider.generate_json(
+                system_prompt="Return JSON.",
+                user_prompt="Analyze.",
+                response_model=AnalysisPayload,
+            )
+    assert captured.value.category == "finish"
+    assert "finish_reason=other" in caplog.text
+    assert "weird_provider_reason" not in caplog.text

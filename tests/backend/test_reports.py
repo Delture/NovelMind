@@ -216,8 +216,10 @@ def test_report_generation_uses_only_derived_text_and_external_calls(
     assert "派生摘要，不是小说原文" in all_system_prompts
     assert "不能可靠评价原文句式" in all_system_prompts
     assert "可选数组没有可靠内容时返回空数组" in all_system_prompts
-    assert provider.calls[-1]["thinking"] is True
-    assert provider.calls[-1]["reasoning_effort"] == "high"
+    assert "输出精炼" in all_prompts
+    assert "目标不超过 300 字" in all_prompts
+    assert provider.calls[-1]["thinking"] is False
+    assert provider.calls[-1]["reasoning_effort"] is None
 
 
 def test_report_generation_rejects_invented_chapter_citations(
@@ -420,3 +422,37 @@ def test_novel_report_constraints_and_delete_cascade(
         db.delete(novel)
         db.commit()
         assert db.query(NovelReport).count() == 0
+
+def test_old_report_prompt_version_is_stale_but_preserved(
+    session_factory,
+) -> None:
+    settings = configured_settings()
+    with session_factory() as db:
+        novel = add_novel_with_summaries(db)
+        source = prepare_report_source(
+            db,
+            novel_id=novel.id,
+            expected_model=settings.deepseek_model,
+        )
+        saved = NovelReport(
+            novel_id=novel.id,
+            source_hash=source.source_hash,
+            report_data=report_payload().model_dump(mode="json"),
+            model=settings.deepseek_model,
+            prompt_version="novel-report-v2",
+            summary_count=2,
+            character_count=0,
+            generation_steps=2,
+            includes_character_analysis=False,
+        )
+        db.add(saved)
+        db.commit()
+        stale = get_report(
+            novel_id=novel.id,
+            settings=settings,
+            db=db,
+        )
+        assert stale.up_to_date is False
+        assert stale.report.title == "全书分析报告"
+        assert stale.prompt_version == "novel-report-v2"
+        assert db.query(NovelReport).count() == 1

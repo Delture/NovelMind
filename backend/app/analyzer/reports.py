@@ -62,7 +62,7 @@ from backend.app.models.report import NovelReport
 
 logger = logging.getLogger(__name__)
 
-REPORT_PROMPT_VERSION = "novel-report-v2"
+REPORT_PROMPT_VERSION = "novel-report-v3"
 MAX_REPORT_BATCH_CHARACTERS = 46_000
 MAX_REPORT_FINAL_INPUT_CHARACTERS = 60_000
 REPORT_REDUCTION_GROUP_SIZE = 3
@@ -694,13 +694,15 @@ def generate_report_payload(
             "每个对象只含 title、analysis、evidence_chapter_indices。"
             "recommendations.analysis 必须写明对象/阶段、根因、具体操作、"
             "预期效果、代价或风险与完成判据；引用触发该建议的关键章节。"
+            "输出精炼：每个 analysis 用短段表达，目标不超过 300 字；可选"
+            "数组每类最多列 3 项，无可靠内容时为空数组；每项仅引用 1—5 "
+            "个最关键的支持章节，避免跨字段重复复述。"
             "character_analysis_included=false 时，character_dynamics "
             "只能依据 evidence_notes，并在 analysis 中明确这一限制：\n"
             f"{_canonical_json(final_input)}"
         ),
         response_model=NovelReportPayload,
-        thinking=True,
-        reasoning_effort="high",
+        thinking=False,
         before_attempt=partial(
             _ensure_can_continue,
             should_continue,

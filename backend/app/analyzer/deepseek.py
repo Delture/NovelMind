@@ -46,6 +46,10 @@ _SENSITIVE_SDK_LOGGERS = (
     "httpx",
     "httpcore",
 )
+_SAFE_FINISH_REASONS = frozenset(
+    {"length", "content_filter", "tool_calls", "stop", "other"}
+)
+logger = logging.getLogger(__name__)
 
 
 def _strip_json_fence(content: str) -> str:
@@ -78,21 +82,28 @@ def _validation_feedback(error: ValidationError) -> str:
 def _validate_json_content(
     content: object,
     response_model: Type[T],
-) -> tuple[Optional[T], str]:
+) -> tuple[Optional[T], str, Optional[str]]:
     if not isinstance(content, str) or not content.strip():
-        return None, "上一次输出为空。"
+        return None, "上一次输出为空。", "empty"
     try:
         decoded = json.loads(_strip_json_fence(content))
     except (json.JSONDecodeError, TypeError):
-        return None, "上一次输出不是有效的 JSON 对象。"
+        return None, "上一次输出不是有效的 JSON 对象。", "json"
     try:
-        return response_model.model_validate(decoded), ""
+        return response_model.model_validate(decoded), "", None
     except ValidationError as error:
         return (
             None,
             "上一次输出未通过字段校验（"
             f"{_validation_feedback(error)}）。",
+            "pydantic",
         )
+
+
+def _safe_finish_reason(finish_reason: object) -> str:
+    if isinstance(finish_reason, str) and finish_reason in _SAFE_FINISH_REASONS:
+        return finish_reason
+    return "other"
 
 
 def _append_semantic_retry_feedback(
@@ -187,20 +198,39 @@ class DeepSeekProvider:
             )
             choice = self._first_choice(response)
             finish_reason = choice.finish_reason
-            if finish_reason in _TERMINAL_FINISH_REASONS:
-                raise ProviderResponseError()
-            if finish_reason != "stop":
-                raise ProviderResponseError()
+            if finish_reason == "length":
+                self._log_json_failure(
+                    category="length",
+                    semantic_attempt=semantic_attempt + 1,
+                    finish_reason=finish_reason,
+                    response=response,
+                )
+                raise ProviderResponseError(category="length")
+            if finish_reason in _TERMINAL_FINISH_REASONS or finish_reason != "stop":
+                self._log_json_failure(
+                    category="finish",
+                    semantic_attempt=semantic_attempt + 1,
+                    finish_reason=finish_reason,
+                    response=response,
+                )
+                raise ProviderResponseError(category="finish")
 
-            value, feedback = _validate_json_content(
+            value, feedback, failure_category = _validate_json_content(
                 choice.message.content,
                 response_model,
             )
             if value is not None:
                 return self._build_result(response, value)
 
+            assert failure_category is not None
+            self._log_json_failure(
+                category=failure_category,
+                semantic_attempt=semantic_attempt + 1,
+                finish_reason=finish_reason,
+                response=response,
+            )
             if semantic_attempt == MAX_JSON_GENERATION_ATTEMPTS - 1:
-                raise ProviderResponseError()
+                raise ProviderResponseError(category=failure_category)
             _append_semantic_retry_feedback(messages, feedback)
 
         raise ProviderResponseError()
@@ -314,6 +344,29 @@ class DeepSeekProvider:
         jitter = max(0.0, min(float(self._random()), 1.0))
         self._sleep(exponential + jitter)
 
+    def _log_json_failure(
+        self,
+        *,
+        category: str,
+        semantic_attempt: int,
+        finish_reason: object,
+        response,
+    ) -> None:
+        usage = getattr(response, "usage", None)
+        logger.warning(
+            "json_generation_failed category=%s semantic_attempt=%s/%s "
+            "model=%s max_tokens=%s finish_reason=%s "
+            "prompt_tokens=%s completion_tokens=%s",
+            category,
+            semantic_attempt,
+            MAX_JSON_GENERATION_ATTEMPTS,
+            self._model,
+            self._max_tokens,
+            _safe_finish_reason(finish_reason),
+            self._usage_value_for_log(usage, "prompt_tokens"),
+            self._usage_value_for_log(usage, "completion_tokens"),
+        )
+
     def _build_result(
         self,
         response,
@@ -344,6 +397,16 @@ class DeepSeekProvider:
             extras = getattr(usage, "model_extra", None) or {}
             value = extras.get(name, 0)
         return int(value or 0)
+
+    @staticmethod
+    def _usage_value_for_log(usage, name: str) -> int:
+        if usage is None:
+            return 0
+        value = getattr(usage, name, None)
+        if value is None:
+            extras = getattr(usage, "model_extra", None) or {}
+            value = extras.get(name)
+        return value if isinstance(value, int) else 0
 
 
 class AsyncDeepSeekProvider(DeepSeekProvider):
@@ -434,20 +497,39 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
             )
             choice = self._first_choice(response)
             finish_reason = choice.finish_reason
-            if finish_reason in _TERMINAL_FINISH_REASONS:
-                raise ProviderResponseError()
-            if finish_reason != "stop":
-                raise ProviderResponseError()
+            if finish_reason == "length":
+                self._log_json_failure(
+                    category="length",
+                    semantic_attempt=semantic_attempt + 1,
+                    finish_reason=finish_reason,
+                    response=response,
+                )
+                raise ProviderResponseError(category="length")
+            if finish_reason in _TERMINAL_FINISH_REASONS or finish_reason != "stop":
+                self._log_json_failure(
+                    category="finish",
+                    semantic_attempt=semantic_attempt + 1,
+                    finish_reason=finish_reason,
+                    response=response,
+                )
+                raise ProviderResponseError(category="finish")
 
-            value, feedback = _validate_json_content(
+            value, feedback, failure_category = _validate_json_content(
                 choice.message.content,
                 response_model,
             )
             if value is not None:
                 return self._build_result(response, value)
 
+            assert failure_category is not None
+            self._log_json_failure(
+                category=failure_category,
+                semantic_attempt=semantic_attempt + 1,
+                finish_reason=finish_reason,
+                response=response,
+            )
             if semantic_attempt == MAX_JSON_GENERATION_ATTEMPTS - 1:
-                raise ProviderResponseError()
+                raise ProviderResponseError(category=failure_category)
             _append_semantic_retry_feedback(messages, feedback)
 
         raise ProviderResponseError()

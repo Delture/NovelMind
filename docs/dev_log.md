@@ -1,5 +1,12 @@
 # 开发日志
 
+## 2026-10-13 — 报告终稿关 thinking + JSON 失败分类
+
+- `generate_report_payload` 终稿改为 `thinking=False`，去掉 `reasoning_effort`；终稿提示增加精炼输出目标；`REPORT_PROMPT_VERSION` 升至 `novel-report-v3`。
+- `ProviderResponseError` 增加 `category`；`length` 使用明确文案。`generate_json` / `generate_json_async` 区分 length/finish/empty/json/pydantic，安全 WARNING 日志（无 prompt/密钥/正文）。
+- 验证：隔离回归 `test_deepseek_provider`/`test_reports`/`test_rag_answering`/`test_summaries`/`test_characters` 共 106 passed；未做真实供应商生成质量验收。
+
+
 ## 2026-10-10 — 可选 AI 章节目录复核
 
 - 导入仍只用规则分章；配置生成模型后可勾选「导入后用 AI 复核目录」（默认关）。
