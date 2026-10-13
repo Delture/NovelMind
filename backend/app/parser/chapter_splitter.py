@@ -16,7 +16,7 @@ class Chapter:
 _CHINESE_NUMBER = "0-9零〇一二三四五六七八九十百千万两"
 _MAX_CHAPTER_TITLE_CHARACTERS = 255
 _CHINESE_CHAPTER_PREFIX_PATTERN = re.compile(
-    rf"^第(?P<number>[{_CHINESE_NUMBER}]+)[章回节]",
+    rf"^第(?P<number>[{_CHINESE_NUMBER}]+)(?P<unit>[章回节])",
 )
 _REPEATED_NUMBER_SUFFIX_PATTERN = re.compile(
     r"^\s*(?P<number>[0-9０-９]+)\s*[.．、:：]\s*\S",
@@ -60,21 +60,21 @@ def _is_chapter_title(line: str) -> bool:
     return bool(_ENGLISH_CHAPTER_TITLE_PATTERN.fullmatch(title))
 
 
-def _chapter_number_key(title: str) -> int | str | None:
+def _chapter_number_key(title: str) -> tuple[str, int | str] | int | None:
     """Comparable chapter number for adjacent-boundary fold; None = no evidence."""
     stripped = title.strip()
     chinese_match = _CHINESE_CHAPTER_PREFIX_PATTERN.match(stripped)
     if chinese_match:
         number = chinese_match.group("number")
-        if number.isdecimal():
-            return int(number)
-        return number
+        unit = chinese_match.group("unit")
+        value: int | str = int(number) if number.isdecimal() else number
+        return (unit, value)
     english_match = _ENGLISH_CHAPTER_TITLE_PATTERN.fullmatch(stripped)
     if english_match:
         number = english_match.group("number")
-        # Chapter 1.1 vs 1.2 share leading digits; no same-number evidence.
+        # Digits continuing into another numbering component (1.1 / 1A / 1．2).
         suffix = stripped[english_match.start("number") + len(number) :]
-        if re.match(r"\.\d", suffix):
+        if suffix and (suffix[0].isalnum() or suffix[0] in ".．"):
             return None
         return int(number)
     return None

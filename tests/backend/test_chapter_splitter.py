@@ -262,3 +262,33 @@ def test_english_compound_chapter_numbers_are_not_folded() -> None:
         Chapter(index=1, title="Chapter 1.1 First", content=""),
         Chapter(index=2, title="Chapter 1.2 Second", content="Body."),
     ]
+
+
+def test_english_alphabetic_and_fullwidth_compound_numbers_are_not_folded() -> None:
+    text_alpha = "Chapter 1A First\n\nChapter 1B Second\nBody."
+    assert split_chapters(text_alpha) == [
+        Chapter(index=1, title="Chapter 1A First", content=""),
+        Chapter(index=2, title="Chapter 1B Second", content="Body."),
+    ]
+    text_fullwidth = "Chapter 1．1 First\n\nChapter 1．2 Second\nBody."
+    assert split_chapters(text_fullwidth) == [
+        Chapter(index=1, title="Chapter 1．1 First", content=""),
+        Chapter(index=2, title="Chapter 1．2 Second", content="Body."),
+    ]
+
+
+def test_different_chinese_heading_units_are_not_folded() -> None:
+    text = "第1章 开篇\n\n第1节 启程\n正文。"
+    chapters = split_chapters(text)
+    assert chapters == [
+        Chapter(index=1, title="第1章 开篇", content=""),
+        Chapter(index=2, title="第1节 启程", content="正文。"),
+    ]
+
+
+def test_same_unit_jie_headings_fold() -> None:
+    text = "第1节 旧\n\n第1节 新\n正文。"
+    chapters = split_chapters(text)
+    assert chapters == [
+        Chapter(index=1, title="第1节 新", content="第1节 旧\n\n正文。"),
+    ]
