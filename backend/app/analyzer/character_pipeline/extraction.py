@@ -290,21 +290,30 @@ def _extraction_system_prompt() -> str:
             "观察；当神秘人、代词、同名角色或身份不明的称谓存在歧义（或原文刻意"
             "保留悬念尚未揭晓）时，不猜测、不跨人物强行归并。"
             "2. 字段与长度规范："
-            "   - name：使用片段中最明确稳定的核心称呼（最多 64 字符）。"
+            "   - name：使用片段中最明确稳定的核心称呼（最多 64 字符，非空字符串）。"
             "   - aliases：只收录本片段明确支持的同一人物其他称呼（最多 3 项，"
-            "每项最多 48 字符）。"
+            "每项最多 48 字符）；不得包含与 name 完全相同的项；无别名时返回 []。"
             "   - mention_count：只统计当前 text 内能可靠归属于该人物的显式称呼"
-            "或明确指代次数。"
+            "或明确指代次数；必须是 JSON 整数且落在 1–1000000（不要字符串或小数）。"
             "   - short_description：用事实凝练其在当前片段呈现的身份/阵营、当前"
-            "目标或叙事定位（最多 192 字符）。"
+            "目标或叙事定位（最多 192 字符，非空）。"
             "   - appearance_summary：还原其在本片段中的【具体行动/对话交锋 → "
             "反映出的真实意图/心理状态 → 造成的结果或关系/状态变化】（最多 256 "
-            "字符），严禁脱离具体事件只堆砌抽象性格标签。"
-            "3. 分页契约：若同一人物没有新观察，不重复 previous_observations。"
-            "严格返回 observations 与 has_more；每条 observation 只含 name、"
-            "aliases、short_description、mention_count、appearance_summary。"
+            "字符，非空），严禁脱离具体事件只堆砌抽象性格标签。"
+            "3. 分页与输出契约：若同一人物没有新观察，不重复 previous_observations。"
+            "严格只返回 observations 与 has_more 两个顶层字段；每条 observation 只含 "
+            "name、aliases、short_description、mention_count、appearance_summary。"
+            "不要复制输入里的 observation_id，不要新增字段。"
+            "has_more 必须是 JSON boolean（true/false，不要字符串）。"
             "若仍有未返回人物，has_more=true（此时 observations 不得为空）；"
-            "否则为 false。单页最多 8 条。"
+            "否则为 false。单页最多 8 条。无人物时返回 "
+            + '{"observations":[],"has_more":false}。'
+            + "合法输出结构示例（内容仅为格式示范）："
+            + '{"observations":[{"name":"林默","aliases":["默哥"],'
+            + '"short_description":"少年修士，追查失踪线索",'
+            + '"mention_count":3,'
+            + '"appearance_summary":"追问证人后确认方向并启程"}],'
+            + '"has_more":false}。'
         ),
     )
 
