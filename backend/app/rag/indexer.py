@@ -32,6 +32,7 @@ from backend.app.rag.embedding import (
     EmbeddingUnavailableError,
     MAX_EMBEDDING_BATCH_SIZE,
 )
+from backend.app.services.execution import executor
 from backend.app.rag.vector_store import (
     VectorCollectionNotFoundError,
     VectorSearchHit,
@@ -56,6 +57,10 @@ class RagIndexBuildError(RuntimeError):
 
 class _RagIndexJobCancelled(RuntimeError):
     """Internal signal that a deleted or terminalized job must stop."""
+
+
+class _RagIndexJobStopped(RuntimeError):
+    """Process shutting down; keep build checkpoint for later resume."""
 
 
 class VectorStore(Protocol):
@@ -146,7 +151,9 @@ def _ensure_job_running(
     job_id: str,
     novel_id: int,
 ) -> None:
-    """已删除小说或任务不再继续计费。"""
+    """已删除小说或任务不再继续计费；进程关停保留检查点。"""
+    if executor.is_stopping():
+        raise _RagIndexJobStopped()
     if not _job_is_running(
         session_factory,
         job_id=job_id,
@@ -746,6 +753,19 @@ def run_rag_index_job(
             registered_collection = None
             if old_collection != committed_collection:
                 _safe_delete_collection(vector_store, old_collection)
+    except _RagIndexJobStopped:
+        logger.info(
+            "RAG index job %s paused for process shutdown; checkpoint kept.",
+            job_id,
+        )
+        mark_analysis_job_failed_with_sqlite_lock_retry(
+            session_factory,
+            job_id,
+            "rag_index",
+            "服务正在关闭，索引未完成；已保留构建检查点，请重启后继续。",
+            expected_status="running",
+            failure_context="process shutdown",
+        )
     except _RagIndexJobCancelled:
         logger.info(
             "RAG index job %s stopped because its state or source "

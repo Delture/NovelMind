@@ -1,5 +1,14 @@
 # 开发日志
 
+## 2026-10-13 — 后台任务关停与生命周期诊断
+
+- `JobExecutor`：停止事件；shutdown 先标记 stopped；停止后 `reserve` 返回 503；去掉 reserve 隐式重启线程池。
+- `main` lifespan：启停日志与中断任务/问答/工作流数量；初始化失败也执行 shutdown。
+- RAG index：进程关停保留构建检查点（与任务取消删点区分）；问答 `before_attempt` 兼查停止事件。
+- 人物阶段契约：本轮证据不足，**推迟**独立诊断 PR。
+- 验证：`test_execution` / 定向 RAG / 全量 pytest。
+
+
 ## 2026-10-13 — 目录复核稀疏修改契约
 
 - `ChapterReviewPayload.chapters` 允许空列表；模型只返回合并/改标题项，本地 `reconstruct_review_plan` 补齐后仍走 `validate_review_plan`。

@@ -26,6 +26,7 @@ from backend.app.analyzer.prompting import novelmind_system_prompt
 from backend.app.core.sqlite_retry import retry_sqlite
 from backend.app.core.time import utc_now
 from backend.app.models.novel import Chapter, Novel
+from backend.app.services.execution import executor
 from backend.app.models.rag import RagChunkRecord, RagIndex, RagQuestion
 from backend.app.rag.chunking import query_embedding_text
 from backend.app.rag.embedding import (
@@ -155,6 +156,8 @@ def _ensure_question_running(
     source_hash: str,
 ) -> None:
     """条件失效时抛内部取消异常，阻止迟到结果写库。"""
+    if executor.is_stopping():
+        raise _RagQuestionCancelled()
     if not _question_is_running(
         session_factory,
         question_id=question_id,

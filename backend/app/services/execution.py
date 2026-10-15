@@ -38,20 +38,29 @@ class JobExecutor:
             max_workers=workers, thread_name_prefix="novelmind-job"
         )
         self.stopped = False
+        self.stop_event = threading.Event()
         self.capacity = threading.BoundedSemaphore(workers + pending)
         self.lock = threading.Lock()
         self.jobs: dict[str, JobHandle] = {}
 
     def start(self):
         with self.lock:
-            if self.stopped:
-                self.pool = ThreadPoolExecutor(
-                    max_workers=self.workers, thread_name_prefix="novelmind-job"
+            if not self.stopped:
+                return
+            if self.jobs:
+                raise RuntimeError(
+                    "cannot restart job executor while prior jobs remain"
                 )
-                self.stopped = False
+            self.pool = ThreadPoolExecutor(
+                max_workers=self.workers, thread_name_prefix="novelmind-job"
+            )
+            self.stopped = False
+            self.stop_event.clear()
 
     async def shutdown(self):
         with self.lock:
+            self.stopped = True
+            self.stop_event.set()
             handles = list(self.jobs.values())
             for handle in handles:
                 handle.cancelled = True
@@ -59,16 +68,19 @@ class JobExecutor:
             if handle.future is not None:
                 handle.future.cancel()
         await asyncio.to_thread(self.pool.shutdown, wait=False, cancel_futures=True)
-        self.stopped = True
+
+    def is_stopping(self) -> bool:
+        return self.stop_event.is_set() or self.stopped
 
     def reserve(self, function, args, kwargs, parent_id):
-        self.start()
-        if not self.capacity.acquire(blocking=False):
-            raise ServiceError(503, "后台任务队列已满，请等待现有任务完成。")
-        handle = JobHandle(str(args[0]), function, args, kwargs, parent_id)
         with self.lock:
+            if self.stopped:
+                raise ServiceError(503, "服务正在关闭，无法接受新的后台任务。")
+            if not self.capacity.acquire(blocking=False):
+                raise ServiceError(503, "后台任务队列已满，请等待现有任务完成。")
+            handle = JobHandle(str(args[0]), function, args, kwargs, parent_id)
             self.jobs[handle.job_id] = handle
-        return handle
+            return handle
 
     def release(self, handle):
         with self.lock:
@@ -97,7 +109,9 @@ class JobExecutor:
     async def run(self, handle):
         try:
             with self.lock:
-                if not handle.cancelled:
+                if handle.cancelled or self.stopped:
+                    handle.cancelled = True
+                else:
                     handle.future = self.pool.submit(
                         handle.function, *handle.args, **handle.kwargs
                     )

@@ -670,3 +670,55 @@ def test_transient_collection_count_lock_keeps_checkpoint() -> None:
             assert checkpoint.collection_name in store.collections
     finally:
         engine.dispose()
+
+
+def test_process_stop_keeps_checkpoint() -> None:
+    from backend.app.services.execution import executor
+
+    engine, factory = make_session_factory()
+    novel_id, job_id = seed_many_chapters(factory, 25)
+    store = FakeVectorStore()
+
+    class StopAfterBatches(FakeProvider):
+        def embed(self, texts, *, before_attempt=None):
+            if before_attempt is not None:
+                before_attempt()
+            self.calls.append(list(texts))
+            if len(self.calls) >= 2:
+                executor.stop_event.set()
+                executor.stopped = True
+            if before_attempt is not None:
+                before_attempt()
+            from backend.app.rag.embedding import EmbeddingBatchResult
+            vectors = tuple(
+                tuple([float(index + 1)] * self.dimensions)
+                for index, _ in enumerate(texts)
+            )
+            return EmbeddingBatchResult(
+                vectors=vectors,
+                model=self.model,
+                prompt_tokens=len(texts),
+                request_id="fake",
+            )
+
+    try:
+        run_rag_index_job(job_id, StopAfterBatches(), store, factory)
+        with factory() as db:
+            job = db.get(AnalysisJob, job_id)
+            checkpoint = db.scalar(
+                select(RagBuildCheckpoint).where(
+                    RagBuildCheckpoint.novel_id == novel_id
+                )
+            )
+            assert job.status == "failed"
+            assert "关闭" in (job.error_message or "")
+            assert checkpoint is not None
+            assert checkpoint.collection_name in store.collections
+            assert len(store.collections[checkpoint.collection_name]) >= 10
+            assert db.scalar(
+                select(RagIndex).where(RagIndex.novel_id == novel_id)
+            ) is None
+    finally:
+        executor.stop_event.clear()
+        executor.stopped = False
+        engine.dispose()
