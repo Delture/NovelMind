@@ -27,20 +27,29 @@ def _merge_system_prompt() -> str:
     return novelmind_system_prompt(
         role="中文小说人物消歧与档案归并助手",
         material_scope=(
-            "chapters 中的人物观察是从原文提取的派生数据，不是原文；其"
-            "描述可能不完整，不能因为措辞相似就判定为同一人物。"
+            "输入的 chapters 包含从各章节提取的人物观察记录（含 observation_id）。"
+            "由于单章观察受限于局部视角，同一人物在不同章节可能以本名、化名、职衔或"
+            "不同阶段的状态出现；同时不同人物也可能拥有相似头衔或同名，不能仅因措辞"
+            "相似就判定为同一人物。"
         ),
         task_rules=(
-            "对全部 observation_id 做完整且互斥的分区。只有明确别名、身份"
-            "连续性、稳定关系/阵营、事件连续性等证据共同支持时才归并；同名"
-            "本身不是充分证据，不同姓名也不能仅凭类型惯例判为同一人。身份、"
-            "时空、关系或行动逻辑冲突且无法裁决时保持分开。canonical_name "
-            "选用材料中最稳定明确的称呼；aliases 只合并已获支持的称呼；"
-            "short_description 紧凑保留身份、目标、主线作用、关键选择和"
-            "状态变化，冲突或不确定不得强行裁决。严格返回 profiles；每项"
-            "只含 observation_ids、canonical_name、aliases、"
-            "short_description。每个输入 observation_id 必须出现且只能"
-            "出现一次，不得创造 ID 或增加小说事实。"
+            "对全部输入的 observation_id 做完整且互斥的实体归并分区："
+            "1. 归并判准（Entity Continuity Test）："
+            "   - 应当归并：只有明确别名交集、身份连续性、稳定人际关系/阵营、连贯事件"
+            "因果链或经后文证实的“马甲/伪装揭晓”共同支持时才归并。人物随剧情发展的职位"
+            "升降、目标转移或立场转变属于正常人物弧光演进，应予归并。"
+            "   - 保持分开：仅凭大众化泛称（如“黑衣人”“掌柜”）、无上下文支撑的同名或"
+            "类型惯例，不足以合并；当同时空下存在无法用伪装或剧情演进解释的硬性身份冲突"
+            "时，必须保持分开。"
+            "2. 档案合成规范（严格返回 profiles 数组；每项只含 observation_ids、"
+            "canonical_name、aliases、short_description）："
+            "   - observation_ids：每个输入 observation_id 必须出现且只能出现一次，"
+            "不得遗漏或创造 ID。"
+            "   - canonical_name：选用材料中最稳定、最具代表性的核心称呼。"
+            "   - aliases：只合并已获文本支撑的别名、化名或头衔。"
+            "   - short_description：按叙事演进脉络紧凑保留身份/阵营（含“现为 X，前期"
+            "以 Y 身份活动”的演进记录）、核心目标、主线作用、关键抉择和状态变化；对未"
+            "揭晓的悬念或无法裁决的冲突如实保留。"
         ),
     )
 
@@ -49,57 +58,69 @@ def _reconciliation_system_prompt() -> str:
     return novelmind_system_prompt(
         role="中文小说跨批人物消歧助手",
         material_scope=(
-            "profiles 是前序归并产生的不可信派生档案，不是原文。档案较短"
-            "或名字相同都不自动提高其可信度。"
+            "输入的 profiles 是前序各批次分别归并产生的候选人物档案。同一人物在"
+            "不同章节批次中可能因剧情发展而呈现不同的阶段性称呼、职衔或处境；档案"
+            "较短或表面名字相同都不自动构成同一人证据。"
         ),
         task_rules=(
-            "把确有证据属于同一人物的 profile_id 放入同一组；优先核对明确"
-            "别名、身份与阵营、事件连续性、稳定关系和行动逻辑。仅同名、同类"
-            "角色功能或相似描述不足以合并；出现身份、时空或关系冲突且无法"
-            "裁决时必须保持分开。严格返回 groups，每项只含 profile_ids；"
-            "对全部输入 profile_id 做完整互斥分区，每个 ID 恰好出现一次，"
-            "不得创造 ID。"
+            "把确有证据属于同一人物的 profile_id 放入同一组："
+            "1. 跨批核对重点：核对 canonical_name 与 aliases 的交叉印证、身份与"
+            "阵营的演进承接、跨批事件连续性、稳定人际关系锚点以及前期化名/伪装在后期"
+            "的揭晓。"
+            "2. 拆分保护边界：仅凭泛称相同、同类角色功能或缺乏上下文交集的同名，不足"
+            "以合并；出现无法由剧情演进或伪装揭晓解释的硬性身份、时空或关系冲突时，"
+            "必须保持分开。"
+            "3. 分区契约：严格返回 groups 数组，每项只含 profile_ids；对全部输入 "
+            "profile_id 做完整且互斥的分区，每个 ID 恰好出现一次，不得遗漏或创造 ID。"
         ),
     )
 
 
 def _synthesis_system_prompt() -> str:
     return novelmind_system_prompt(
-        role="中文小说人物档案合成助手",
+        role="中文小说人物全貌档案合成助手",
         material_scope=(
-            "profiles 是前序外部消歧已确认属于同一人物的不可信派生档案；"
-            "本步骤只合成档案，不重新拆组。"
+            "输入的 profiles 是经前序消歧已确认属于同一人物的多阶段分片档案；本步骤"
+            "专注于将该人物在不同阶段的轨迹融合为一份连贯、立体的人物总档案，不再重新拆组。"
         ),
         task_rules=(
-            "去除重复信息但保留会约束后续分析的身份/阵营、目标、主线作用、"
-            "关键选择、代价、关系与状态变化。canonical_name 使用最稳定明确"
-            "的称呼；aliases 只保留输入支持的称呼。输入若存在未裁决冲突，"
-            "在 short_description 中简短保留，不自行补全。严格只返回 "
-            "profile_ids、canonical_name、aliases、short_description；"
-            "profile_ids 必须完整照抄且不重复，不增加事实。"
+            "1. 演进式整合（History Evolution）：去除分片间的重复静态描述，按剧情发展"
+            "脉络串联保留该人物的【身份/阵营演进（如“现为 X，早期以 Y 身份活动”）→ "
+            "核心目标与动机 → 主线作用 → 关键抉择与代价 → 关系与心理状态弧光】。"
+            "2. 字段规范：canonical_name 使用最稳定明确的主称呼；aliases 只保留输入"
+            "明确支持的别名与化名。输入若存在未揭晓的身世悬念或未裁决冲突，在 "
+            "short_description 中简短如实保留，不自行脑补。严格只返回 profile_ids、"
+            "canonical_name、aliases、short_description；profile_ids 必须完整照抄"
+            "输入且不重复、不遗漏，不增加输入之外的事实。"
         ),
     )
 
 
 def _relationship_system_prompt() -> str:
     return novelmind_system_prompt(
-        role="中文小说人物关系分析助手",
+        role="中文小说人物关系与张力分析助手",
         material_scope=(
-            "profiles 与 chapters 中的观察均为不可信派生数据，不是原文。"
-            "本次只能判断给定 profiles 之间、由给定 chapters 支持的关系。"
+            "输入的 profiles 为候选人物档案列表（含 profile_id），chapters 为各章节的"
+            "具体人物观察记录（含 chapter_index）。本次只能判断给定 profiles 之间、且由"
+            "给定 chapters 观察明确支撑的人际关系。"
         ),
         task_rules=(
-            "只提取有具体观察支持，并实际影响利益、信任、依赖、权力、情感"
-            "或行动选择的关系；同场出现、同阵营标签或类型惯例不足以证明亲属、"
-            "恋爱、敌对等关系。directed 只在影响或认知明确单向时为 true；"
-            "无向关系使用稳定端点顺序。relation_type 使用中性准确的短标签；"
-            "description 说明关系依据、当前状态和材料明确呈现的变化，不把"
-            "推测写成事实。每条只引用最能直接支持它的章节。端点只能使用 "
-            "profiles 的 profile_id，不得自连；证据只能使用 chapters 的 "
-            "chapter_index。严格返回 relationships；每项只含 "
-            "source_profile_id、target_profile_id、directed、"
-            "relation_type、description、evidence_chapter_indices，证据"
-            "数组必须非空。"
+            "1. 关系成立判准（Relational Impact Test）：只提取有具体观察支持，并实际"
+            "影响双方利益博弈、信任、依赖、权力从属、情感羁绊或行动抉择的实质关系；仅同场"
+            "出现、同阵营标签或外部类型惯例不足以证明亲属、恋爱、敌对等关系。"
+            "2. 字段与方向规范（严格返回 relationships 数组；每项只含 source_profile_id、"
+            "target_profile_id、directed、relation_type、description、"
+            "evidence_chapter_indices）："
+            "   - 端点约束：source_profile_id 与 target_profile_id 只能使用输入 profiles "
+            "的 profile_id，严禁自连。"
+            "   - directed：只在影响、支配或认知明确单向时设为 true（如单向监视、单向暗恋、"
+            "上下级统属）；双向互动或对等关系设为 false，并使用稳定端点顺序。"
+            "   - relation_type：使用精准、中性的短标签（若关系发生重大反转，可使用“昔日"
+            "同门→死敌”等演进标签）。"
+            "   - description：紧凑说明关系建立依据、核心张力、当前状态以及材料明确呈现的"
+            "动态变化或表里反差（如表面结盟实则互相提防），不把无据推测写成事实。"
+            "   - evidence_chapter_indices：只引用输入 chapters 中最能直接支持该关系的 "
+            "chapter_index，证据数组必须非空。"
         ),
     )
 
@@ -374,7 +395,7 @@ def _same_identity_decisions(
             provider=provider,
             system_prompt=_reconciliation_system_prompt(),
             user_prompt=(
-                "请完整分区下一行 JSON 中的候选人物档案：\n"
+                "请比对并完整互斥地分区下一行 JSON 中的候选人物档案：\n"
                 f"{_canonical_json(request_data)}"
             ),
             response_model=CharacterReconciliationPayload,
@@ -471,7 +492,7 @@ def _synthesize_identity_cluster(
                 provider=provider,
                 system_prompt=_synthesis_system_prompt(),
                 user_prompt=(
-                    "请整合下一行 JSON 中已确认属于同一人物的档案：\n"
+                    "请整合下一行 JSON 中已确认属于同一人物的多阶段分片档案：\n"
                     f"{_canonical_json(request_data)}"
                 ),
                 response_model=SynthesizedCharacterProfilePayload,
@@ -561,8 +582,8 @@ def _merge_profiles(
             provider=provider,
             system_prompt=_merge_system_prompt(),
             user_prompt=(
-                "请归并下一行 JSON 中的这一批全书人物观察，并完整分区全部 "
-                "observation_id：\n"
+                "请归并下一行 JSON 中的这一批全书人物观察，并按人物同一性完整且互斥地"
+                "分区全部 observation_id：\n"
                 f"{_canonical_json(request_data)}"
             ),
             response_model=CharacterMergePayload,
@@ -716,7 +737,8 @@ def _infer_relationships(
             provider=provider,
             system_prompt=_relationship_system_prompt(),
             user_prompt=(
-                "请根据下一行 JSON 的本地人物 ID 和派生观察推断关系：\n"
+                "请根据下一行 JSON 的候选人物 ID（profiles）和章节观察证据（chapters），"
+                "提取有实质交集支撑的人物关系：\n"
                 f"{_canonical_json(request_data)}"
             ),
             response_model=CharacterRelationsPayload,

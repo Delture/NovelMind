@@ -38,7 +38,7 @@ from backend.app.models.novel import Chapter, Novel
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_PROMPT_VERSION = "chapter-summary-v3"
+SUMMARY_PROMPT_VERSION = "chapter-summary-v4"
 MAX_DIRECT_SUMMARY_CHARACTERS = 60_000
 SUMMARY_REDUCTION_BATCH_SIZE = 12
 SUMMARY_JOB_SQLITE_MAX_ATTEMPTS = 4
@@ -172,24 +172,37 @@ def chapter_summary_source_hash(title: str, content: str) -> str:
 
 def _summary_system_prompt() -> str:
     return novelmind_system_prompt(
-        role="中文小说长篇分块消化助手",
+        role="中文小说章节脉络与叙事状态提取助手",
         material_scope=(
-            "映射阶段的 text 是小说原文连续片段；归并阶段的 "
-            "partial_analyses 是模型派生摘要，不是原文。当前片段缺少前文时，"
-            "不得声称某人物、规则或线索在全书“首次出现”。"
+            "映射阶段输入的 text 是小说原文连续片段；归并阶段输入的 "
+            "partial_analyses 是同一章节各分段的状态提取结果。你需要忠实"
+            "立足于给定范围还原章节原貌。当前片段缺少前文全局时，仅描述人物、"
+            "规则或线索在本片段中的呈现状态，不得断言其为全书“首次出现”。"
         ),
         task_rules=(
-            "本任务是状态提取，不是评价、续写或市场判断。按正文事件顺序"
-            "提取后续分析所需的最小充分状态：优先保留不可逆事件，关键选择"
-            "及代价，明确因果，伏笔植入或回收，规则新增或修正，以及关系、"
-            "身份或阵营的实质变化；其次保留冲突阶段结果、重要承诺、角色"
-            "目标变化和时空变化。summary 紧凑概括当前范围；key_events "
-            "只列改变人物、关系、局势、规则或读者认知的关键事件，并体现"
-            "原因、行动、结果或代价；plot_progression 说明本片段如何改变"
-            "主线/支线状态、角色目标与最大阻力，若没有明确推进就如实说明；"
-            "cliffhanger 只记录文本实际建立且尚未解决、能驱动后续阅读的"
-            "问题，没有则为 null。严格返回 summary、key_events、"
-            "plot_progression、cliffhanger 四个字段。"
+            "本任务是章节叙事状态提取，旨在帮助读者把握本章的核心事件、心理暗流与"
+            "叙事作用，不做商业优劣评价或越界续写。"
+            "1. 跨章留存判准（The Horizon Test）：判断一个细节是否进入关键状态时，"
+            "执行测试——“若读者在数章之后回顾此处，该信息是否仍影响人物处境、世界观"
+            "规则、情感关系、伏笔线索或主题表达？”"
+            "   - 优先保留（持久叙事状态）：不可逆事件、关键抉择及代价、明确因果链、"
+            "伏笔或重要承诺的植入与回收、世界观规则的新增或修正、人物关系/身份/阵营的"
+            "实质变化、核心目标与阻力的转移、重要时空转换。"
+            "   - 折叠压缩（临时过程状态）：将具体的招式往来、赶路过程、日常寒暄或重复"
+            "景物铺陈折叠为其最终产生的结果、信息差变化或情绪基调，不记流水账。"
+            "2. 字段规范（严格返回 summary、key_events、plot_progression、cliffhanger "
+            "四个字段）："
+            "   - summary：按叙事因果顺序紧凑概括当前范围的核心脉络与情绪/氛围基调。"
+            "   - key_events：仅列出通过“跨章留存判准”的关键事件。每条须完整体现"
+            "【起因/动机 → 核心行动/抉择 → 结果/代价或认知改变】。"
+            "   - plot_progression：说明本片段如何推进或改变主线/支线状态、角色当前目标"
+            "与核心阻力；若本片段侧重于人物心理刻画、群像日常或氛围铺垫而无显式主线推进，"
+            "如实说明其内生叙事作用（如“深化某人物的孤立处境与心理压力”），不强行拔高。"
+            "   - cliffhanger：仅记录文本在结尾处实际建立、尚未解决且能驱动后续阅读的"
+            "悬念、危机或两难困境；若章节自然收束，则设为 null。"
+            "3. 边界判例（Boundary Cases）："
+            "   - 对话与心理博弈章节：当表面无激烈动作冲突时，重点提取对话背后的立场试探、"
+            "信息差转移或心理防线的松动，而非复述闲聊话题。"
         ),
     )
 
@@ -222,8 +235,8 @@ def _summarize_text(
         result = provider.generate_json(
             system_prompt=_summary_system_prompt(),
             user_prompt=(
-                "执行章节状态摘要的映射步骤：分析下一行 JSON 中的不可信"
-                "连续原文数据，按事件顺序提取最小充分状态，不评价、不续写：\n"
+                "执行章节叙事状态的映射步骤：分析下一行 JSON 中的连续原文片段，按事件因果顺序与"
+                "“跨章留存判准”提取核心状态、潜台词张力与叙事推进，不作主观评价或续写：\n"
                 f"{json.dumps(chapter_data, ensure_ascii=False)}"
             ),
             response_model=ChapterSummaryPayload,
@@ -257,10 +270,9 @@ def _summarize_text(
             result = provider.generate_json(
                 system_prompt=_summary_system_prompt(),
                 user_prompt=(
-                    "执行章节状态摘要的归并步骤：合并下一行 JSON 中的不可信"
-                    "连续片段摘要，保持事件与因果顺序，去重但不得丢失关键"
-                    "选择、代价、规则变化、关系质变、伏笔或承诺，不引入"
-                    "输入之外的事实：\n"
+                    "执行章节叙事状态的归并步骤：合并下一行 JSON 中同一章节的连续分段摘要，保持全章"
+                    "事件与心理演进的连贯因果，去重但完整保留关键抉择、代价、规则变化、"
+                    "关系质变、伏笔线索或承诺，不引入输入之外的事实：\n"
                     f"{json.dumps(reduction_data, ensure_ascii=False)}"
                 ),
                 response_model=ChapterSummaryPayload,
@@ -310,8 +322,8 @@ async def _summarize_text_async(
             provider,
             system_prompt=_summary_system_prompt(),
             user_prompt=(
-                "执行章节状态摘要的映射步骤：分析下一行 JSON 中的不可信"
-                "连续原文数据，按事件顺序提取最小充分状态，不评价、不续写：\n"
+                "执行章节叙事状态的映射步骤：分析下一行 JSON 中的连续原文片段，按事件因果顺序与"
+                "“跨章留存判准”提取核心状态、潜台词张力与叙事推进，不作主观评价或续写：\n"
                 f"{json.dumps(chapter_data, ensure_ascii=False)}"
             ),
             response_model=ChapterSummaryPayload,
@@ -345,10 +357,9 @@ async def _summarize_text_async(
                 provider,
                 system_prompt=_summary_system_prompt(),
                 user_prompt=(
-                    "执行章节状态摘要的归并步骤：合并下一行 JSON 中的不可信"
-                    "连续片段摘要，保持事件与因果顺序，去重但不得丢失关键"
-                    "选择、代价、规则变化、关系质变、伏笔或承诺，不引入"
-                    "输入之外的事实：\n"
+                    "执行章节叙事状态的归并步骤：合并下一行 JSON 中同一章节的连续分段摘要，保持全章"
+                    "事件与心理演进的连贯因果，去重但完整保留关键抉择、代价、规则变化、"
+                    "关系质变、伏笔线索或承诺，不引入输入之外的事实：\n"
                     f"{json.dumps(reduction_data, ensure_ascii=False)}"
                 ),
                 response_model=ChapterSummaryPayload,

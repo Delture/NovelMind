@@ -295,7 +295,7 @@ def test_reconstruct_rejects_overlap_oob_and_out_of_order() -> None:
         ReviewedChapter(title="x", from_index=0, to_index=1)
     parsed = ChapterReviewPayload.model_validate({"chapters": []})
     assert parsed.chapters == []
-    assert CHAPTER_REVIEW_PROMPT_VERSION == "chapter-review-v2"
+    assert CHAPTER_REVIEW_PROMPT_VERSION == "chapter-review-v3"
 
 
 def test_review_job_empty_sparse_keeps_chapters(web) -> None:
@@ -329,9 +329,9 @@ def test_review_job_empty_sparse_keeps_chapters(web) -> None:
             .order_by(Chapter.chapter_index)
         ]
         assert after == before_titles
-    assert CHAPTER_REVIEW_PROMPT_VERSION == "chapter-review-v2"
+    assert CHAPTER_REVIEW_PROMPT_VERSION == "chapter-review-v3"
     user = provider.calls[0]["user_prompt"]
-    assert "仅返回需要合并或改标题的项" in user
+    assert "仅返回需要合并误切片段或修正标题的项" in user
     assert '"index"' in user
 
 

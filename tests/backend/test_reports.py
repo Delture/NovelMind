@@ -211,10 +211,10 @@ def test_report_generation_uses_only_derived_text_and_external_calls(
     )
     assert "第1章派生摘要" in all_prompts
     assert "ORIGINAL_SECRET" not in all_prompts
-    assert "最小充分证据集" in all_prompts
-    assert "对象/阶段、根因、具体操作" in all_prompts
-    assert "派生摘要，不是小说原文" in all_system_prompts
-    assert "不能可靠评价原文句式" in all_system_prompts
+    assert "全书视野判准（Full-Arc Horizon Test）" in all_prompts
+    assert "串联阅读的具体方法" in all_prompts
+    assert "按章节提炼的叙事状态摘要" in all_system_prompts
+    assert "不得跨越材料边界去臆测原文的具体修辞造句" in all_system_prompts
     assert "可选数组没有可靠内容时返回空数组" in all_system_prompts
     assert "输出精炼" in all_prompts
     assert "目标不超过 300 字" in all_prompts

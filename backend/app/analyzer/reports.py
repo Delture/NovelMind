@@ -62,7 +62,7 @@ from backend.app.models.report import NovelReport
 
 logger = logging.getLogger(__name__)
 
-REPORT_PROMPT_VERSION = "novel-report-v3"
+REPORT_PROMPT_VERSION = "novel-report-v4"
 MAX_REPORT_BATCH_CHARACTERS = 46_000
 MAX_REPORT_FINAL_INPUT_CHARACTERS = 60_000
 REPORT_REDUCTION_GROUP_SIZE = 3
@@ -519,25 +519,32 @@ def report_is_current(
 
 def _system_prompt() -> str:
     return novelmind_system_prompt(
-        role="资深中文小说分析编辑与叙事分析师",
+        role="资深中文小说叙事解构与深度导读分析师",
         material_scope=(
-            "chapter_summaries 与 evidence_notes 是派生摘要，不是小说原文；"
-            "character_profiles 与 character_relationships 也是派生分析。"
-            "因此可以判断事件结构、因果、角色行动、关系变化、线索、承诺和"
-            "章节/阶段层面的推进节奏；不能可靠评价原文句式、修辞、具体用词、"
-            "真实字数、段落节奏或作者实际语言风格，也不能把规划或摘要效果"
-            "表述成原文已经实现的阅读效果。"
+            "chapter_summaries 与 evidence_notes 是按章节提炼的叙事状态摘要；"
+            "character_profiles 与 character_relationships 是基于全书观察合成的"
+            "人物档案与关系网络。你可以据此深入解构作品的情节因果结构、人物动机"
+            "与弧光、关系张力、伏笔脉络、核心母题以及章节/阶段层面的叙事节奏；"
+            "但不得跨越材料边界去臆测原文的具体修辞造句、字词华丽度或真实字数，"
+            "也不得引入外部市场数据进行评判。"
         ),
         task_rules=(
-            "关键结论必须引用实际支持它的 chapter_index，引用只取最关键的"
-            "章节，不堆砌无关证据。优先识别作品持续吸引读者的运行机制、"
-            "结构根因与问题依赖关系；不要把同一问题换词重复到多个栏目。"
-            "优势必须说明其具体机制和作用；风险必须说明位置、根因与影响；"
-            "建议采用“对象或阶段 → 具体操作 → 预期效果 → 代价或风险 →"
-            "完成判据”的闭环，并保护已经成立的优势。只展开材料足以支持、"
-            "会影响作者决策的内容；可选数组没有可靠内容时返回空数组，不为"
-            "填满模板制造主题、优点、风险或建议。不得给出无依据的评分、"
-            "读者比例、市场概率或平台趋势。"
+            "1. 证据锚定原则：每一项关键结论必须引用实际支撑它的 chapter_index；"
+            "引用只取最关键的转折或揭示章节，不堆砌无关章节。"
+            "2. 深度原意解构（零改稿私货）：本报告旨在帮助读者读懂作品的内在叙事逻辑、"
+            "结构匠心与深层意蕴，而非居高临下替作者“挑刺改稿”。严禁给出无依据的评分、"
+            "读者留存比例或平台商业趋势。各维度分析必须互斥互补，不要把同一情节换词"
+            "重复到多个栏目："
+            "   - strengths（叙事支点与艺术亮点）：解析作品持续吸引读者的核心叙事机制、"
+            "结构巧思或情感共鸣支点，说明具体机制与叙事作用。"
+            "   - risks（理解门槛、叙事留白与未解张力）：客观指出文本中因多线并行、视角"
+            "受限、信息隐瞒或线索尚未回收而容易让读者产生理解断层、误读或悬疑张力的复杂"
+            "节点，说明所处位置、复杂性成因与对理解全局脉络的影响。"
+            "   - recommendations（深度阅读指引与解读路径）：针对全书脉络与复杂节点，"
+            "为读者提供深入理解原作的阅读指引，采用“关注对象或阶段 → 建议串联对照的细节/"
+            "伏笔 → 可解开的深层含义与呼应 → 阅读时需留意的视角迷雾或留白边界”的闭环结构。"
+            "3. 宁缺毋滥：只展开材料足以支撑的核心洞察；可选数组没有可靠内容时返回空数组 []，"
+            "不为填满模板而强行制造主题、亮点、门槛或指引。"
         ),
     )
 
@@ -586,15 +593,15 @@ def generate_report_payload(
         result = provider.generate_json(
             system_prompt=_system_prompt(),
             user_prompt=(
-                "执行全书报告的证据提炼步骤：把下一行 JSON 中的连续章节"
-                "摘要压缩为最小充分证据集。优先保留不可逆事件、关键选择与"
-                "代价、明确因果、主线目标/阻力变化、关系质变、规则变化、"
-                "伏笔/承诺的建立或回收，以及能支持结构、人物和阶段节奏"
-                "判断的信号；删除重复复述和无后续影响细节。最多返回 16 条 "
-                "notes；每条只含 topic、analysis、"
-                "evidence_chapter_indices。analysis 说明“发生或变化了什么"
-                " → 原因/选择 → 结果/影响”，对摘要无法裁决的冲突或不确定"
-                "如实保留。引用只能来自本批章节：\n"
+                "执行全书解构的证据提炼步骤：把下一行 JSON 中的连续章节摘要提炼为"
+                "高密度的叙事证据集。按“全书视野判准（Full-Arc Horizon Test）”优先"
+                "保留不可逆事件、关键抉择与代价、明确因果链、主支线目标/阻力变化、"
+                "人物弧光与关系质变、世界观规则揭示、伏笔/承诺的建立或回收，以及能"
+                "支撑结构、人物和主题解构的关键信号；剔除仅在单章生效的过渡细节与"
+                "重复复述。最多返回 16 条 notes；每条严格仅含 topic、analysis、"
+                "evidence_chapter_indices。analysis 说明“发生或变化了什么 → "
+                "内在动因/人物选择 → 叙事后果/深层影响”，对尚未揭晓的悬念或视角"
+                "反差如实保留。引用只能来自本批章节：\n"
                 f"{_canonical_json({'chapter_summaries': summaries})}"
             ),
             response_model=ReportEvidenceNotesPayload,
@@ -630,13 +637,13 @@ def generate_report_payload(
             result = provider.generate_json(
                 system_prompt=_system_prompt(),
                 user_prompt=(
-                    "执行全书报告的证据归并步骤：合并下一行 JSON 中按剧情"
-                    "顺序排列的连续证据笔记。按因果和状态变化去重，优先保留"
-                    "不可逆事件、目标/阻力变化、关键选择与代价、关系或规则"
-                    "质变、伏笔/承诺及其后果；不得把不同事件因措辞相近而"
-                    "错误合并，不得强行裁决输入中的冲突。仍最多返回 16 条 "
-                    "notes，每条只含 topic、analysis、"
-                    "evidence_chapter_indices，不得增加输入中没有的事实或"
+                    "执行全书解构的证据归并步骤：合并下一行 JSON 中按剧情时序排列的"
+                    "连续证据笔记。顺应长篇因果链条与状态演进进行跨批整合（如将前期的"
+                    "伏笔建立与后期的揭示/后果串联），剔除重复表述，优先保留不可逆转折、"
+                    "目标/阻力变化、关键抉择与代价、关系或规则质变、伏笔/承诺及其后果；"
+                    "不得把不同事件因表面措辞相近而错误合并，不得强行抹平文本刻意保留的"
+                    "悬念或视角冲突。仍最多返回 16 条 notes，每条严格仅含 topic、"
+                    "analysis、evidence_chapter_indices，不得增加输入中没有的事实或"
                     "章节引用：\n"
                     f"{_canonical_json({'note_groups': [item.model_dump(mode='json') for item in group]})}"
                 ),
@@ -679,26 +686,25 @@ def generate_report_payload(
     report_result = provider.generate_json(
         system_prompt=_system_prompt(),
         user_prompt=(
-            "执行全书报告的最终编辑步骤。结论先行，并按影响作者决策的"
-            "优先级组织，而不是机械复述所有笔记。字段严格为 title、"
+            "执行全书解构报告的最终合成步骤。结论先行，按帮助读者透彻理解作品原意、"
+            "叙事构造与人物深意的优先级组织，避免机械复述单章笔记。字段严格为 title、"
             "executive_summary、plot_structure、character_dynamics、"
             "pacing、themes、strengths、risks、recommendations。"
-            "executive_summary 用 1—3 个核心结论说明作品运行机制、最大"
-            "优势、根因级风险与材料限制；plot_structure 检查目标—行动—"
-            "阻力—选择—代价—新局面的因果连续性、阶段转折、主支线和"
-            "悬念/承诺；character_dynamics 聚焦目标、选择、关系变化、"
-            "叙事功能与一致性；pacing 只评价摘要可支持的章节/阶段推进、"
-            "信息与情绪任务配置，不评价原文句式或段落速度。themes、"
-            "strengths、risks、recommendations 都是对象数组，只列证据"
-            "充分且互不重复的项目，没有可靠项目可为空数组。除 title 外，"
-            "每个对象只含 title、analysis、evidence_chapter_indices。"
-            "recommendations.analysis 必须写明对象/阶段、根因、具体操作、"
-            "预期效果、代价或风险与完成判据；引用触发该建议的关键章节。"
-            "输出精炼：每个 analysis 用短段表达，目标不超过 300 字；可选"
-            "数组每类最多列 3 项，无可靠内容时为空数组；每项仅引用 1—5 "
-            "个最关键的支持章节，避免跨字段重复复述。"
-            "character_analysis_included=false 时，character_dynamics "
-            "只能依据 evidence_notes，并在 analysis 中明确这一限制：\n"
+            "executive_summary 用 1—3 个核心结论凝练作品的核心叙事驱动力、精神内核、"
+            "关键转折脉络与当前材料边界；plot_structure 解构目标—行动—阻力—抉择—"
+            "代价—新局面的因果连续性、阶段转折、主支线交织和悬念/伏笔脉络；"
+            "character_dynamics 聚焦人物深层动机、价值抉择、弧光演进、关系张力与叙事"
+            "功能；pacing 只解析章节/阶段层面的推进密度、冲突张弛与信息揭示节奏，不臆测"
+            "原文句式或段落字词速度。themes、strengths、risks、recommendations 都是"
+            "对象数组，只列证据充分且互不重复的项目，没有可靠项目时返回空数组 []。"
+            "除顶层 title 外，每个对象只含 title、analysis、evidence_chapter_indices。"
+            "recommendations.analysis 作为给读者的“深度阅读与原意解读指引”，须写明关注"
+            "对象/阶段、线索或复杂性成因、串联阅读的具体方法、可洞察的深层原意、阅读时需"
+            "留意的视角限制或留白，并引用触发该指引的关键章节。输出精炼：每个 analysis "
+            "用短段表达，目标不超过 300 字；可选数组每类最多列 3 项；每项仅引用 1—5 个"
+            "最关键的支持章节，避免跨字段重复复述。character_analysis_included=false "
+            "时，character_dynamics 只能依据 evidence_notes，并在 analysis 中明确这一"
+            "材料范围限制：\n"
             f"{_canonical_json(final_input)}"
         ),
         response_model=NovelReportPayload,
