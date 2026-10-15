@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Callable, Generator
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,6 +15,8 @@ from backend.app.analyzer.llm import (
 )
 from backend.app.analyzer.reports import (
     REPORT_PROMPT_VERSION,
+    ReportEvidenceNote,
+    ReportSectionPayload,
     ReportSourceError,
     estimate_report_generation_steps,
     generate_report_payload,
@@ -57,6 +60,61 @@ def configured_settings() -> Settings:
         load_settings({}),
         deepseek_api_key="report-test-key",
     )
+
+
+@pytest.mark.parametrize(
+    "indices,expected",
+    [
+        ([3, 1, 2], [1, 2, 3]),
+        ([2, 2, 1], [1, 2]),
+        ([1, 2, 3], [1, 2, 3]),
+    ],
+)
+def test_report_evidence_normalizes_unsorted_or_duplicate_indices(
+    indices: list[int],
+    expected: list[int],
+) -> None:
+    note = ReportEvidenceNote.model_validate(
+        {
+            "topic": "转折",
+            "analysis": "关键抉择改变局面。",
+            "evidence_chapter_indices": indices,
+        }
+    )
+    assert note.evidence_chapter_indices == expected
+    section = ReportSectionPayload.model_validate(
+        {
+            "title": "结构",
+            "analysis": "阶段推进与阻力变化。",
+            "evidence_chapter_indices": indices,
+        }
+    )
+    assert section.evidence_chapter_indices == expected
+
+
+@pytest.mark.parametrize(
+    "bad_indices",
+    [
+        ["1"],
+        [1.0],
+        [True],
+    ],
+)
+def test_report_evidence_still_rejects_non_strict_ints(
+    bad_indices: list[object],
+) -> None:
+    with pytest.raises(ValidationError):
+        ReportEvidenceNote.model_validate(
+            {
+                "topic": "转折",
+                "analysis": "关键抉择改变局面。",
+                "evidence_chapter_indices": bad_indices,
+            }
+        )
+
+
+def test_report_prompt_version_is_v5() -> None:
+    assert REPORT_PROMPT_VERSION == "novel-report-v5"
 
 
 def add_novel_with_summaries(

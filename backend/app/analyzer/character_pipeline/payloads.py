@@ -15,7 +15,7 @@ from backend.app.models.character import ChapterCharacterExtraction
 from backend.app.models.novel import Chapter
 
 logger = logging.getLogger(__name__)
-CHARACTER_EXTRACTION_PROMPT_VERSION = "character-extraction-v5"
+CHARACTER_EXTRACTION_PROMPT_VERSION = "character-extraction-v6"
 CHARACTER_MERGE_PROMPT_VERSION = "character-merge-v4"
 CHARACTER_RELATIONSHIP_PROMPT_VERSION = "character-relationship-v4"
 MAX_CHARACTER_EXTRACTION_CHARACTERS = 60_000
@@ -107,10 +107,20 @@ class CharacterObservationPayload(BaseModel):
         )
 
     @model_validator(mode="after")
-    def reject_name_as_alias(self) -> "CharacterObservationPayload":
-        if self.name in self.aliases:
-            raise ValueError("the primary name cannot also be an alias")
-        return self
+    def drop_primary_name_from_aliases(
+        self,
+    ) -> "CharacterObservationPayload":
+        if self.name not in self.aliases:
+            return self
+        return self.model_copy(
+            update={
+                "aliases": [
+                    alias
+                    for alias in self.aliases
+                    if alias != self.name
+                ]
+            }
+        )
 
 
 class ChapterCharacterExtractionPayload(BaseModel):

@@ -1,5 +1,13 @@
 # 开发日志
 
+## 2026-10-15 — 人物提取/报告契约无损规范化
+
+- 人物提取：主名出现在 aliases 时改为丢弃同名 alias（不拒绝整页）；补齐 mention_count/has_more 类型与输出结构示例；`CHARACTER_EXTRACTION_PROMPT_VERSION` → `character-extraction-v6`。
+- 报告：`evidence_chapter_indices` 乱序/重复改为去重升序；notes/归并/终稿提示补齐数组非 null、整数引用与字段上限；`REPORT_PROMPT_VERSION` → `novel-report-v5`。
+- 不放宽 Strict 类型与 `extra=forbid`，不抬 token，不加阶段埋点/重试。
+- 验证：定向 `test_characters` / `test_reports`（假提供商）。
+
+
 ## 2026-10-13 — 后台任务关停与生命周期诊断
 
 - `JobExecutor`：停止事件；shutdown 先标记 stopped；停止后 `reserve` 返回 503；去掉 reserve 隐式重启线程池。

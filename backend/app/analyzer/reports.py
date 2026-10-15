@@ -62,7 +62,7 @@ from backend.app.models.report import NovelReport
 
 logger = logging.getLogger(__name__)
 
-REPORT_PROMPT_VERSION = "novel-report-v4"
+REPORT_PROMPT_VERSION = "novel-report-v5"
 MAX_REPORT_BATCH_CHARACTERS = 46_000
 MAX_REPORT_FINAL_INPUT_CHARACTERS = 60_000
 REPORT_REDUCTION_GROUP_SIZE = 3
@@ -91,11 +91,7 @@ def _required_text(value: str) -> str:
 
 
 def _validated_chapter_indices(values: list[int]) -> list[int]:
-    if len(values) != len(set(values)):
-        raise ValueError("chapter evidence cannot contain duplicates")
-    if values != sorted(values):
-        raise ValueError("chapter evidence must be sorted")
-    return values
+    return sorted(set(values))
 
 
 class ReportEvidenceNote(BaseModel):
@@ -598,10 +594,11 @@ def generate_report_payload(
                 "保留不可逆事件、关键抉择与代价、明确因果链、主支线目标/阻力变化、"
                 "人物弧光与关系质变、世界观规则揭示、伏笔/承诺的建立或回收，以及能"
                 "支撑结构、人物和主题解构的关键信号；剔除仅在单章生效的过渡细节与"
-                "重复复述。最多返回 16 条 notes；每条严格仅含 topic、analysis、"
-                "evidence_chapter_indices。analysis 说明“发生或变化了什么 → "
-                "内在动因/人物选择 → 叙事后果/深层影响”，对尚未揭晓的悬念或视角"
-                "反差如实保留。引用只能来自本批章节：\n"
+                "重复复述。顶层只返回 notes 数组（不得为 null），最多 16 条；每条只含 "
+                "topic（≤100 非空）、analysis（≤800 非空）、evidence_chapter_indices"
+                "（非空 JSON 整数数组，去重且升序，最多 32 项）。analysis 说明"
+                "“发生或变化了什么 → 内在动因/人物选择 → 叙事后果/深层影响”，对尚未"
+                "揭晓的悬念或视角反差如实保留。引用只能来自本批章节：\n"
                 f"{_canonical_json({'chapter_summaries': summaries})}"
             ),
             response_model=ReportEvidenceNotesPayload,
@@ -642,9 +639,10 @@ def generate_report_payload(
                     "伏笔建立与后期的揭示/后果串联），剔除重复表述，优先保留不可逆转折、"
                     "目标/阻力变化、关键抉择与代价、关系或规则质变、伏笔/承诺及其后果；"
                     "不得把不同事件因表面措辞相近而错误合并，不得强行抹平文本刻意保留的"
-                    "悬念或视角冲突。仍最多返回 16 条 notes，每条严格仅含 topic、"
-                    "analysis、evidence_chapter_indices，不得增加输入中没有的事实或"
-                    "章节引用：\n"
+                    "悬念或视角冲突。顶层只返回 notes 数组（不得为 null），仍最多 16 条；"
+                    "每条只含 topic（≤100 非空）、analysis（≤800 非空）、"
+                    "evidence_chapter_indices（非空 JSON 整数数组，去重且升序，最多 "
+                    "32 项），不得增加输入中没有的事实或章节引用：\n"
                     f"{_canonical_json({'note_groups': [item.model_dump(mode='json') for item in group]})}"
                 ),
                 response_model=ReportEvidenceNotesPayload,
@@ -697,7 +695,10 @@ def generate_report_payload(
             "功能；pacing 只解析章节/阶段层面的推进密度、冲突张弛与信息揭示节奏，不臆测"
             "原文句式或段落字词速度。themes、strengths、risks、recommendations 都是"
             "对象数组，只列证据充分且互不重复的项目，没有可靠项目时返回空数组 []。"
-            "除顶层 title 外，每个对象只含 title、analysis、evidence_chapter_indices。"
+            "除顶层 title 外，每个对象只含 title、analysis、evidence_chapter_indices；"
+            "title/analysis 均非空字符串；evidence_chapter_indices 为非空 JSON 整数数组，"
+            "去重且升序。themes/strengths/risks/recommendations 必须是数组（无内容用 []，"
+            "不得为 null）。"
             "recommendations.analysis 作为给读者的“深度阅读与原意解读指引”，须写明关注"
             "对象/阶段、线索或复杂性成因、串联阅读的具体方法、可洞察的深层原意、阅读时需"
             "留意的视角限制或留白，并引用触发该指引的关键章节。输出精炼：每个 analysis "

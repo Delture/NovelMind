@@ -21,6 +21,7 @@ from backend.app.analyzer.characters import (
     CharacterRelationPayload,
     CharacterRelationsPayload,
     ChapterCharacterExtractionPayload,
+    CharacterObservationPayload,
     SynthesizedCharacterProfilePayload,
     analyze_novel_characters,
     run_character_job,
@@ -261,7 +262,8 @@ def test_payloads_reject_untrusted_or_invalid_shapes() -> None:
                         **_observation("林默"),
                         "unsupported": "do not accept",
                     }
-                ]
+                ],
+                "has_more": False,
             }
         )
     with pytest.raises(ValidationError):
@@ -307,6 +309,27 @@ def test_payloads_reject_untrusted_or_invalid_shapes() -> None:
                 "evidence_chapter_indices": [],
             }
         )
+
+
+def test_observation_drops_primary_name_from_aliases() -> None:
+    payload = CharacterObservationPayload.model_validate(
+        {
+            **_observation("林默", aliases=["林默", "默哥", "林默"]),
+        }
+    )
+    assert payload.aliases == ["默哥"]
+    again = CharacterObservationPayload.model_validate(
+        payload.model_dump(mode="json")
+    )
+    assert again.aliases == ["默哥"]
+
+
+def test_extraction_prompt_states_json_integer_and_boolean_contract() -> None:
+    prompt = character_service._extraction_system_prompt()
+    assert CHARACTER_EXTRACTION_PROMPT_VERSION == "character-extraction-v6"
+    assert "JSON 整数" in prompt
+    assert "JSON boolean" in prompt
+    assert '"has_more":false' in prompt
 
 
 def test_extraction_split_bounds_pathological_json_escaping_and_keeps_text(
