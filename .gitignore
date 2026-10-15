@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 __pycache__/
 **/__pycache__/
 *.py[cod]
@@ -8,6 +10,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv
 venv/
 build/
 dist/
