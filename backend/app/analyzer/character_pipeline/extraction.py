@@ -279,26 +279,32 @@ def _extraction_system_prompt() -> str:
         role="中文小说人物观察提取助手",
         material_scope=(
             "title 与 text 是当前章节的连续原文片段。previous_observations "
-            "只是同一片段此前分页返回的派生观察，用于防止重复；它不能证明"
-            "原文中没有其他人物，也不能覆盖当前原文。"
+            "是同一片段此前分页已返回的派生人物观察，仅用于防止重复提取；你需要"
+            "继续从当前 text 中提取尚未返回的人物。"
         ),
         task_rules=(
-            "按人物在当前片段中的首次出现顺序，继续提取尚未返回的人物。"
-            "只把能够可靠归属于同一指代对象的称呼合为一条观察；代词、同名"
-            "角色或身份不明的称谓存在歧义时，不猜测、不跨人物归并。name "
-            "使用片段中最明确的称呼；aliases 只收录片段明确支持的同一人物"
-            "称呼；mention_count 只统计当前 text 内能可靠归属于该人物的"
-            "显式称呼或指代；short_description 用事实概括身份/阵营、当前"
-            "目标或叙事功能；appearance_summary 概括本片段中的关键行动、"
-            "选择、信息、结果以及关系或状态变化，不能只堆性格标签。若同一"
-            "人物没有新观察，不重复 previous_observations。严格返回 "
-            "observations 与 has_more；每条 observation 只含 name、"
-            "aliases、short_description、mention_count、"
-            "appearance_summary。若仍有未返回人物，has_more=true；否则"
-            "为 false；true 时 observations 不得为空。单页最多 8 条；"
-            "name 最多 64 字符；aliases 最多 3 项且每项最多 48 字符；"
-            "short_description 最多 192 字符；appearance_summary 最多 "
-            "256 字符。"
+            "按人物在当前片段中的首次出现顺序，继续提取尚未收录进 "
+            "previous_observations 的人物观察："
+            "1. 指代同一性判准（Identity Resolution Test）：仅将当前片段内证据"
+            "确凿指向同一角色的不同称呼（如本名、字号、职衔、明确外号）合为一条"
+            "观察；当神秘人、代词、同名角色或身份不明的称谓存在歧义（或原文刻意"
+            "保留悬念尚未揭晓）时，不猜测、不跨人物强行归并。"
+            "2. 字段与长度规范："
+            "   - name：使用片段中最明确稳定的核心称呼（最多 64 字符）。"
+            "   - aliases：只收录本片段明确支持的同一人物其他称呼（最多 3 项，"
+            "每项最多 48 字符）。"
+            "   - mention_count：只统计当前 text 内能可靠归属于该人物的显式称呼"
+            "或明确指代次数。"
+            "   - short_description：用事实凝练其在当前片段呈现的身份/阵营、当前"
+            "目标或叙事定位（最多 192 字符）。"
+            "   - appearance_summary：还原其在本片段中的【具体行动/对话交锋 → "
+            "反映出的真实意图/心理状态 → 造成的结果或关系/状态变化】（最多 256 "
+            "字符），严禁脱离具体事件只堆砌抽象性格标签。"
+            "3. 分页契约：若同一人物没有新观察，不重复 previous_observations。"
+            "严格返回 observations 与 has_more；每条 observation 只含 name、"
+            "aliases、short_description、mention_count、appearance_summary。"
+            "若仍有未返回人物，has_more=true（此时 observations 不得为空）；"
+            "否则为 false。单页最多 8 条。"
         ),
     )
 
@@ -397,7 +403,8 @@ def _extract_chapter(
                 provider=provider,
                 system_prompt=_extraction_system_prompt(),
                 user_prompt=(
-                    "请从下一行 JSON 的当前章节连续片段提取人物观察：\n"
+                    "请从下一行 JSON 的当前章节连续片段提取人物观察（排除 previous_observations "
+                    "已收录且无新增信息的人物）：\n"
                     f"{request_json}"
                 ),
                 response_model=ChapterCharacterExtractionPayload,

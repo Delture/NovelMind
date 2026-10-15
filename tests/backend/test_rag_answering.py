@@ -199,9 +199,10 @@ def test_rag_answer_persists_only_valid_retrieved_citations() -> None:
         assert chunk_id in llm.calls[0]["user_prompt"]
         assert "旧桥下" in llm.calls[0]["user_prompt"]
         system_prompt = llm.calls[0]["system_prompt"]
-        assert "检索结果可能不完整" in system_prompt
+        assert "检索结果可能只覆盖全书局部" in system_prompt
         assert "可推断" in system_prompt
-        assert "引用无关片段" in system_prompt
+        assert "绝不引用无关或未使用的陪衬片段" in system_prompt
+        assert "无痕融合（Forbidden Meta-Phrases）" in system_prompt
         request_data = json.loads(
             llm.calls[0]["user_prompt"].split("\n", 1)[1]
         )

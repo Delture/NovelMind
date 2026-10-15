@@ -394,8 +394,8 @@ def run_chapter_review_job(
             result = provider.generate_json(
                 system_prompt=review_system_prompt(),
                 user_prompt=(
-                    "校对下一行 JSON 中的章节目录。N="
-                    f"{len(snapshots)}。仅返回需要合并或改标题的项；无修改返回空列表：\n"
+                    "请校对下一行 JSON 中的章节目录快照。N="
+                    f"{len(snapshots)}。仅返回需要合并误切片段或修正标题的项；无修改返回空列表：\n"
                     f"{json.dumps({'chapters': catalog_for_prompt(snapshots)}, ensure_ascii=False)}"
                 ),
                 response_model=ChapterReviewPayload,

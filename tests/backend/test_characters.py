@@ -434,7 +434,7 @@ def test_character_analysis_uses_api_and_builds_local_statistics(
     assert created is True
     assert len(provider.calls) == 5
     assert all(call["thinking"] is False for call in provider.calls)
-    assert "不可信" in str(provider.calls[0]["system_prompt"])
+    assert "指代同一性判准（Identity Resolution Test）" in str(provider.calls[0]["system_prompt"])
 
     with session_factory() as session:
         analysis = session.get(CharacterAnalysis, analysis_id)

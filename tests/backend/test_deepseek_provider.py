@@ -172,8 +172,8 @@ def test_non_thinking_json_request_wire_contract_and_usage() -> None:
     )
     assert "JSON" in payload["messages"][0]["content"]
     assert '{"field":"value"}' in payload["messages"][0]["content"]
-    assert "不得增加字段" in payload["messages"][0]["content"]
-    assert "思维过程" in payload["messages"][0]["content"]
+    assert "不得新增或遗漏字段" in payload["messages"][0]["content"]
+    assert "推理过程" in payload["messages"][0]["content"]
     assert payload["messages"][1] == {
         "role": "user",
         "content": "Summarize chapter one.",

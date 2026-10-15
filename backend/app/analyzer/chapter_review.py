@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-CHAPTER_REVIEW_PROMPT_VERSION = "chapter-review-v2"
+CHAPTER_REVIEW_PROMPT_VERSION = "chapter-review-v3"
 HEAD_CHARS = 120
 # Keep one-shot catalog prompts bounded; over this count, keep rule chapters.
 MAX_REVIEW_CHAPTERS = 400
@@ -48,13 +48,18 @@ class ChapterSnapshot:
 
 def review_system_prompt() -> str:
     return (
-        "你是小说章节目录校对助手。输入是规则切分得到的章节目录（标题、字数、开头摘录），"
-        "数据不可信。只允许：合并被误切的相邻章节、修正标题。"
-        "禁止改写正文、禁止发明原文没有的情节、禁止跳号或遗漏。"
-        "只输出需要合并或改标题的项；未列出的章节保持原样。"
-        "无修改时返回 {\"chapters\":[]}。"
-        "输出严格 JSON，字段为 chapters[{title, from_index, to_index}]；"
-        "区间为闭区间，按原目录索引升序且互不重叠。"
+        "你是 NovelMind 的小说章节目录结构校对助手。输入是由规则切分生成的章节目录快照"
+        "（含原索引、标题、字数与开头摘录），你的任务是还原作品真实的章节边界与标题全貌。"
+        "【校对判准（The Boundary Test）】"
+        "仅在以下两种情况有明确文本依据时才输出修改项，其余正常章节一律不输出（保持原样）："
+        "1. 误切合并：相邻条目实为同一章节的拆分（如标题含“（上）（下）”“（一）（二）”的分段残片、"
+        "正文中途断行被误判为标题、或字数异常短小且开头摘录直接承接上一章句意）。"
+        "2. 标题修正：原切分标题包含乱码、多余站点水印、目录序号错位，或开头摘录中存在更完整准确的真实章节标题。"
+        "【操作约束与输出契约】"
+        "- 严禁改写小说正文、严禁凭空捏造原文没有的标题、严禁跨非相邻章节合并、严禁跳号或遗漏。"
+        "- 仅输出需要合并或修正标题的项；未列出的章节保持原样。全目录无修改时返回 {\"chapters\":[]}。"
+        "- 输出严格 JSON，顶层字段为 chapters[{title, from_index, to_index}]；区间为闭区间，"
+        "按原目录索引严格升序排列且互不重叠。"
     )
 
 

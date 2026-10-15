@@ -15,9 +15,9 @@ from backend.app.models.character import ChapterCharacterExtraction
 from backend.app.models.novel import Chapter
 
 logger = logging.getLogger(__name__)
-CHARACTER_EXTRACTION_PROMPT_VERSION = "character-extraction-v4"
-CHARACTER_MERGE_PROMPT_VERSION = "character-merge-v3"
-CHARACTER_RELATIONSHIP_PROMPT_VERSION = "character-relationship-v3"
+CHARACTER_EXTRACTION_PROMPT_VERSION = "character-extraction-v5"
+CHARACTER_MERGE_PROMPT_VERSION = "character-merge-v4"
+CHARACTER_RELATIONSHIP_PROMPT_VERSION = "character-relationship-v4"
 MAX_CHARACTER_EXTRACTION_CHARACTERS = 60_000
 MAX_CHARACTER_EXTRACTION_TEXT_REQUEST_CHARACTERS = 60_000
 MAX_CHARACTER_EXTRACTION_REQUEST_CHARACTERS = 200_000

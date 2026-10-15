@@ -413,9 +413,9 @@ export function createPages({
       character_dynamics: '人物变化',
       pacing: '节奏',
       themes: '主题',
-      strengths: '亮点',
-      risks: '待完善之处',
-      recommendations: '修改建议'
+      strengths: '叙事亮点与支点',
+      risks: '理解门槛与留白张力',
+      recommendations: '深度阅读与解析指引'
     };
     let body = '<div class="empty"><h2>看见故事的全貌</h2><p>生成前会先补齐缺失或过期的章节摘要，再整理全书报告。</p></div>';
     if (saved) {

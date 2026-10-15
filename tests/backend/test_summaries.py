@@ -303,7 +303,7 @@ def test_oversized_chapter_uses_hierarchical_summaries(
         generate_chapter_summary(session, chapter, provider)
 
     assert len(provider.calls) == 4
-    assert "连续片段摘要" in str(provider.calls[-1]["user_prompt"])
+    assert "同一章节的连续分段摘要" in str(provider.calls[-1]["user_prompt"])
 
 
 def test_run_summary_job_completes_and_tracks_progress(
