@@ -12,6 +12,9 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.analyzer import jobs as job_helpers
 from backend.app.analyzer.character_pipeline import extraction as character_service
+from backend.app.analyzer.character_pipeline.merge import (
+    _validate_profile_partition,
+)
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
@@ -700,6 +703,59 @@ def test_relationship_inference_covers_profiles_from_different_batches(
 
         assert relationship.relation_type == "同事"
         assert relationship.evidence_chapter_indices == [1]
+
+
+
+
+@pytest.mark.parametrize(
+    ("groups", "expected_ids", "violation_type", "token"),
+    [
+        (
+            [{"profile_ids": ["unknown-profile"]}],
+            {"profile-0001"},
+            "unknown",
+            "unknown-profile",
+        ),
+        (
+            [{"profile_ids": ["profile-0001"]}],
+            {"profile-0001", "profile-0002"},
+            "missing",
+            "profile-0002",
+        ),
+        (
+            [
+                {"profile_ids": ["profile-0001"]},
+                {"profile_ids": ["profile-0001"]},
+            ],
+            {"profile-0001"},
+            "duplicate",
+            "profile-0001",
+        ),
+    ],
+)
+def test_validate_profile_partition_logs_violation_type(
+    caplog: pytest.LogCaptureFixture,
+    groups: list[dict[str, object]],
+    expected_ids: set[str],
+    violation_type: str,
+    token: str,
+) -> None:
+    payload = CharacterReconciliationPayload.model_validate(
+        {"groups": groups}
+    )
+    with caplog.at_level(
+        logging.ERROR,
+        logger="backend.app.analyzer.character_pipeline.merge",
+    ):
+        with pytest.raises(ProviderResponseError):
+            _validate_profile_partition(
+                payload,
+                expected_ids,
+                comparison_index=3,
+            )
+    assert f"type={violation_type}" in caplog.text
+    assert "comparison_index=3" in caplog.text
+    assert token in caplog.text
 
 
 @pytest.mark.parametrize(
