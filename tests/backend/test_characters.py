@@ -822,6 +822,116 @@ def test_reconciliation_must_partition_candidate_profiles_exactly_once(
         assert session.query(CharacterAnalysis).count() == 0
 
 
+def test_reconcile_decision_conflict_keeps_profiles_separate(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Overlapping comparisons that disagree on a pair keep same=False.
+
+    Pair 甲/乙 is re-evaluated across within-G0 and multiple cross-group
+    requests (G0+G1, G0+G2). False→True and True→False→True both stick False.
+    """
+    from backend.app.analyzer.character_pipeline import merge as merge_mod
+    from backend.app.analyzer.character_pipeline.payloads import (
+        MergedCharacterProfilePayload,
+        _ResolvedProfile,
+    )
+
+    monkeypatch.setattr(merge_mod, "MAX_CHARACTER_PROFILE_GROUP_ITEMS", 2)
+
+    def _profile(name: str, obs_n: int) -> _ResolvedProfile:
+        return _ResolvedProfile(
+            profile_id=f"batch-0001-profile-{name}",
+            payload=MergedCharacterProfilePayload(
+                observation_ids=[f"chapter-1-part-1-observation-{obs_n}"],
+                canonical_name=name,
+                aliases=[],
+                short_description=f"{name}的档案",
+            ),
+        )
+
+    # G0=[甲,乙], G1=[丙,丁], G2=[戊] → AB appears in (0,0),(0,1),(0,2)
+    profiles = [
+        _profile("甲", 1),
+        _profile("乙", 2),
+        _profile("丙", 3),
+        _profile("丁", 4),
+        _profile("戊", 5),
+    ]
+    pair_ab = frozenset(
+        ("batch-0001-profile-甲", "batch-0001-profile-乙")
+    )
+
+    def separate(_model: Type[BaseModel], user_prompt: str) -> dict[str, object]:
+        data = _prompt_data(user_prompt)
+        return {
+            "groups": [
+                {"profile_ids": [profile["profile_id"]]}
+                for profile in data["profiles"]
+            ]
+        }
+
+    def merge_all(_model: Type[BaseModel], user_prompt: str) -> dict[str, object]:
+        data = _prompt_data(user_prompt)
+        return {
+            "groups": [
+                {
+                    "profile_ids": [
+                        profile["profile_id"] for profile in data["profiles"]
+                    ]
+                }
+            ]
+        }
+
+    def assert_ab_not_clustered(
+        decisions: dict[frozenset[str], bool],
+    ) -> None:
+        assert decisions[pair_ab] is False
+        clusters = merge_mod._complete_link_identity_clusters(
+            profiles, decisions
+        )
+        assert all(
+            not (
+                "batch-0001-profile-甲" in {
+                    member.profile_id for member in cluster
+                }
+                and "batch-0001-profile-乙" in {
+                    member.profile_id for member in cluster
+                }
+            )
+            for cluster in clusters
+        )
+
+    # False→True→True: within separate, then cross merge_all twice (+ G1 within)
+    # Request order: (0,0),(0,1),(0,2),(1,1),(1,2) → 5 calls
+    provider = QueueProvider(
+        [separate, merge_all, merge_all, separate, separate]
+    )
+    with caplog.at_level(logging.ERROR):
+        decisions = merge_mod._same_identity_decisions(
+            profiles,
+            provider,
+            should_continue=None,
+            on_generation_step=None,
+        )
+    assert_ab_not_clustered(decisions)
+    assert "resolution=keep_separate" in caplog.text
+    assert len(provider.calls) == 5
+
+    # True→False→True: within merge, cross separate, cross merge
+    provider2 = QueueProvider(
+        [merge_all, separate, merge_all, separate, separate]
+    )
+    decisions2 = merge_mod._same_identity_decisions(
+        profiles,
+        provider2,
+        should_continue=None,
+        on_generation_step=None,
+    )
+    assert_ab_not_clustered(decisions2)
+    assert len(provider2.calls) == 5
+
+
 def test_character_extraction_continues_api_pages_without_silent_loss(
     session_factory: Callable[[], Session],
 ) -> None:

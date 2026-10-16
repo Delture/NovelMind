@@ -401,16 +401,17 @@ def _same_identity_decisions(
                 )
                 previous = decisions.setdefault(pair, same)
                 if previous != same:
+                    # Conflict ⇒ keep separate (False). Never invent a merge.
+                    decisions[pair] = False
                     logger.error(
                         "reconcile decision conflict "
                         "comparison_index=%s pair=%s "
-                        "previous=%s current=%s",
+                        "previous=%s current=%s resolution=keep_separate",
                         request_index,
                         sorted(pair),
                         previous,
                         same,
                     )
-                    raise ProviderResponseError()
     return decisions
 
 
