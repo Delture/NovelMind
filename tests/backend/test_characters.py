@@ -12,9 +12,6 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.analyzer import jobs as job_helpers
 from backend.app.analyzer.character_pipeline import extraction as character_service
-from backend.app.analyzer.character_pipeline.merge import (
-    _validate_partition,
-)
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
@@ -70,6 +67,7 @@ class QueueProvider:
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         before_attempt: Optional[Callable[[], None]] = None,
+        validation_context: Optional[dict[str, object]] = None,
     ) -> JsonGenerationResult:
         if before_attempt is not None:
             before_attempt()
@@ -80,6 +78,7 @@ class QueueProvider:
                 "response_model": response_model,
                 "thinking": thinking,
                 "reasoning_effort": reasoning_effort,
+                "validation_context": validation_context,
             }
         )
         if not self.responses:
@@ -89,11 +88,17 @@ class QueueProvider:
             raise queued
         if callable(queued):
             queued = queued(response_model, user_prompt)
-        value = (
-            queued
-            if isinstance(queued, response_model)
-            else response_model.model_validate(queued)
-        )
+        try:
+            value = (
+                queued
+                if isinstance(queued, response_model)
+                else response_model.model_validate(
+                    queued,
+                    context=validation_context,
+                )
+            )
+        except ValidationError as error:
+            raise ProviderResponseError() from error
         return JsonGenerationResult(
             value=value,
             model=self.model,
@@ -1047,27 +1052,32 @@ def test_merge_must_partition_every_observation_exactly_once(
         ),
     ],
 )
-def test_validate_partition_logs_violation_type(
+def test_merge_payload_partition_context_logs_violation_type(
     caplog: pytest.LogCaptureFixture,
     profiles: list[dict[str, object]],
     expected_ids: set[str],
     violation_type: str,
     related_token: str,
 ) -> None:
-    payload = CharacterMergePayload.model_validate({"profiles": profiles})
     with caplog.at_level(
         logging.ERROR,
-        logger="backend.app.analyzer.character_pipeline.merge",
+        logger="backend.app.analyzer.character_pipeline.payloads",
     ):
-        with pytest.raises(ProviderResponseError):
-            _validate_partition(
-                payload,
-                expected_ids,
-                profile_id_prefix="batch-0010-profile",
+        with pytest.raises(ValidationError) as raised:
+            CharacterMergePayload.model_validate(
+                {"profiles": profiles},
+                context={
+                    "expected_observation_ids": expected_ids,
+                    "profile_id_prefix": "batch-0010-profile",
+                },
             )
     assert f"type={violation_type}" in caplog.text
     assert "profile_id_prefix=batch-0010-profile" in caplog.text
     assert related_token in caplog.text
+    assert any(
+        "merge partition type=" in str(err.get("msg", ""))
+        for err in raised.value.errors()
+    )
 
 
 @pytest.mark.parametrize(

@@ -75,13 +75,21 @@ def _validation_feedback(error: ValidationError) -> str:
     )[:8]:
         location = ".".join(str(part) for part in item.get("loc", ()))
         issue_type = str(item.get("type", "invalid"))
-        issues.append(f"{location or '<root>'}:{issue_type}")
+        msg = str(item.get("msg", "")).strip()
+        marker = "merge partition type="
+        if marker in msg:
+            detail = msg[msg.index(marker) :]
+            issues.append(f"{location or '<root>'}:{detail}")
+        else:
+            issues.append(f"{location or '<root>'}:{issue_type}")
     return "；".join(issues) or "字段或类型不符合约定"
 
 
 def _validate_json_content(
     content: object,
     response_model: Type[T],
+    *,
+    validation_context: Optional[dict[str, object]] = None,
 ) -> tuple[Optional[T], str, Optional[str]]:
     if not isinstance(content, str) or not content.strip():
         return None, "上一次输出为空。", "empty"
@@ -90,7 +98,14 @@ def _validate_json_content(
     except (json.JSONDecodeError, TypeError):
         return None, "上一次输出不是有效的 JSON 对象。", "json"
     try:
-        return response_model.model_validate(decoded), "", None
+        return (
+            response_model.model_validate(
+                decoded,
+                context=validation_context,
+            ),
+            "",
+            None,
+        )
     except ValidationError as error:
         return (
             None,
@@ -179,6 +194,7 @@ class DeepSeekProvider:
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         before_attempt: Optional[Callable[[], None]] = None,
+        validation_context: Optional[dict[str, object]] = None,
     ) -> JsonGenerationResult[T]:
         self._validate_reasoning_options(thinking, reasoning_effort)
         messages = [
@@ -218,6 +234,7 @@ class DeepSeekProvider:
             value, feedback, failure_category = _validate_json_content(
                 choice.message.content,
                 response_model,
+                validation_context=validation_context,
             )
             if value is not None:
                 return self._build_result(response, value)
@@ -478,6 +495,7 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         before_attempt: Optional[Callable[[], None]] = None,
+        validation_context: Optional[dict[str, object]] = None,
     ) -> JsonGenerationResult[T]:
         self._validate_reasoning_options(thinking, reasoning_effort)
         messages = [
@@ -517,6 +535,7 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
             value, feedback, failure_category = _validate_json_content(
                 choice.message.content,
                 response_model,
+                validation_context=validation_context,
             )
             if value is not None:
                 return self._build_result(response, value)

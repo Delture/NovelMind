@@ -123,6 +123,7 @@ class LLMProvider(Protocol):
         thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         before_attempt: Optional[Callable[[], None]] = None,
+        validation_context: Optional[dict[str, object]] = None,
     ) -> JsonGenerationResult[T]:
         ...
 

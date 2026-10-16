@@ -334,6 +334,7 @@ def _generate_payload(
     response_model: Type[T],
     should_continue: Optional[Callable[[], bool]],
     on_generation_step: Optional[Callable[[], None]],
+    validation_context: Optional[dict[str, object]] = None,
 ) -> T:
     _ensure_can_continue(should_continue)
     result = provider.generate_json(
@@ -344,10 +345,14 @@ def _generate_payload(
         before_attempt=(
             lambda: _ensure_can_continue(should_continue)
         ),
+        validation_context=validation_context,
     )
     _ensure_can_continue(should_continue)
     try:
-        value = response_model.model_validate(result.value)
+        value = response_model.model_validate(
+            result.value,
+            context=validation_context,
+        )
     except ValidationError as error:
         raise ProviderResponseError() from error
     if on_generation_step is not None:

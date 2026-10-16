@@ -9,6 +9,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     StrictStr,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -294,6 +295,59 @@ class CharacterMergePayload(BaseModel):
         default_factory=list,
         max_length=10_000,
     )
+
+    @model_validator(mode="after")
+    def require_observation_partition(
+        self,
+        info: ValidationInfo,
+    ) -> "CharacterMergePayload":
+        context = info.context or {}
+        expected = context.get("expected_observation_ids")
+        if expected is None:
+            return self
+        expected_ids = set(expected)
+        profile_id_prefix = str(
+            context.get("profile_id_prefix") or "profile"
+        )
+        seen: set[str] = set()
+        for profile in self.profiles:
+            for observation_id in profile.observation_ids:
+                if observation_id not in expected_ids:
+                    logger.error(
+                        "merge partition violation type=unknown "
+                        "profile_id_prefix=%s observation_id=%s",
+                        profile_id_prefix,
+                        observation_id,
+                    )
+                    raise ValueError(
+                        "merge partition type=unknown "
+                        f"observation_id={observation_id}"
+                    )
+                if observation_id in seen:
+                    logger.error(
+                        "merge partition violation type=duplicate "
+                        "profile_id_prefix=%s observation_id=%s",
+                        profile_id_prefix,
+                        observation_id,
+                    )
+                    raise ValueError(
+                        "merge partition type=duplicate "
+                        f"observation_id={observation_id}"
+                    )
+                seen.add(observation_id)
+        if seen != expected_ids:
+            missing = sorted(expected_ids - seen)
+            logger.error(
+                "merge partition violation type=missing "
+                "profile_id_prefix=%s missing_ids=%s",
+                profile_id_prefix,
+                missing,
+            )
+            raise ValueError(
+                "merge partition type=missing "
+                f"missing_ids={missing}"
+            )
+        return self
 
 
 class ReconciledProfileGroupPayload(BaseModel):
