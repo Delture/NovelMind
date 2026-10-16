@@ -1,3 +1,4 @@
+import logging
 from typing import Callable, Optional
 from backend.app.analyzer.llm import LLMProvider, ProviderResponseError
 from backend.app.analyzer.prompting import novelmind_system_prompt
@@ -19,6 +20,8 @@ from .payloads import (
     MAX_CHARACTER_STAGE_INPUT_CHARACTERS,
 )
 from .extraction import _canonical_json, _generate_payload
+
+logger = logging.getLogger(__name__)
 
 def _merge_system_prompt() -> str:
     return novelmind_system_prompt(
@@ -318,20 +321,49 @@ def _profile_groups(
 def _validate_profile_partition(
     payload: CharacterReconciliationPayload,
     expected_ids: set[str],
+    *,
+    comparison_index: Optional[int] = None,
 ) -> list[set[str]]:
     seen: set[str] = set()
     groups: list[set[str]] = []
     for group in payload.groups:
         identifiers = set(group.profile_ids)
-        if (
-            len(identifiers) != len(group.profile_ids)
-            or not identifiers <= expected_ids
-            or identifiers & seen
-        ):
+        if len(identifiers) != len(group.profile_ids):
+            logger.error(
+                "reconcile partition violation type=duplicate "
+                "comparison_index=%s profile_ids=%s",
+                comparison_index,
+                list(group.profile_ids),
+            )
+            raise ProviderResponseError()
+        if not identifiers <= expected_ids:
+            unknown = sorted(identifiers - expected_ids)
+            logger.error(
+                "reconcile partition violation type=unknown "
+                "comparison_index=%s unknown_ids=%s",
+                comparison_index,
+                unknown,
+            )
+            raise ProviderResponseError()
+        overlapped = identifiers & seen
+        if overlapped:
+            logger.error(
+                "reconcile partition violation type=duplicate "
+                "comparison_index=%s profile_ids=%s",
+                comparison_index,
+                sorted(overlapped),
+            )
             raise ProviderResponseError()
         seen.update(identifiers)
         groups.append(identifiers)
     if seen != expected_ids:
+        missing = sorted(expected_ids - seen)
+        logger.error(
+            "reconcile partition violation type=missing "
+            "comparison_index=%s missing_ids=%s",
+            comparison_index,
+            missing,
+        )
         raise ProviderResponseError()
     return groups
 
@@ -392,6 +424,7 @@ def _same_identity_decisions(
         partition = _validate_profile_partition(
             payload,
             candidate_ids,
+            comparison_index=request_index,
         )
         group_by_id = {
             profile_id: group_index
@@ -412,6 +445,15 @@ def _same_identity_decisions(
                 )
                 previous = decisions.setdefault(pair, same)
                 if previous != same:
+                    logger.error(
+                        "reconcile decision conflict "
+                        "comparison_index=%s pair=%s "
+                        "previous=%s current=%s",
+                        request_index,
+                        sorted(pair),
+                        previous,
+                        same,
+                    )
                     raise ProviderResponseError()
     return decisions
 
@@ -485,6 +527,16 @@ def _synthesize_identity_cluster(
             )
             expected_ids = {profile.profile_id for profile in batch}
             if set(payload.profile_ids) != expected_ids:
+                logger.error(
+                    "synthesis profile_ids mismatch "
+                    "cluster_index=%s round_index=%s batch_index=%s "
+                    "expected=%s got=%s",
+                    cluster_index,
+                    round_index,
+                    batch_index,
+                    sorted(expected_ids),
+                    sorted(payload.profile_ids),
+                )
                 raise ProviderResponseError()
             observation_ids = [
                 observation_id
@@ -745,9 +797,22 @@ def _infer_relationships(
             if (
                 relation.source_profile_id not in known_profiles
                 or relation.target_profile_id not in known_profiles
-                or not set(relation.evidence_chapter_indices)
-                <= valid_chapters
             ):
+                logger.error(
+                    "relationship violation type=unknown_profile "
+                    "batch_index=%s source=%s target=%s",
+                    batch_index,
+                    relation.source_profile_id,
+                    relation.target_profile_id,
+                )
+                raise ProviderResponseError()
+            if not set(relation.evidence_chapter_indices) <= valid_chapters:
+                logger.error(
+                    "relationship violation type=unknown_chapter "
+                    "batch_index=%s chapters=%s",
+                    batch_index,
+                    list(relation.evidence_chapter_indices),
+                )
                 raise ProviderResponseError()
             source = relation.source_profile_id
             target = relation.target_profile_id
@@ -766,6 +831,12 @@ def _infer_relationships(
                 relation.relation_type,
             )
             if edge in seen_in_batch:
+                logger.error(
+                    "relationship violation type=duplicate_edge "
+                    "batch_index=%s edge=%s",
+                    batch_index,
+                    edge,
+                )
                 raise ProviderResponseError()
             seen_in_batch.add(edge)
             existing_index = edge_indices.get(edge)

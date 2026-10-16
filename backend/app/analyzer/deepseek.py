@@ -80,6 +80,8 @@ def _validation_feedback(error: ValidationError) -> str:
         if marker in msg:
             detail = msg[msg.index(marker) :]
             issues.append(f"{location or '<root>'}:{detail}")
+        elif "canonical name cannot also be an alias" in msg:
+            issues.append(f"{location or '<root>'}:name_as_alias")
         else:
             issues.append(f"{location or '<root>'}:{issue_type}")
     return "；".join(issues) or "字段或类型不符合约定"
@@ -245,6 +247,8 @@ class DeepSeekProvider:
                 semantic_attempt=semantic_attempt + 1,
                 finish_reason=finish_reason,
                 response=response,
+                response_model=response_model,
+                feedback=feedback,
             )
             if semantic_attempt == MAX_JSON_GENERATION_ATTEMPTS - 1:
                 raise ProviderResponseError(category=failure_category)
@@ -368,12 +372,19 @@ class DeepSeekProvider:
         semantic_attempt: int,
         finish_reason: object,
         response,
+        response_model: object = None,
+        feedback: str = "",
     ) -> None:
         usage = getattr(response, "usage", None)
+        model_name = getattr(response_model, "__name__", None) or "-"
+        detail = (feedback or "").replace("\n", " ").strip()
+        if len(detail) > 240:
+            detail = detail[:237] + "..."
         logger.warning(
             "json_generation_failed category=%s semantic_attempt=%s/%s "
             "model=%s max_tokens=%s finish_reason=%s "
-            "prompt_tokens=%s completion_tokens=%s",
+            "prompt_tokens=%s completion_tokens=%s "
+            "response_model=%s detail=%s",
             category,
             semantic_attempt,
             MAX_JSON_GENERATION_ATTEMPTS,
@@ -382,6 +393,8 @@ class DeepSeekProvider:
             _safe_finish_reason(finish_reason),
             self._usage_value_for_log(usage, "prompt_tokens"),
             self._usage_value_for_log(usage, "completion_tokens"),
+            model_name,
+            detail or "-",
         )
 
     def _build_result(
@@ -546,6 +559,8 @@ class AsyncDeepSeekProvider(DeepSeekProvider):
                 semantic_attempt=semantic_attempt + 1,
                 finish_reason=finish_reason,
                 response=response,
+                response_model=response_model,
+                feedback=feedback,
             )
             if semantic_attempt == MAX_JSON_GENERATION_ATTEMPTS - 1:
                 raise ProviderResponseError(category=failure_category)
