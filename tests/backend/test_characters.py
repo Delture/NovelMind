@@ -1,5 +1,6 @@
 
 import json
+import logging
 from collections import deque
 from pathlib import Path
 from typing import Callable, Optional, Type
@@ -11,6 +12,9 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.analyzer import jobs as job_helpers
 from backend.app.analyzer.character_pipeline import extraction as character_service
+from backend.app.analyzer.character_pipeline.merge import (
+    _validate_partition,
+)
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
@@ -991,6 +995,79 @@ def test_merge_must_partition_every_observation_exactly_once(
         session.rollback()
         assert session.query(CharacterAnalysis).count() == 0
         assert session.query(ChapterCharacterExtraction).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("profiles", "expected_ids", "violation_type", "related_token"),
+    [
+        (
+            [
+                {
+                    "observation_ids": ["unknown-id"],
+                    "canonical_name": "林默",
+                    "aliases": [],
+                    "short_description": "档案",
+                }
+            ],
+            {"obs-1"},
+            "unknown",
+            "unknown-id",
+        ),
+        (
+            [
+                {
+                    "observation_ids": ["obs-1"],
+                    "canonical_name": "林默",
+                    "aliases": [],
+                    "short_description": "档案甲",
+                },
+                {
+                    "observation_ids": ["obs-1"],
+                    "canonical_name": "苏晴",
+                    "aliases": [],
+                    "short_description": "档案乙",
+                },
+            ],
+            {"obs-1"},
+            "duplicate",
+            "obs-1",
+        ),
+        (
+            [
+                {
+                    "observation_ids": ["obs-1"],
+                    "canonical_name": "林默",
+                    "aliases": [],
+                    "short_description": "档案",
+                }
+            ],
+            {"obs-1", "obs-2"},
+            "missing",
+            "obs-2",
+        ),
+    ],
+)
+def test_validate_partition_logs_violation_type(
+    caplog: pytest.LogCaptureFixture,
+    profiles: list[dict[str, object]],
+    expected_ids: set[str],
+    violation_type: str,
+    related_token: str,
+) -> None:
+    payload = CharacterMergePayload.model_validate({"profiles": profiles})
+    with caplog.at_level(
+        logging.ERROR,
+        logger="backend.app.analyzer.character_pipeline.merge",
+    ):
+        with pytest.raises(ProviderResponseError):
+            _validate_partition(
+                payload,
+                expected_ids,
+                profile_id_prefix="batch-0010-profile",
+            )
+    assert f"type={violation_type}" in caplog.text
+    assert "profile_id_prefix=batch-0010-profile" in caplog.text
+    assert related_token in caplog.text
 
 
 @pytest.mark.parametrize(
