@@ -301,10 +301,21 @@ def _validate_partition(
     resolved: list[_ResolvedProfile] = []
     for index, profile in enumerate(payload.profiles, start=1):
         for observation_id in profile.observation_ids:
-            if (
-                observation_id not in expected_observation_ids
-                or observation_id in seen
-            ):
+            if observation_id not in expected_observation_ids:
+                logger.error(
+                    "merge partition violation type=unknown "
+                    "profile_id_prefix=%s observation_id=%s",
+                    profile_id_prefix,
+                    observation_id,
+                )
+                raise ProviderResponseError()
+            if observation_id in seen:
+                logger.error(
+                    "merge partition violation type=duplicate "
+                    "profile_id_prefix=%s observation_id=%s",
+                    profile_id_prefix,
+                    observation_id,
+                )
                 raise ProviderResponseError()
             seen.add(observation_id)
         resolved.append(
@@ -314,6 +325,13 @@ def _validate_partition(
             )
         )
     if seen != expected_observation_ids:
+        missing = sorted(expected_observation_ids - seen)
+        logger.error(
+            "merge partition violation type=missing "
+            "profile_id_prefix=%s missing_ids=%s",
+            profile_id_prefix,
+            missing,
+        )
         raise ProviderResponseError()
     return resolved
 
