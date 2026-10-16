@@ -76,9 +76,13 @@ def _validation_feedback(error: ValidationError) -> str:
         location = ".".join(str(part) for part in item.get("loc", ()))
         issue_type = str(item.get("type", "invalid"))
         msg = str(item.get("msg", "")).strip()
-        marker = "merge partition type="
-        if marker in msg:
-            detail = msg[msg.index(marker) :]
+        markers = (
+            "merge partition type=",
+            "reconcile partition type=",
+        )
+        matched = next((m for m in markers if m in msg), None)
+        if matched is not None:
+            detail = msg[msg.index(matched) :]
             issues.append(f"{location or '<root>'}:{detail}")
         elif "canonical name cannot also be an alias" in msg:
             issues.append(f"{location or '<root>'}:name_as_alias")

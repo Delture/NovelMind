@@ -12,9 +12,6 @@ from sqlalchemy.pool import StaticPool
 
 from backend.app.analyzer import jobs as job_helpers
 from backend.app.analyzer.character_pipeline import extraction as character_service
-from backend.app.analyzer.character_pipeline.merge import (
-    _validate_profile_partition,
-)
 from backend.app.analyzer.characters import (
     CHARACTER_EXTRACTION_PROMPT_VERSION,
     CHARACTER_MERGE_PROMPT_VERSION,
@@ -733,29 +730,32 @@ def test_relationship_inference_covers_profiles_from_different_batches(
         ),
     ],
 )
-def test_validate_profile_partition_logs_violation_type(
+def test_reconcile_payload_partition_context_logs_violation_type(
     caplog: pytest.LogCaptureFixture,
     groups: list[dict[str, object]],
     expected_ids: set[str],
     violation_type: str,
     token: str,
 ) -> None:
-    payload = CharacterReconciliationPayload.model_validate(
-        {"groups": groups}
-    )
     with caplog.at_level(
         logging.ERROR,
-        logger="backend.app.analyzer.character_pipeline.merge",
+        logger="backend.app.analyzer.character_pipeline.payloads",
     ):
-        with pytest.raises(ProviderResponseError):
-            _validate_profile_partition(
-                payload,
-                expected_ids,
-                comparison_index=3,
+        with pytest.raises(ValidationError) as raised:
+            CharacterReconciliationPayload.model_validate(
+                {"groups": groups},
+                context={
+                    "expected_profile_ids": expected_ids,
+                    "comparison_index": 3,
+                },
             )
     assert f"type={violation_type}" in caplog.text
     assert "comparison_index=3" in caplog.text
     assert token in caplog.text
+    assert any(
+        "reconcile partition type=" in str(err.get("msg", ""))
+        for err in raised.value.errors()
+    )
 
 
 @pytest.mark.parametrize(

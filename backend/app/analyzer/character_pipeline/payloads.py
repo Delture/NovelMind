@@ -381,6 +381,70 @@ class CharacterReconciliationPayload(BaseModel):
         max_length=MAX_CHARACTER_PROFILE_GROUP_ITEMS * 2,
     )
 
+    @model_validator(mode="after")
+    def require_profile_partition(
+        self,
+        info: ValidationInfo,
+    ) -> "CharacterReconciliationPayload":
+        context = info.context or {}
+        expected = context.get("expected_profile_ids")
+        if expected is None:
+            return self
+        expected_ids = set(expected)
+        comparison_index = context.get("comparison_index")
+        seen: set[str] = set()
+        for group in self.groups:
+            identifiers = set(group.profile_ids)
+            if len(identifiers) != len(group.profile_ids):
+                logger.error(
+                    "reconcile partition violation type=duplicate "
+                    "comparison_index=%s profile_ids=%s",
+                    comparison_index,
+                    list(group.profile_ids),
+                )
+                raise ValueError(
+                    "reconcile partition type=duplicate "
+                    f"profile_ids={list(group.profile_ids)}"
+                )
+            if not identifiers <= expected_ids:
+                unknown = sorted(identifiers - expected_ids)
+                logger.error(
+                    "reconcile partition violation type=unknown "
+                    "comparison_index=%s unknown_ids=%s",
+                    comparison_index,
+                    unknown,
+                )
+                raise ValueError(
+                    "reconcile partition type=unknown "
+                    f"unknown_ids={unknown}"
+                )
+            overlapped = identifiers & seen
+            if overlapped:
+                logger.error(
+                    "reconcile partition violation type=duplicate "
+                    "comparison_index=%s profile_ids=%s",
+                    comparison_index,
+                    sorted(overlapped),
+                )
+                raise ValueError(
+                    "reconcile partition type=duplicate "
+                    f"profile_ids={sorted(overlapped)}"
+                )
+            seen.update(identifiers)
+        if seen != expected_ids:
+            missing = sorted(expected_ids - seen)
+            logger.error(
+                "reconcile partition violation type=missing "
+                "comparison_index=%s missing_ids=%s",
+                comparison_index,
+                missing,
+            )
+            raise ValueError(
+                "reconcile partition type=missing "
+                f"missing_ids={missing}"
+            )
+        return self
+
 
 class SynthesizedCharacterProfilePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")

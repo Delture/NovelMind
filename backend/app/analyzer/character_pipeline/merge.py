@@ -318,54 +318,10 @@ def _profile_groups(
     ]
 
 
-def _validate_profile_partition(
+def _profile_partition_groups(
     payload: CharacterReconciliationPayload,
-    expected_ids: set[str],
-    *,
-    comparison_index: Optional[int] = None,
 ) -> list[set[str]]:
-    seen: set[str] = set()
-    groups: list[set[str]] = []
-    for group in payload.groups:
-        identifiers = set(group.profile_ids)
-        if len(identifiers) != len(group.profile_ids):
-            logger.error(
-                "reconcile partition violation type=duplicate "
-                "comparison_index=%s profile_ids=%s",
-                comparison_index,
-                list(group.profile_ids),
-            )
-            raise ProviderResponseError()
-        if not identifiers <= expected_ids:
-            unknown = sorted(identifiers - expected_ids)
-            logger.error(
-                "reconcile partition violation type=unknown "
-                "comparison_index=%s unknown_ids=%s",
-                comparison_index,
-                unknown,
-            )
-            raise ProviderResponseError()
-        overlapped = identifiers & seen
-        if overlapped:
-            logger.error(
-                "reconcile partition violation type=duplicate "
-                "comparison_index=%s profile_ids=%s",
-                comparison_index,
-                sorted(overlapped),
-            )
-            raise ProviderResponseError()
-        seen.update(identifiers)
-        groups.append(identifiers)
-    if seen != expected_ids:
-        missing = sorted(expected_ids - seen)
-        logger.error(
-            "reconcile partition violation type=missing "
-            "comparison_index=%s missing_ids=%s",
-            comparison_index,
-            missing,
-        )
-        raise ProviderResponseError()
-    return groups
+    return [set(group.profile_ids) for group in payload.groups]
 
 
 def _reconciliation_requests(
@@ -407,6 +363,9 @@ def _same_identity_decisions(
             > MAX_CHARACTER_STAGE_INPUT_CHARACTERS
         ):
             raise ProviderResponseError()
+        candidate_ids = {
+            profile.profile_id for profile in candidates
+        }
         payload = _generate_payload(
             provider=provider,
             system_prompt=_reconciliation_system_prompt(),
@@ -417,15 +376,12 @@ def _same_identity_decisions(
             response_model=CharacterReconciliationPayload,
             should_continue=should_continue,
             on_generation_step=on_generation_step,
+            validation_context={
+                "expected_profile_ids": candidate_ids,
+                "comparison_index": request_index,
+            },
         )
-        candidate_ids = {
-            profile.profile_id for profile in candidates
-        }
-        partition = _validate_profile_partition(
-            payload,
-            candidate_ids,
-            comparison_index=request_index,
-        )
+        partition = _profile_partition_groups(payload)
         group_by_id = {
             profile_id: group_index
             for group_index, group in enumerate(partition)
