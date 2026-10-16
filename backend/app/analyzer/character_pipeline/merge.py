@@ -1,4 +1,3 @@
-import logging
 from typing import Callable, Optional
 from backend.app.analyzer.llm import LLMProvider, ProviderResponseError
 from backend.app.analyzer.prompting import novelmind_system_prompt
@@ -20,8 +19,6 @@ from .payloads import (
     MAX_CHARACTER_STAGE_INPUT_CHARACTERS,
 )
 from .extraction import _canonical_json, _generate_payload
-
-logger = logging.getLogger(__name__)
 
 def _merge_system_prompt() -> str:
     return novelmind_system_prompt(
@@ -291,49 +288,18 @@ def _observation_batches(
     return batches
 
 
-def _validate_partition(
+def _resolved_merge_profiles(
     payload: CharacterMergePayload,
-    expected_observation_ids: set[str],
     *,
     profile_id_prefix: str = "profile",
 ) -> list[_ResolvedProfile]:
-    seen: set[str] = set()
-    resolved: list[_ResolvedProfile] = []
-    for index, profile in enumerate(payload.profiles, start=1):
-        for observation_id in profile.observation_ids:
-            if observation_id not in expected_observation_ids:
-                logger.error(
-                    "merge partition violation type=unknown "
-                    "profile_id_prefix=%s observation_id=%s",
-                    profile_id_prefix,
-                    observation_id,
-                )
-                raise ProviderResponseError()
-            if observation_id in seen:
-                logger.error(
-                    "merge partition violation type=duplicate "
-                    "profile_id_prefix=%s observation_id=%s",
-                    profile_id_prefix,
-                    observation_id,
-                )
-                raise ProviderResponseError()
-            seen.add(observation_id)
-        resolved.append(
-            _ResolvedProfile(
-                profile_id=f"{profile_id_prefix}-{index:04d}",
-                payload=profile,
-            )
+    return [
+        _ResolvedProfile(
+            profile_id=f"{profile_id_prefix}-{index:04d}",
+            payload=profile,
         )
-    if seen != expected_observation_ids:
-        missing = sorted(expected_observation_ids - seen)
-        logger.error(
-            "merge partition violation type=missing "
-            "profile_id_prefix=%s missing_ids=%s",
-            profile_id_prefix,
-            missing,
-        )
-        raise ProviderResponseError()
-    return resolved
+        for index, profile in enumerate(payload.profiles, start=1)
+    ]
 
 
 def _profile_groups(
@@ -596,6 +562,7 @@ def _merge_profiles(
             batch_index=batch_index,
             batch_count=len(batches),
         )
+        profile_id_prefix = f"batch-{batch_index:04d}-profile"
         payload = _generate_payload(
             provider=provider,
             system_prompt=_merge_system_prompt(),
@@ -607,12 +574,15 @@ def _merge_profiles(
             response_model=CharacterMergePayload,
             should_continue=should_continue,
             on_generation_step=on_generation_step,
+            validation_context={
+                "expected_observation_ids": set(batch.observation_ids),
+                "profile_id_prefix": profile_id_prefix,
+            },
         )
         batched_profiles.extend(
-            _validate_partition(
+            _resolved_merge_profiles(
                 payload,
-                batch.observation_ids,
-                profile_id_prefix=f"batch-{batch_index:04d}-profile",
+                profile_id_prefix=profile_id_prefix,
             )
         )
     return (
