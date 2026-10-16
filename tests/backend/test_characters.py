@@ -324,6 +324,72 @@ def test_observation_drops_primary_name_from_aliases() -> None:
     assert again.aliases == ["默哥"]
 
 
+def test_observation_truncates_aliases_preserving_order() -> None:
+    payload = CharacterObservationPayload.model_validate(
+        {
+            **_observation(
+                "林默",
+                aliases=["默哥", "林哥哥", "默哥", "少侠", "小默"],
+            ),
+        }
+    )
+    assert payload.aliases == ["默哥", "林哥哥", "少侠"]
+
+
+def test_extraction_truncates_observations_and_infers_has_more() -> None:
+    first_eight = [
+        _observation(f"人物{index}") for index in range(1, 9)
+    ]
+    overflow = [
+        _observation("人物9"),
+        _observation("人物1"),
+        _observation("人物10"),
+    ]
+    truncated = ChapterCharacterExtractionPayload.model_validate(
+        {
+            "observations": first_eight + overflow,
+            "has_more": False,
+        }
+    )
+    assert [item.name for item in truncated.observations] == [
+        f"人物{index}" for index in range(1, 9)
+    ]
+    assert truncated.has_more is True
+
+    missing_full = ChapterCharacterExtractionPayload.model_validate(
+        {"observations": first_eight}
+    )
+    assert missing_full.has_more is True
+
+    missing_partial = ChapterCharacterExtractionPayload.model_validate(
+        {"observations": first_eight[:3]}
+    )
+    assert missing_partial.has_more is False
+
+    respected = ChapterCharacterExtractionPayload.model_validate(
+        _extract(*first_eight[:2], has_more=True)
+    )
+    assert respected.has_more is True
+
+
+def test_extraction_still_rejects_unknown_fields_and_bad_has_more() -> None:
+    with pytest.raises(ValidationError):
+        ChapterCharacterExtractionPayload.model_validate(
+            {
+                "observations": [_observation("林默")],
+                "has_more": False,
+                "extra_note": "nope",
+            }
+        )
+    with pytest.raises(ValidationError):
+        ChapterCharacterExtractionPayload.model_validate(
+            {
+                "observations": [_observation("林默")],
+                "has_more": "true",
+            }
+        )
+
+
 def test_extraction_prompt_states_json_integer_and_boolean_contract() -> None:
     prompt = character_service._extraction_system_prompt()
     assert CHARACTER_EXTRACTION_PROMPT_VERSION == "character-extraction-v6"

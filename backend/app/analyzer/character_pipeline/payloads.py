@@ -1,6 +1,7 @@
+import json
 import logging
 from dataclasses import dataclass
-from typing import Optional, TypeVar
+from typing import Any, Optional, TypeVar
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -64,6 +65,18 @@ def _normalized_unique_texts(
     return normalized
 
 
+def _dedupe_preserve_order(values: list[Any]) -> list[Any]:
+    unique: list[Any] = []
+    for value in values:
+        if value not in unique:
+            unique.append(value)
+    return unique
+
+
+def _observation_identity(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
 class CharacterObservationPayload(BaseModel):
     """一次局部人物观察，不等于已经完成全书消歧的规范人物。"""
 
@@ -88,6 +101,21 @@ class CharacterObservationPayload(BaseModel):
         min_length=1,
         max_length=MAX_CHARACTER_APPEARANCE_SUMMARY_CHARACTERS,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def truncate_aliases(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        aliases = data.get("aliases")
+        if not isinstance(aliases, list):
+            return data
+        truncated = _dedupe_preserve_order(aliases)[
+            :MAX_CHARACTER_OBSERVATION_ALIASES
+        ]
+        if truncated == aliases:
+            return data
+        return {**data, "aliases": truncated}
 
     @field_validator(
         "name",
@@ -131,6 +159,49 @@ class ChapterCharacterExtractionPayload(BaseModel):
         max_length=MAX_CHARACTER_EXTRACTION_OBSERVATIONS,
     )
     has_more: StrictBool
+
+    @model_validator(mode="before")
+    @classmethod
+    def truncate_observations_and_infer_has_more(
+        cls,
+        data: Any,
+    ) -> Any:
+        if not isinstance(data, dict):
+            return data
+        observations = data.get("observations", [])
+        if not isinstance(observations, list):
+            return data
+
+        unique_observations: list[Any] = []
+        seen_identities: set[str] = set()
+        for observation in observations:
+            identity = _observation_identity(observation)
+            if identity in seen_identities:
+                continue
+            seen_identities.add(identity)
+            unique_observations.append(observation)
+
+        truncated = (
+            len(unique_observations)
+            > MAX_CHARACTER_EXTRACTION_OBSERVATIONS
+        )
+        kept = unique_observations[
+            :MAX_CHARACTER_EXTRACTION_OBSERVATIONS
+        ]
+        updated = {**data, "observations": kept}
+
+        if "has_more" in data and not isinstance(
+            data["has_more"],
+            bool,
+        ):
+            return updated
+        if truncated:
+            updated["has_more"] = True
+        elif "has_more" not in data:
+            updated["has_more"] = (
+                len(kept) >= MAX_CHARACTER_EXTRACTION_OBSERVATIONS
+            )
+        return updated
 
     @model_validator(mode="after")
     def require_progress_when_more_exists(
